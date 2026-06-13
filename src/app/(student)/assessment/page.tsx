@@ -26,83 +26,104 @@ type IntelProfile = {
 function AssessmentResults({ profile }: { profile: IntelProfile }) {
   const dominant = intelligenceMeta[profile.dominant_intelligence]
   const sortedScores = Object.entries(profile.intelligence_scores).sort((a, b) => b[1] - a[1])
+  const top3 = sortedScores.slice(0, 3)
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Your GeniusMap</h1>
-        <p className="text-zinc-500 text-sm mt-0.5">Your intelligence assessment results</p>
+    <div className="space-y-6" style={{ maxWidth: 860 }}>
+
+      {/* Hero — full width gradient band */}
+      <div className="relative rounded-2xl overflow-hidden p-7"
+        style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(0,0,0,0) 70%)', border: '1px solid rgba(124,58,237,0.12)' }}>
+        <div className="absolute right-6 top-6 select-none pointer-events-none"
+          style={{ fontSize: 96, lineHeight: 1, opacity: 0.04 }}>{dominant?.emoji}</div>
+        <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#6D28D9' }}>{dominant?.label} Intelligence</p>
+        <h1 className="text-2xl font-bold text-white mb-3 leading-snug" style={{ maxWidth: 560 }}>
+          {profile.genius_statement}
+        </h1>
+        <p className="text-sm leading-relaxed" style={{ color: '#71717A', maxWidth: 540 }}>
+          {profile.personality_insight}
+        </p>
       </div>
 
-      {/* Genius statement */}
-      <div className="relative p-6 rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.15) 0%, rgba(91,33,182,0.08) 100%)', border: '1px solid rgba(124,58,237,0.2)' }}>
-        <div className="absolute top-0 right-0 text-6xl opacity-10 pointer-events-none p-4">{dominant?.emoji}</div>
-        <p className="text-xs font-medium mb-2 uppercase tracking-wider" style={{ color: '#A78BFA' }}>Your Genius</p>
-        <p className="text-white text-lg font-semibold leading-snug">{profile.genius_statement}</p>
-      </div>
+      {/* Intelligence grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
-      {/* Intelligence bars */}
-      <div className="p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <h2 className="text-white font-semibold text-sm mb-5">Intelligence Profile</h2>
-        <div className="space-y-3">
-          {sortedScores.map(([key, val]) => {
-            const meta = intelligenceMeta[key]
-            return (
-              <div key={key}>
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">{meta?.emoji}</span>
-                    <span className="text-xs text-zinc-400">{meta?.label}</span>
-                    {key === profile.dominant_intelligence && (
-                      <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: 'rgba(124,58,237,0.15)', color: '#A78BFA' }}>dominant</span>
-                    )}
+        {/* All 8 bars */}
+        <div className="lg:col-span-3 rounded-2xl p-6" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <p className="text-xs uppercase tracking-widest mb-5" style={{ color: '#3F3F46' }}>All intelligences</p>
+          <div className="space-y-3">
+            {sortedScores.map(([key, val]) => {
+              const meta = intelligenceMeta[key]
+              const isDominant = key === profile.dominant_intelligence
+              return (
+                <div key={key} className="flex items-center gap-3">
+                  <span className="text-xs flex-shrink-0 text-right" style={{ width: 80, color: isDominant ? '#E4E4E7' : '#3F3F46' }}>
+                    {meta?.label}
+                  </span>
+                  <div className="flex-1 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${val * 10}%`, background: isDominant ? meta?.hex : `${meta?.hex}55` }} />
                   </div>
-                  <span className="text-xs font-medium" style={{ color: meta?.hex }}>{val}/10</span>
+                  <span className="text-xs tabular-nums flex-shrink-0"
+                    style={{ width: 18, color: isDominant ? meta?.hex : '#3F3F46' }}>{val}</span>
                 </div>
-                <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                  <div className="h-1.5 rounded-full transition-all" style={{ width: `${val * 10}%`, background: meta?.hex }} />
-                </div>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Top 3 + study approach */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="rounded-2xl p-5" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <p className="text-xs uppercase tracking-widest mb-4" style={{ color: '#3F3F46' }}>Top strengths</p>
+            <div className="space-y-4">
+              {top3.map(([key, val], rank) => {
+                const meta = intelligenceMeta[key]
+                return (
+                  <div key={key}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono" style={{ color: '#3F3F46' }}>0{rank + 1}</span>
+                        <span className="text-sm font-medium text-white">{meta?.label}</span>
+                      </div>
+                      <span className="text-xs font-semibold" style={{ color: meta?.hex }}>{val}/10</span>
+                    </div>
+                    <div className="h-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                      <div className="h-full rounded-full" style={{ width: `${val * 10}%`, background: meta?.hex }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-2xl p-5" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#3F3F46' }}>How you learn</p>
+            <ol className="space-y-2.5">
+              {profile.study_tips.slice(0, 3).map((tip, i) => (
+                <li key={i} className="flex gap-2.5 text-xs leading-relaxed" style={{ color: '#71717A' }}>
+                  <span className="flex-shrink-0 font-mono" style={{ color: '#3F3F46' }}>{i + 1}.</span>
+                  {tip}
+                </li>
+              ))}
+            </ol>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {/* Study tips */}
-        <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h3 className="text-white font-semibold text-sm mb-3">Study Tips</h3>
-          <ul className="space-y-2">
-            {profile.study_tips.slice(0, 4).map((tip, i) => (
-              <li key={i} className="flex gap-2 text-xs text-zinc-400">
-                <span className="text-emerald-500 mt-0.5 flex-shrink-0">✓</span>
-                <span>{tip}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        {/* Career suggestions */}
-        <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h3 className="text-white font-semibold text-sm mb-3">Career Paths</h3>
-          <ul className="space-y-2">
-            {profile.career_suggestions.slice(0, 4).map((c, i) => (
-              <li key={i} className="flex gap-2 text-xs text-zinc-400">
-                <span className="flex-shrink-0" style={{ color: '#A78BFA' }}>→</span>
-                <span>{c}</span>
-              </li>
-            ))}
-          </ul>
+      {/* Career paths — chip grid */}
+      <div>
+        <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#3F3F46' }}>Career paths</p>
+        <div className="flex flex-wrap gap-2">
+          {profile.career_suggestions.map((role, i) => (
+            <span key={i} className="px-3 py-1.5 rounded-lg text-sm"
+              style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)', color: '#A1A1AA' }}>
+              {role}
+            </span>
+          ))}
         </div>
       </div>
 
-      {/* Personality insight */}
-      {profile.personality_insight && (
-        <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h3 className="text-white font-semibold text-sm mb-2">Personality Insight</h3>
-          <p className="text-zinc-400 text-sm leading-relaxed">{profile.personality_insight}</p>
-        </div>
-      )}
     </div>
   )
 }
