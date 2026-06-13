@@ -10,17 +10,18 @@ export async function GET(request: Request) {
     const supabase = await createClient()
     const { data } = await supabase.auth.exchangeCodeForSession(code)
     if (data?.user) {
-      const { data: existing } = await supabase.from('profiles').select('id, role').eq('user_id', data.user.id).single()
+      const { data: existing } = await supabase.from('profiles').select('id, role').eq('user_id', data.user.id).maybeSingle()
       if (!existing && role) {
-        await supabase.from('profiles').insert({
+        const { error: insertError } = await supabase.from('profiles').insert({
           user_id: data.user.id,
           full_name: data.user.user_metadata?.full_name || data.user.email?.split('@')[0] || 'User',
           email: data.user.email!,
           role,
         })
+        if (insertError) return NextResponse.redirect(`${origin}/login?error=profile_failed`)
       }
       const profileRole = existing?.role || role
-      return NextResponse.redirect(`${origin}${profileRole === 'tutor' ? '/tutor/dashboard' : '/assessment'}`)
+      return NextResponse.redirect(`${origin}${profileRole === 'tutor' ? '/tutor/dashboard' : '/dashboard'}`)
     }
   }
   return NextResponse.redirect(`${origin}/login`)

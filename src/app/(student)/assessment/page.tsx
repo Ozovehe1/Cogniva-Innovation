@@ -1,6 +1,7 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
 
 const questions = [
   { id: 1, text: 'I enjoy reading books, articles, and stories in my spare time.', type: 'linguistic' },
@@ -33,21 +34,143 @@ const options = [
   { val: 5, label: 'Strongly Agree' },
 ]
 
+const analysisSteps = [
+  'Mapping your intelligence profile...',
+  'Identifying cognitive strengths...',
+  'Generating learning pathways...',
+  'Matching career directions...',
+  'Building your GeniusMap...',
+]
+
+const spring = { type: 'spring' as const, stiffness: 280, damping: 26 }
+
+function SkeletonLine({ width, delay = 0 }: { width: string; delay?: number }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay, duration: 0.4 }}
+      className="h-3 rounded-full overflow-hidden"
+      style={{ width, background: '#1E1E26' }}
+    >
+      <motion.div
+        className="h-full w-full"
+        style={{
+          background: 'linear-gradient(90deg, transparent 0%, rgba(124,58,237,0.15) 50%, transparent 100%)',
+          backgroundSize: '200% 100%',
+        }}
+        animate={{ backgroundPosition: ['200% 0', '-200% 0'] }}
+        transition={{ duration: 1.8, repeat: Infinity, ease: 'linear' }}
+      />
+    </motion.div>
+  )
+}
+
+function AnalyzingScreen() {
+  const [activeStep, setActiveStep] = useState(0)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveStep(s => (s + 1) % analysisSteps.length)
+    }, 900)
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <motion.div
+      key="analyzing"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={spring}
+      className="max-w-xl mx-auto"
+    >
+      {/* Status line */}
+      <div className="mb-10">
+        <div className="flex items-center gap-3 mb-3">
+          <motion.div
+            className="w-2 h-2 rounded-full"
+            style={{ background: '#7C3AED' }}
+            animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
+            transition={{ duration: 1.2, repeat: Infinity }}
+          />
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={activeStep}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.3 }}
+              className="text-sm font-medium"
+              style={{ color: '#A78BFA' }}
+            >
+              {analysisSteps[activeStep]}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+        <div className="h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+      </div>
+
+      {/* Skeleton profile card */}
+      <div className="p-6 rounded-2xl mb-4" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <SkeletonLine width="60%" delay={0.1} />
+        <div className="mt-4 space-y-2">
+          <SkeletonLine width="100%" delay={0.2} />
+          <SkeletonLine width="85%" delay={0.3} />
+          <SkeletonLine width="70%" delay={0.4} />
+        </div>
+      </div>
+
+      {/* Skeleton intelligence bars */}
+      <div className="p-6 rounded-2xl mb-4" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <SkeletonLine width="40%" delay={0.2} />
+        <div className="mt-4 space-y-4">
+          {[90, 75, 60, 50, 45, 38, 30, 20].map((w, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-4 h-4 rounded" style={{ background: '#1E1E26' }} />
+              <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: '#1E1E26' }}>
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ background: 'rgba(124,58,237,0.3)' }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${w}%` }}
+                  transition={{ ...spring, delay: 0.3 + i * 0.08 }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Skeleton cards row */}
+      <div className="grid grid-cols-2 gap-3">
+        {[0, 1].map(i => (
+          <div key={i} className="p-5 rounded-2xl space-y-2" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <SkeletonLine width="50%" delay={0.4 + i * 0.1} />
+            <SkeletonLine width="100%" delay={0.5 + i * 0.1} />
+            <SkeletonLine width="80%" delay={0.6 + i * 0.1} />
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  )
+}
+
 export default function AssessmentPage() {
   const [answers, setAnswers] = useState<Record<number, number>>({})
   const [step, setStep] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [done, setDone] = useState(false)
+  const [direction, setDirection] = useState(1)
+  const [analyzing, setAnalyzing] = useState(false)
   const router = useRouter()
 
   const current = questions[step]
+  const progress = (step / questions.length) * 100
 
-  async function handleSubmit() {
-    setLoading(true)
+  async function submitAssessment(finalAnswers: Record<number, number>) {
+    setAnalyzing(true)
     const typeScores: Record<string, number[]> = {}
     questions.forEach(q => {
       if (!typeScores[q.type]) typeScores[q.type] = []
-      typeScores[q.type].push(answers[q.id] || 3)
+      typeScores[q.type].push(finalAnswers[q.id] || 3)
     })
     const scores: Record<string, number> = {}
     Object.entries(typeScores).forEach(([type, vals]) => {
@@ -59,78 +182,121 @@ export default function AssessmentPage() {
       body: JSON.stringify({ answers: scores }),
     })
     if (res.ok) router.push('/dashboard')
-    else setLoading(false)
+    else setAnalyzing(false)
   }
 
   function selectAnswer(val: number) {
-    setAnswers(prev => ({ ...prev, [current.id]: val }))
+    const newAnswers = { ...answers, [current.id]: val }
+    setAnswers(newAnswers)
     if (step < questions.length - 1) {
-      setTimeout(() => setStep(s => s + 1), 150)
+      setDirection(1)
+      setTimeout(() => setStep(s => s + 1), 120)
     } else {
-      setDone(true)
+      submitAssessment(newAnswers)
     }
   }
 
-  if (done) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
-        <div className="w-20 h-20 rounded-2xl mb-6 flex items-center justify-center text-4xl animate-bounce" style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.25)' }}>
-          🎉
-        </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Assessment Complete!</h2>
-        <p className="text-zinc-500 text-sm mb-8 max-w-sm">Gemini AI is now analyzing your responses to build your personalised intelligence profile.</p>
-        <button onClick={handleSubmit} disabled={loading}
-          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50"
-          style={{ background: '#7C3AED' }}>
-          {loading ? (
-            <>
-              <span className="w-4 h-4 rounded-full border-2 border-violet-300 border-t-white animate-spin" />
-              Building your GeniusMap...
-            </>
-          ) : 'Reveal My Genius →'}
-        </button>
-      </div>
-    )
+  function goBack() {
+    setDirection(-1)
+    setTimeout(() => setStep(s => s - 1), 0)
+  }
+
+  if (analyzing) return <AnalyzingScreen />
+
+  const slideVariants = {
+    enter: (dir: number) => ({ x: dir > 0 ? 40 : -40, opacity: 0 }),
+    center: { x: 0, opacity: 1 },
+    exit: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
   }
 
   return (
     <div className="max-w-xl mx-auto">
-      {/* Progress bar + count */}
+      {/* Header */}
       <div className="mb-8">
-        <div className="flex items-center justify-between mb-2">
-          <h1 className="text-white font-semibold">Intelligence Assessment</h1>
-          <span className="text-xs text-zinc-500">{step + 1} / {questions.length}</span>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-white text-sm font-medium">Intelligence Assessment</span>
+          <span className="text-xs tabular-nums" style={{ color: '#52525B' }}>
+            {step + 1}<span style={{ color: '#3F3F46' }}> / {questions.length}</span>
+          </span>
         </div>
-        <div className="h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
-          <div className="h-1 rounded-full transition-all duration-300" style={{ width: `${((step + 1) / questions.length) * 100}%`, background: '#7C3AED' }} />
+        {/* Animated progress bar */}
+        <div className="h-0.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <motion.div
+            className="h-full rounded-full"
+            style={{ background: '#7C3AED' }}
+            animate={{ width: `${progress}%` }}
+            transition={{ ...spring }}
+          />
         </div>
       </div>
 
-      {/* Question card */}
-      <div className="p-8 rounded-2xl mb-6" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <p className="text-xs text-violet-400 font-medium mb-4 uppercase tracking-wider">Question {step + 1}</p>
-        <h2 className="text-white text-lg font-medium leading-relaxed">{current.text}</h2>
+      {/* Sliding question */}
+      <div className="overflow-hidden mb-5">
+        <AnimatePresence mode="wait" custom={direction}>
+          <motion.div
+            key={step}
+            custom={direction}
+            variants={slideVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={spring}
+            className="p-8 rounded-2xl"
+            style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <p className="text-xs font-medium mb-5 uppercase tracking-widest" style={{ color: '#52525B' }}>
+              {current.type.replace(/([A-Z])/g, ' $1').trim()}
+            </p>
+            <h2 className="text-white text-lg font-medium leading-relaxed">{current.text}</h2>
+          </motion.div>
+        </AnimatePresence>
       </div>
 
-      {/* Options */}
-      <div className="space-y-2.5">
-        {options.map(({ val, label }) => (
-          <button key={val} onClick={() => selectAnswer(val)}
-            className="w-full text-left px-5 py-3.5 rounded-xl text-sm transition font-medium"
-            style={{
-              background: answers[current.id] === val ? 'rgba(124,58,237,0.2)' : '#111113',
-              border: `1px solid ${answers[current.id] === val ? 'rgba(124,58,237,0.5)' : 'rgba(255,255,255,0.08)'}`,
-              color: answers[current.id] === val ? '#A78BFA' : '#A1A1AA',
-            }}>
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* Staggered options */}
+      <motion.div
+        key={`options-${step}`}
+        className="space-y-2"
+        initial="hidden"
+        animate="visible"
+        variants={{ visible: { transition: { staggerChildren: 0.06 } } }}
+      >
+        {options.map(({ val, label }) => {
+          const selected = answers[current.id] === val
+          return (
+            <motion.button
+              key={val}
+              variants={{
+                hidden: { opacity: 0, x: -12 },
+                visible: { opacity: 1, x: 0, transition: spring },
+              }}
+              onClick={() => selectAnswer(val)}
+              className="w-full text-left px-5 py-3.5 rounded-xl text-sm font-medium transition-colors"
+              style={{
+                background: selected ? 'rgba(124,58,237,0.18)' : '#111113',
+                border: `1px solid ${selected ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.07)'}`,
+                color: selected ? '#C4B5FD' : '#71717A',
+              }}
+              whileHover={{ borderColor: 'rgba(124,58,237,0.3)', color: '#A1A1AA' }}
+              whileTap={{ scale: 0.99 }}
+              transition={{ duration: 0.12 }}
+            >
+              {label}
+            </motion.button>
+          )
+        })}
+      </motion.div>
 
       {step > 0 && (
-        <button onClick={() => setStep(s => s - 1)} className="mt-4 text-xs text-zinc-600 hover:text-zinc-400 transition">
-          ← Previous question
-        </button>
+        <motion.button
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          onClick={goBack}
+          className="mt-5 text-xs transition"
+          style={{ color: '#3F3F46' }}
+          whileHover={{ color: '#71717A' }}
+        >
+          ← Back
+        </motion.button>
       )}
     </div>
   )

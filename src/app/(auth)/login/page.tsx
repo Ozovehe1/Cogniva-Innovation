@@ -28,8 +28,9 @@ export default function LoginPage() {
     setError('')
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) { setError(error.message); setLoading(false); return }
-    const { data: profile } = await supabase.from('profiles').select('role').eq('user_id', data.user.id).single()
-    router.push(profile?.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
+    const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('user_id', data.user.id).single()
+    if (profileError || !profile) { setError('Could not load your profile. Please try again.'); setLoading(false); return }
+    router.push(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
     router.refresh()
   }
 
