@@ -18,12 +18,12 @@ export default function SignupPage() {
     if (!role) return
     setLoading(true)
     setError('')
-    const { data, error: signUpError } = await supabase.auth.signUp({ email: form.email, password: form.password })
-    if (signUpError || !data.user) { setError(signUpError?.message || 'Signup failed'); setLoading(false); return }
-    const { error: profileError } = await supabase.from('profiles').insert({
-      user_id: data.user.id, full_name: form.fullName, email: form.email, role,
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: form.email,
+      password: form.password,
+      options: { data: { full_name: form.fullName, role } },
     })
-    if (profileError) { setError(profileError.message); setLoading(false); return }
+    if (signUpError || !data.user) { setError(signUpError?.message || 'Signup failed'); setLoading(false); return }
     router.push(role === 'student' ? '/assessment' : '/tutor/dashboard')
     router.refresh()
   }

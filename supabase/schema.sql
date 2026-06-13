@@ -1,6 +1,25 @@
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
 
+-- Auto-create profile when a new auth user signs up (bypasses RLS timing issue)
+create or replace function handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (user_id, full_name, email, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
+    new.email,
+    coalesce(new.raw_user_meta_data->>'role', 'student')
+  );
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure handle_new_user();
+
 -- Profiles table
 create table profiles (
   id uuid default uuid_generate_v4() primary key,
