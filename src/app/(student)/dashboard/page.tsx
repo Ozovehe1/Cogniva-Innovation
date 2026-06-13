@@ -142,15 +142,30 @@ export default async function StudentDashboard() {
       <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-white font-semibold text-sm">Active Projects</h2>
-          <Link href="/projects" className="text-xs font-medium transition" style={{ color: '#A78BFA' }}>View all →</Link>
+          {totalProjects > 0 && (
+            <Link href="/projects" className="text-xs font-medium transition" style={{ color: '#A78BFA' }}>View all →</Link>
+          )}
         </div>
 
         {activeProjects.length === 0 ? (
-          <div className="py-6 text-center">
+          <div className="py-2">
             {totalProjects === 0 ? (
-              <p className="text-zinc-500 text-sm">No projects yet — connect to a tutor to get started</p>
+              /* No tutor linked yet — make the action crystal clear */
+              <div className="rounded-xl p-4 text-center" style={{ background: 'rgba(124,58,237,0.06)', border: '1px dashed rgba(124,58,237,0.25)' }}>
+                <p className="text-zinc-400 text-sm font-medium mb-1">No projects assigned yet</p>
+                <p className="text-zinc-600 text-xs mb-4 leading-relaxed">
+                  Projects are assigned by your tutor. Connect to a tutor first and they will assign projects to you.
+                </p>
+                <Link href="/projects"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold text-white transition"
+                  style={{ background: '#7C3AED' }}>
+                  Connect to a Tutor →
+                </Link>
+              </div>
             ) : (
-              <p className="text-emerald-400 text-sm font-medium">All projects completed! Ask your tutor for more.</p>
+              <p className="text-center text-emerald-400 text-sm font-medium py-4">
+                All projects completed! Ask your tutor for more.
+              </p>
             )}
           </div>
         ) : (
