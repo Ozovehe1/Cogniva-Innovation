@@ -1,8 +1,10 @@
 'use server'
 import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 
-export type LoginState = { error: string; redirectTo: string | null }
-export type SignupState = { error: string; confirmEmail: boolean; redirectTo: string | null }
+export type LoginState = { error: string }
+export type SignupState = { error: string; confirmEmail: boolean }
 
 export async function loginAction(
   _prev: LoginState,
@@ -19,7 +21,6 @@ export async function loginAction(
       error: error.message.toLowerCase().includes('email not confirmed')
         ? 'Please confirm your email first — check your inbox for the confirmation link.'
         : error.message,
-      redirectTo: null,
     }
   }
 
@@ -35,12 +36,14 @@ export async function loginAction(
         p_email: email,
         p_role: meta.role,
       })
-      return { error: '', redirectTo: meta.role === 'tutor' ? '/tutor/dashboard' : '/dashboard' }
+      revalidatePath('/', 'layout')
+      redirect(meta.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
     }
-    return { error: 'Account found but profile is missing. Please sign up again.', redirectTo: null }
+    return { error: 'Account found but profile is missing. Please sign up again.' }
   }
 
-  return { error: '', redirectTo: profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard' }
+  revalidatePath('/', 'layout')
+  redirect(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
 }
 
 export async function signupAction(
@@ -59,8 +62,8 @@ export async function signupAction(
     options: { data: { full_name: fullName, role } },
   })
 
-  if (error) return { error: error.message, confirmEmail: false, redirectTo: null }
-  if (!data.user) return { error: 'Signup failed. Please try again.', confirmEmail: false, redirectTo: null }
+  if (error) return { error: error.message, confirmEmail: false }
+  if (!data.user) return { error: 'Signup failed. Please try again.', confirmEmail: false }
 
   if (data.session) {
     await supabase.rpc('ensure_profile_exists', {
@@ -69,12 +72,9 @@ export async function signupAction(
       p_email: email,
       p_role: role,
     })
-    return {
-      error: '',
-      confirmEmail: false,
-      redirectTo: role === 'student' ? '/assessment' : '/tutor/dashboard',
-    }
+    revalidatePath('/', 'layout')
+    redirect(role === 'student' ? '/assessment' : '/tutor/dashboard')
   }
 
-  return { error: '', confirmEmail: true, redirectTo: null }
+  return { error: '', confirmEmail: true }
 }

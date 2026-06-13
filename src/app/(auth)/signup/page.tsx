@@ -1,5 +1,5 @@
 'use client'
-import { useState, useActionState, useEffect } from 'react'
+import { useState, useActionState } from 'react'
 import { signupAction } from '@/app/actions/auth'
 import Link from 'next/link'
 
@@ -10,13 +10,7 @@ export default function SignupPage() {
   const [role, setRole] = useState<'student' | 'tutor' | null>(null)
   const [step, setStep] = useState<'role' | 'details'>('role')
   const [email, setEmail] = useState('')
-  const [state, formAction, pending] = useActionState(signupAction, { error: '', confirmEmail: false, redirectTo: null })
-
-  useEffect(() => {
-    if (state.redirectTo) {
-      window.location.href = state.redirectTo
-    }
-  }, [state.redirectTo])
+  const [state, formAction, pending] = useActionState(signupAction, { error: '', confirmEmail: false })
 
   if (state.confirmEmail) {
     return (
@@ -116,13 +110,13 @@ export default function SignupPage() {
             <span>⚠</span> {state.error}
           </div>
         )}
-        <button type="submit" disabled={pending || !!state.redirectTo}
+        <button type="submit" disabled={pending}
           className="w-full py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50"
           style={{ background: '#7C3AED' }}>
-          {(pending || state.redirectTo) ? (
+          {pending ? (
             <span className="flex items-center justify-center gap-2">
               <span className="w-4 h-4 rounded-full border-2 border-violet-300 border-t-white animate-spin" />
-              {state.redirectTo ? 'Redirecting...' : 'Creating account...'}
+              Creating account...
             </span>
           ) : 'Create Account'}
         </button>
