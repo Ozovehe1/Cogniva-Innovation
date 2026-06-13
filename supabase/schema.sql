@@ -1,7 +1,28 @@
--- Enable UUID extension
+-- ============================================================
+-- STEP 1: Extensions
+-- ============================================================
 create extension if not exists "uuid-ossp";
 
--- Auto-create profile when a new auth user signs up (bypasses RLS timing issue)
+-- ============================================================
+-- STEP 2: Drop existing triggers safely
+-- ============================================================
+do $$ begin
+  drop trigger if exists on_auth_user_created on auth.users;
+exception when others then null;
+end$$;
+
+do $$ begin
+  if exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'project_assignments'
+  ) then
+    drop trigger if exists on_project_completed on project_assignments;
+  end if;
+end$$;
+
+-- ============================================================
+-- STEP 3: Functions
+-- ============================================================
 create or replace function handle_new_user()
 returns trigger as $$
 begin
@@ -11,7 +32,8 @@ begin
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
     new.email,
     coalesce(new.raw_user_meta_data->>'role', 'student')
-  );
+  )
+  on conflict (user_id) do nothing;
   return new;
 end;
 $$ language plpgsql security definer;
@@ -20,8 +42,10 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure handle_new_user();
 
--- Profiles table
-create table profiles (
+-- ============================================================
+-- STEP 4: Tables
+-- ============================================================
+create table if not exists profiles (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references auth.users(id) on delete cascade unique not null,
   full_name text not null,
@@ -31,8 +55,7 @@ create table profiles (
   created_at timestamptz default now()
 );
 
--- Intelligence profiles (one per student)
-create table intelligence_profiles (
+create table if not exists intelligence_profiles (
   id uuid default uuid_generate_v4() primary key,
   student_id uuid references profiles(id) on delete cascade unique not null,
   dominant_intelligence text not null,
@@ -46,8 +69,7 @@ create table intelligence_profiles (
   updated_at timestamptz default now()
 );
 
--- Student growth tracking
-create table student_growth (
+create table if not exists student_growth (
   id uuid default uuid_generate_v4() primary key,
   student_id uuid references profiles(id) on delete cascade unique not null,
   growth_score integer default 0,
@@ -58,8 +80,7 @@ create table student_growth (
   updated_at timestamptz default now()
 );
 
--- Tutor-student relationships
-create table tutor_students (
+create table if not exists tutor_students (
   id uuid default uuid_generate_v4() primary key,
   tutor_id uuid references profiles(id) on delete cascade not null,
   student_id uuid references profiles(id) on delete cascade not null,
@@ -67,8 +88,7 @@ create table tutor_students (
   unique(tutor_id, student_id)
 );
 
--- Projects created by tutors
-create table projects (
+create table if not exists projects (
   id uuid default uuid_generate_v4() primary key,
   tutor_id uuid references profiles(id) on delete cascade not null,
   title text not null,
@@ -84,8 +104,7 @@ create table projects (
   created_at timestamptz default now()
 );
 
--- Project assignments (tutor assigns project to student)
-create table project_assignments (
+create table if not exists project_assignments (
   id uuid default uuid_generate_v4() primary key,
   project_id uuid references projects(id) on delete cascade not null,
   student_id uuid references profiles(id) on delete cascade not null,
@@ -96,7 +115,9 @@ create table project_assignments (
   unique(project_id, student_id)
 );
 
--- RLS Policies
+-- ============================================================
+-- STEP 5: Enable RLS
+-- ============================================================
 alter table profiles enable row level security;
 alter table intelligence_profiles enable row level security;
 alter table student_growth enable row level security;
@@ -104,73 +125,177 @@ alter table tutor_students enable row level security;
 alter table projects enable row level security;
 alter table project_assignments enable row level security;
 
--- Helper: get current user's profile id without triggering RLS recursion
+-- ============================================================
+-- STEP 6: Drop ALL existing policies
+-- ============================================================
+do $$ declare r record; begin
+  for r in (
+    select policyname, tablename
+    from pg_policies
+    where schemaname = 'public'
+  ) loop
+    execute format(
+      'drop policy if exists %I on %I',
+      r.policyname, r.tablename
+    );
+  end loop;
+end$$;
+
+-- ============================================================
+-- STEP 7: Helper — reads profiles without triggering RLS recursion
+-- ============================================================
 create or replace function get_my_profile_id()
-returns uuid language sql security definer stable as $$
+returns uuid
+language sql
+security definer
+set search_path = public
+stable
+as $$
   select id from profiles where user_id = auth.uid() limit 1;
 $$;
 
--- Profiles: users can manage own profile, tutors can read their students
-create policy "Users can view own profile" on profiles for select using (auth.uid() = user_id);
-create policy "Users can update own profile" on profiles for update using (auth.uid() = user_id);
-create policy "Users can insert own profile" on profiles for insert with check (auth.uid() = user_id);
-create policy "Tutors can view their students profiles" on profiles for select using (
-  exists (select 1 from tutor_students where tutor_id = get_my_profile_id() and student_id = profiles.id)
-);
+-- ============================================================
+-- STEP 8: Helper — creates profile on signup (bypasses RLS)
+-- ============================================================
+create or replace function ensure_profile_exists(
+  p_user_id uuid,
+  p_full_name text,
+  p_email text,
+  p_role text
+) returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+begin
+  if auth.uid() != p_user_id then
+    raise exception 'Unauthorized';
+  end if;
+  insert into profiles (user_id, full_name, email, role)
+  values (p_user_id, p_full_name, p_email, p_role)
+  on conflict (user_id) do nothing;
+  select role into v_role from profiles where user_id = p_user_id;
+  return v_role;
+end;
+$$;
 
--- Intelligence profiles: student sees own, tutor sees their students
-create policy "Students view own intelligence profile" on intelligence_profiles for select using (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
-create policy "Students insert own intelligence profile" on intelligence_profiles for insert with check (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
-create policy "Students update own intelligence profile" on intelligence_profiles for update using (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
-create policy "Tutors view their students intelligence" on intelligence_profiles for select using (
-  exists (select 1 from tutor_students ts join profiles tp on tp.id = ts.tutor_id where tp.user_id = auth.uid() and ts.student_id = intelligence_profiles.student_id)
-);
+-- ============================================================
+-- STEP 9: RLS Policies
+-- ============================================================
 
--- Student growth
-create policy "Students view own growth" on student_growth for select using (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
-create policy "Students update own growth" on student_growth for all using (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
-create policy "Tutors view student growth" on student_growth for select using (
-  exists (select 1 from tutor_students ts join profiles tp on tp.id = ts.tutor_id where tp.user_id = auth.uid() and ts.student_id = student_growth.student_id)
-);
+-- profiles
+create policy "users_select_own" on profiles
+  for select using (auth.uid() = user_id);
 
--- Projects
-create policy "Tutors manage their projects" on projects for all using (
-  exists (select 1 from profiles p where p.id = tutor_id and p.user_id = auth.uid())
-);
-create policy "Students view assigned projects" on projects for select using (
-  exists (select 1 from project_assignments pa where pa.project_id = projects.id and exists (select 1 from profiles p where p.id = pa.student_id and p.user_id = auth.uid()))
-);
+create policy "users_insert_own" on profiles
+  for insert with check (auth.uid() = user_id);
 
--- Project assignments
-create policy "Tutors manage assignments" on project_assignments for all using (
-  exists (select 1 from projects pr join profiles p on p.id = pr.tutor_id where p.user_id = auth.uid() and pr.id = project_assignments.project_id)
-);
-create policy "Students view and update own assignments" on project_assignments for select using (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
-create policy "Students update own assignment status" on project_assignments for update using (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
+create policy "users_update_own" on profiles
+  for update using (auth.uid() = user_id);
 
--- Tutor-student relationships
-create policy "Tutors manage their students" on tutor_students for all using (
-  exists (select 1 from profiles p where p.id = tutor_id and p.user_id = auth.uid())
-);
-create policy "Students view their tutors" on tutor_students for select using (
-  exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-);
+create policy "tutors_select_students" on profiles
+  for select using (
+    exists (
+      select 1 from tutor_students
+      where tutor_id = get_my_profile_id()
+      and student_id = profiles.id
+    )
+  );
 
--- Function to recalculate student growth when project is completed
+-- intelligence_profiles
+create policy "students_select_own_intel" on intelligence_profiles
+  for select using (
+    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
+  );
+
+create policy "students_insert_own_intel" on intelligence_profiles
+  for insert with check (
+    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
+  );
+
+create policy "students_update_own_intel" on intelligence_profiles
+  for update using (
+    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
+  );
+
+create policy "tutors_select_student_intel" on intelligence_profiles
+  for select using (
+    exists (
+      select 1 from tutor_students ts
+      join profiles tp on tp.id = ts.tutor_id
+      where tp.user_id = auth.uid()
+      and ts.student_id = intelligence_profiles.student_id
+    )
+  );
+
+-- student_growth
+create policy "students_all_own_growth" on student_growth
+  for all using (
+    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
+  );
+
+create policy "tutors_select_growth" on student_growth
+  for select using (
+    exists (
+      select 1 from tutor_students ts
+      join profiles tp on tp.id = ts.tutor_id
+      where tp.user_id = auth.uid()
+      and ts.student_id = student_growth.student_id
+    )
+  );
+
+-- tutor_students
+create policy "tutors_all_their_students" on tutor_students
+  for all using (
+    exists (select 1 from profiles p where p.id = tutor_id and p.user_id = auth.uid())
+  );
+
+create policy "students_select_their_tutors" on tutor_students
+  for select using (
+    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
+  );
+
+-- projects
+create policy "tutors_all_projects" on projects
+  for all using (
+    exists (select 1 from profiles p where p.id = tutor_id and p.user_id = auth.uid())
+  );
+
+create policy "students_select_assigned_projects" on projects
+  for select using (
+    exists (
+      select 1 from project_assignments pa
+      where pa.project_id = projects.id
+      and exists (select 1 from profiles p where p.id = pa.student_id and p.user_id = auth.uid())
+    )
+  );
+
+-- project_assignments
+create policy "tutors_all_assignments" on project_assignments
+  for all using (
+    exists (
+      select 1 from projects pr
+      join profiles p on p.id = pr.tutor_id
+      where p.user_id = auth.uid()
+      and pr.id = project_assignments.project_id
+    )
+  );
+
+create policy "students_select_own_assignments" on project_assignments
+  for select using (
+    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
+  );
+
+create policy "students_update_own_assignments" on project_assignments
+  for update using (
+    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
+  );
+
+-- ============================================================
+-- STEP 10: Growth recalculation trigger
+-- ============================================================
 create or replace function update_student_growth()
 returns trigger as $$
 declare
@@ -180,18 +305,24 @@ declare
   new_level text;
 begin
   if NEW.status = 'completed' and OLD.status != 'completed' then
-    select count(*) into completed_count from project_assignments where student_id = NEW.student_id and status = 'completed';
-    select count(*) into total_count from project_assignments where student_id = NEW.student_id;
+    select count(*) into completed_count
+      from project_assignments
+      where student_id = NEW.student_id and status = 'completed';
+    select count(*) into total_count
+      from project_assignments
+      where student_id = NEW.student_id;
     new_score := (completed_count * 100) / greatest(total_count, 1);
     new_level := case
       when completed_count >= 20 then 'Legend'
       when completed_count >= 10 then 'Master'
-      when completed_count >= 5 then 'Explorer'
-      when completed_count >= 2 then 'Sprout'
+      when completed_count >= 5  then 'Explorer'
+      when completed_count >= 2  then 'Sprout'
       else 'Seed'
     end;
-    insert into student_growth (student_id, growth_score, projects_completed, projects_total, level, updated_at)
-    values (NEW.student_id, new_score, completed_count, total_count, new_level, now())
+    insert into student_growth
+      (student_id, growth_score, projects_completed, projects_total, level, updated_at)
+    values
+      (NEW.student_id, new_score, completed_count, total_count, new_level, now())
     on conflict (student_id) do update set
       growth_score = new_score,
       projects_completed = completed_count,
