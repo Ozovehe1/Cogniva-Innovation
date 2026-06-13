@@ -1,9 +1,8 @@
 'use server'
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
 
-export type LoginState = { error: string }
-export type SignupState = { error: string; confirmEmail: boolean }
+export type LoginState = { error: string; redirectTo: string | null }
+export type SignupState = { error: string; confirmEmail: boolean; redirectTo: string | null }
 
 export async function loginAction(
   _prev: LoginState,
@@ -20,10 +19,10 @@ export async function loginAction(
       error: error.message.toLowerCase().includes('email not confirmed')
         ? 'Please confirm your email first — check your inbox for the confirmation link.'
         : error.message,
+      redirectTo: null,
     }
   }
 
-  // Recover or confirm profile
   let { data: profile } = await supabase
     .from('profiles').select('role').eq('user_id', data.user.id).single()
 
@@ -36,12 +35,12 @@ export async function loginAction(
         p_email: email,
         p_role: meta.role,
       })
-      redirect(meta.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
+      return { error: '', redirectTo: meta.role === 'tutor' ? '/tutor/dashboard' : '/dashboard' }
     }
-    return { error: 'Account found but profile is missing. Please sign up again.' }
+    return { error: 'Account found but profile is missing. Please sign up again.', redirectTo: null }
   }
 
-  redirect(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
+  return { error: '', redirectTo: profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard' }
 }
 
 export async function signupAction(
@@ -60,20 +59,22 @@ export async function signupAction(
     options: { data: { full_name: fullName, role } },
   })
 
-  if (error) return { error: error.message, confirmEmail: false }
-  if (!data.user) return { error: 'Signup failed. Please try again.', confirmEmail: false }
+  if (error) return { error: error.message, confirmEmail: false, redirectTo: null }
+  if (!data.user) return { error: 'Signup failed. Please try again.', confirmEmail: false, redirectTo: null }
 
   if (data.session) {
-    // Email confirmation is OFF — user is immediately signed in
     await supabase.rpc('ensure_profile_exists', {
       p_user_id: data.user.id,
       p_full_name: fullName,
       p_email: email,
       p_role: role,
     })
-    redirect(role === 'student' ? '/assessment' : '/tutor/dashboard')
+    return {
+      error: '',
+      confirmEmail: false,
+      redirectTo: role === 'student' ? '/assessment' : '/tutor/dashboard',
+    }
   }
 
-  // Email confirmation is ON — tell client to show the confirm screen
-  return { error: '', confirmEmail: true }
+  return { error: '', confirmEmail: true, redirectTo: null }
 }

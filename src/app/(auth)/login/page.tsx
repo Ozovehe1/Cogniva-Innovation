@@ -1,5 +1,5 @@
 'use client'
-import { useActionState } from 'react'
+import { useActionState, useEffect } from 'react'
 import { loginAction } from '@/app/actions/auth'
 import Link from 'next/link'
 
@@ -7,7 +7,13 @@ const inputClass = "w-full px-4 py-3 rounded-xl text-sm text-white placeholder-z
 const inputStyle = { background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }
 
 export default function LoginPage() {
-  const [state, formAction, pending] = useActionState(loginAction, { error: '' })
+  const [state, formAction, pending] = useActionState(loginAction, { error: '', redirectTo: null })
+
+  useEffect(() => {
+    if (state.redirectTo) {
+      window.location.href = state.redirectTo
+    }
+  }, [state.redirectTo])
 
   return (
     <div>
@@ -32,13 +38,13 @@ export default function LoginPage() {
             <span>⚠</span> {state.error}
           </div>
         )}
-        <button type="submit" disabled={pending}
+        <button type="submit" disabled={pending || !!state.redirectTo}
           className="w-full py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50"
-          style={{ background: pending ? '#6D28D9' : '#7C3AED' }}>
-          {pending ? (
+          style={{ background: '#7C3AED' }}>
+          {(pending || state.redirectTo) ? (
             <span className="flex items-center justify-center gap-2">
               <span className="w-4 h-4 rounded-full border-2 border-violet-300 border-t-white animate-spin" />
-              Signing in...
+              {state.redirectTo ? 'Redirecting...' : 'Signing in...'}
             </span>
           ) : 'Sign In'}
         </button>
