@@ -1,16 +1,6 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
-
-function getModel() {
-  return genAI.getGenerativeModel({
-    model: 'gemini-2.5-pro',
-    generationConfig: {
-      // @ts-expect-error thinkingConfig is supported in gemini-2.5-pro
-      thinkingConfig: { thinkingBudget: 0 },
-    },
-  })
-}
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 
 function parseGeminiJson(raw: string) {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
@@ -40,8 +30,15 @@ Generate a JSON response with exactly these keys:
 Intelligence type keys: linguistic, logicalMathematical, spatial, musical, bodilyKinesthetic, interpersonal, intrapersonal, naturalist
 Return ONLY valid JSON, no markdown, no explanation.`
 
-  const result = await getModel().generateContent(prompt)
-  return parseGeminiJson(result.response.text())
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-pro',
+    contents: prompt,
+    config: {
+      thinkingConfig: { thinkingBudget: 128 },
+    },
+  })
+
+  return parseGeminiJson(response.text ?? '')
 }
 
 export async function generateProjectForStudent(studentProfile: object, subject: string, difficulty: string) {
@@ -60,6 +57,13 @@ Return JSON with these keys:
 
 Return ONLY valid JSON, no markdown.`
 
-  const result = await getModel().generateContent(prompt)
-  return parseGeminiJson(result.response.text())
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-pro',
+    contents: prompt,
+    config: {
+      thinkingConfig: { thinkingBudget: 128 },
+    },
+  })
+
+  return parseGeminiJson(response.text ?? '')
 }
