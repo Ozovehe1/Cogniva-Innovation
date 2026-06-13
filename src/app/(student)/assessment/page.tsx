@@ -107,47 +107,56 @@ function AssessmentResults({ profile }: { profile: IntelProfile }) {
   )
 }
 
-// 16 questions — 2 per Gardner intelligence type (as specified in GeniusMap design)
+// 24 behavioral questions — 3 per Gardner intelligence type
+// Framed around observable actions and situations, not preferences
 const questions = [
-  // Linguistic — Thinks in language and stories
-  { id: 1, text: 'When you want to explain something, do you find the right words easily and enjoy it?', type: 'linguistic' },
-  { id: 2, text: 'Do you enjoy reading, writing stories, or making up your own poems in your free time?', type: 'linguistic' },
+  // Linguistic — language, words, memory through text/speech
+  { id: 1,  text: 'When you need to remember something important, you write it out or repeat it aloud — not sketch it or draw a diagram.', type: 'linguistic' },
+  { id: 2,  text: 'People ask you to help word things — an email, an argument, a speech — because you phrase things clearly and precisely.', type: 'linguistic' },
+  { id: 3,  text: 'In conversation, you notice when someone uses a word imprecisely or the wrong term, even when you choose not to correct them.', type: 'linguistic' },
 
-  // Logical-Mathematical — Loves patterns and reasoning
-  { id: 3, text: 'Do you enjoy puzzles, number games, or figuring out exactly how something works step by step?', type: 'logicalMathematical' },
-  { id: 4, text: 'When something goes wrong, do you want to find the exact cause rather than guess?', type: 'logicalMathematical' },
+  // Logical-Mathematical — reasoning, systems, cause-and-effect
+  { id: 4,  text: 'When something stops working, your first instinct is to trace the cause step-by-step, not try random fixes.', type: 'logicalMathematical' },
+  { id: 5,  text: 'Before agreeing with a conclusion, you naturally check whether the reasoning actually supports it.', type: 'logicalMathematical' },
+  { id: 6,  text: 'You find yourself estimating or calculating in your head during everyday situations — prices, time, distances — before others think to.', type: 'logicalMathematical' },
 
-  // Spatial — Thinks in pictures and shapes
-  { id: 5, text: 'Can you picture objects or places clearly in your mind even when they are not in front of you?', type: 'spatial' },
-  { id: 6, text: 'Do you often doodle, sketch, or imagine how things would look from a different angle?', type: 'spatial' },
+  // Spatial — navigation, visualisation, awareness of space and form
+  { id: 7,  text: 'You can usually retrace a route you have only taken once, without needing directions.', type: 'spatial' },
+  { id: 8,  text: 'When assembling or building something, you prefer to visualise the steps mentally rather than follow written instructions.', type: 'spatial' },
+  { id: 9,  text: 'You notice visual or spatial details others miss — how a room could be rearranged, two colours clashing, or the angle of light.', type: 'spatial' },
 
-  // Musical — Sensitive to rhythm and sound
-  { id: 7, text: 'Do you notice rhythms or background music that others seem to miss, and does it affect your mood?', type: 'musical' },
-  { id: 8, text: 'Do melodies or beats stick in your head easily and help you remember things better?', type: 'musical' },
+  // Musical — rhythm, pitch, sound sensitivity
+  { id: 10, text: 'You notice background music — its mood, key, or rhythm — even when everyone around you seems completely unaware of it.', type: 'musical' },
+  { id: 11, text: 'You can tell almost immediately when a song is slightly off-key or when the beat is wrong.', type: 'musical' },
+  { id: 12, text: 'Specific music or sound environments meaningfully change how well you think, focus, or feel.', type: 'musical' },
 
-  // Bodily-Kinesthetic — Learns through movement
-  { id: 9, text: 'Do you learn something best when you physically do it yourself, rather than just watching or reading?', type: 'bodilyKinesthetic' },
-  { id: 10, text: 'Are you skilled with your hands — building things, playing a sport, dancing, or crafting?', type: 'bodilyKinesthetic' },
+  // Bodily-Kinesthetic — physical learning, movement, precision
+  { id: 13, text: 'You pick up physical skills — a sport, a craft, a technique — noticeably faster from doing than from watching or reading.', type: 'bodilyKinesthetic' },
+  { id: 14, text: 'You think better when you are moving — pacing, gesturing, or walking — rather than sitting completely still.', type: 'bodilyKinesthetic' },
+  { id: 15, text: 'You are naturally precise with your hands — handling small parts, crafting, or building — in a way that does not require much effort.', type: 'bodilyKinesthetic' },
 
-  // Interpersonal — Understands people naturally
-  { id: 11, text: 'Can you usually tell how someone is feeling even before they say a word?', type: 'interpersonal' },
-  { id: 12, text: 'Do people often come to you for advice, or naturally follow your lead in group situations?', type: 'interpersonal' },
+  // Interpersonal — reading people, navigating groups
+  { id: 16, text: 'You can usually tell when someone is holding something back or is upset, even when they insist they are fine.', type: 'interpersonal' },
+  { id: 17, text: 'In a group with tension or conflict, people tend to turn to you — for help resolving it or for a sense of what to do next.', type: 'interpersonal' },
+  { id: 18, text: 'After a gathering or meeting, you remember specific things each person said long after others have forgotten the details.', type: 'interpersonal' },
 
-  // Intrapersonal — Deeply self-aware
-  { id: 13, text: 'Do you know your own strengths and weaknesses well, and think about why you react the way you do?', type: 'intrapersonal' },
-  { id: 14, text: 'Do you prefer to figure things out on your own and trust your own judgment over the group?', type: 'intrapersonal' },
+  // Intrapersonal — self-awareness, reflection, independence
+  { id: 19, text: 'Before a meaningful decision, you spend considerable time examining your own feelings and motivations — more than most people expect.', type: 'intrapersonal' },
+  { id: 20, text: 'You prefer to work through a problem alone before involving others, even when collaboration is readily available.', type: 'intrapersonal' },
+  { id: 21, text: 'You are usually accurate when predicting in advance how a future outcome will make you feel.', type: 'intrapersonal' },
 
-  // Naturalist — Observes patterns in nature
-  { id: 15, text: 'Do you notice animals, plants, weather patterns, or natural details that most people walk past?', type: 'naturalist' },
-  { id: 16, text: 'Do you feel more calm and focused when you are outdoors or in a natural environment?', type: 'naturalist' },
+  // Naturalist — pattern recognition in living systems, environment
+  { id: 22, text: 'Outdoors, you notice things most people walk past — a bird\'s specific call, the way plants cluster, or cloud formations.', type: 'naturalist' },
+  { id: 23, text: 'You learn and retain information about living systems — animals, ecosystems, biology — more easily than abstract concepts.', type: 'naturalist' },
+  { id: 24, text: 'Being in natural environments — outside, near water, among trees — noticeably affects your mood or your ability to think clearly.', type: 'naturalist' },
 ]
 
 const options = [
-  { val: 1, label: 'Not at all like me' },
-  { val: 2, label: 'Rarely like me' },
-  { val: 3, label: 'Sometimes like me' },
-  { val: 4, label: 'Often like me' },
-  { val: 5, label: 'Exactly like me' },
+  { val: 1, label: 'Not me' },
+  { val: 2, label: 'Rarely' },
+  { val: 3, label: 'Sometimes' },
+  { val: 4, label: 'Often' },
+  { val: 5, label: 'Exactly me' },
 ]
 
 const analysisSteps = [
@@ -409,6 +418,7 @@ export default function AssessmentPage() {
           <span className="text-white text-sm font-medium">Intelligence Assessment</span>
           <span className="text-xs tabular-nums" style={{ color: '#52525B' }}>
             {step + 1}<span style={{ color: '#3F3F46' }}> / {questions.length}</span>
+
           </span>
         </div>
         {/* Animated progress bar */}
@@ -423,7 +433,7 @@ export default function AssessmentPage() {
       </div>
 
       {/* Sliding question */}
-      <div className="overflow-hidden mb-5">
+      <div className="overflow-hidden mb-4">
         <AnimatePresence mode="wait" custom={direction}>
           <motion.div
             key={step}
@@ -433,13 +443,12 @@ export default function AssessmentPage() {
             animate="center"
             exit="exit"
             transition={spring}
-            className="p-5 sm:p-8 rounded-2xl"
-            style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}
+            className="py-6"
           >
-            <p className="text-xs font-medium mb-5 uppercase tracking-widest" style={{ color: '#52525B' }}>
+            <p className="text-xs mb-4 uppercase tracking-wider" style={{ color: '#3F3F46' }}>
               {current.type.replace(/([A-Z])/g, ' $1').trim()}
             </p>
-            <h2 className="text-white text-lg font-medium leading-relaxed">{current.text}</h2>
+            <h2 className="text-white text-base font-medium leading-relaxed">{current.text}</h2>
           </motion.div>
         </AnimatePresence>
       </div>
@@ -447,10 +456,10 @@ export default function AssessmentPage() {
       {/* Staggered options */}
       <motion.div
         key={`options-${step}`}
-        className="space-y-2"
+        className="space-y-1.5"
         initial="hidden"
         animate="visible"
-        variants={{ visible: { transition: { staggerChildren: 0.06 } } }}
+        variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
       >
         {options.map(({ val, label }) => {
           const selected = answers[current.id] === val
@@ -458,19 +467,20 @@ export default function AssessmentPage() {
             <motion.button
               key={val}
               variants={{
-                hidden: { opacity: 0, x: -12 },
-                visible: { opacity: 1, x: 0, transition: spring },
+                hidden: { opacity: 0, y: 6 },
+                visible: { opacity: 1, y: 0, transition: spring },
               }}
               onClick={() => selectAnswer(val)}
-              className="w-full text-left px-5 py-3.5 rounded-xl text-sm font-medium transition-colors"
+              className="w-full text-left px-4 py-2.5 rounded-lg text-sm transition-all"
               style={{
-                background: selected ? 'rgba(124,58,237,0.18)' : '#111113',
-                border: `1px solid ${selected ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.07)'}`,
-                color: selected ? '#C4B5FD' : '#71717A',
+                background: selected ? 'rgba(124,58,237,0.1)' : 'transparent',
+                border: `1px solid ${selected ? 'rgba(124,58,237,0.35)' : 'rgba(255,255,255,0.06)'}`,
+                color: selected ? '#C4B5FD' : '#52525B',
+                fontWeight: selected ? 500 : 400,
               }}
-              whileHover={{ borderColor: 'rgba(124,58,237,0.3)', color: '#A1A1AA' }}
-              whileTap={{ scale: 0.99 }}
-              transition={{ duration: 0.12 }}
+              whileHover={{ color: '#A1A1AA', borderColor: 'rgba(255,255,255,0.12)' }}
+              whileTap={{ scale: 0.995 }}
+              transition={{ duration: 0.1 }}
             >
               {label}
             </motion.button>

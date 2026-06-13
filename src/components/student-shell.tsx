@@ -1,10 +1,40 @@
 'use client'
-import { useState } from 'react'
+import React, { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { IdleTimeout } from './idle-timeout'
 
 interface NavItem { href: string; icon: string; label: string }
+
+const icons: Record<string, React.ReactNode> = {
+  home: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+      <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+    </svg>
+  ),
+  brain: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2a4 4 0 0 1 4 4c0 .34-.04.67-.1 1A4 4 0 0 1 20 11a4 4 0 0 1-2 3.46V20a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-5.54A4 4 0 0 1 4 11a4 4 0 0 1 4.1-4A4 4 0 0 1 12 2z"/>
+    </svg>
+  ),
+  list: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>
+    </svg>
+  ),
+  users: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+  ),
+  plus: (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+      <path d="M12 5v14M5 12h14"/>
+    </svg>
+  ),
+}
 
 export function StudentShell({
   children,
@@ -31,7 +61,7 @@ export function StudentShell({
               color: active ? '#fff' : '#71717A',
               background: active ? 'rgba(124,58,237,0.15)' : 'transparent',
             }}>
-            <span className="text-base w-4 text-center">{icon}</span>
+            <span className="w-4 flex items-center justify-center flex-shrink-0" style={{ color: active ? '#A78BFA' : '#52525B' }}>{icons[icon] ?? icon}</span>
             <span>{label}</span>
           </Link>
         )

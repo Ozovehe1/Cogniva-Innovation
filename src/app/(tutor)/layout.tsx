@@ -51,10 +51,10 @@ select_error: ${selectError?.message ?? 'none'}`}
   if (profile.role !== 'tutor') redirect('/dashboard')
 
   const navItems = [
-    { href: '/tutor/dashboard', icon: '◈', label: 'Dashboard' },
-    { href: '/tutor/students', icon: '⬡', label: 'Students' },
-    { href: '/tutor/projects', icon: '⬢', label: 'Projects' },
-    { href: '/tutor/projects/new', icon: '+', label: 'New Project' },
+    { href: '/tutor/dashboard', icon: 'home', label: 'Dashboard' },
+    { href: '/tutor/students', icon: 'users', label: 'Students' },
+    { href: '/tutor/projects', icon: 'list', label: 'Projects' },
+    { href: '/tutor/projects/new', icon: 'plus', label: 'New Project' },
   ]
 
   const initials = profile.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
