@@ -4,6 +4,23 @@ import { NextResponse } from 'next/server'
 
 export const maxDuration = 60 // extend Vercel function timeout to 60s (Pro) or max allowed (Hobby)
 
+export async function GET() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ hasProfile: false })
+
+  const { data: profile } = await supabase.from('profiles').select('id').eq('user_id', user.id).single()
+  if (!profile) return NextResponse.json({ hasProfile: false })
+
+  const { data: intel } = await supabase
+    .from('intelligence_profiles')
+    .select('id')
+    .eq('student_id', (profile as { id: string }).id)
+    .maybeSingle()
+
+  return NextResponse.json({ hasProfile: !!intel })
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

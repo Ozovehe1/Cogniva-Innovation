@@ -201,7 +201,18 @@ export default function AssessmentPage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisDone, setAnalysisDone] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
+  const [checking, setChecking] = useState(true)
   const router = useRouter()
+
+  useEffect(() => {
+    fetch('/api/ai/assess', { method: 'GET' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.hasProfile) router.replace('/dashboard')
+        else setChecking(false)
+      })
+      .catch(() => setChecking(false))
+  }, [router])
 
   const current = questions[step]
   const progress = (step / questions.length) * 100
@@ -253,6 +264,8 @@ export default function AssessmentPage() {
     setDirection(-1)
     setTimeout(() => setStep(s => s - 1), 0)
   }
+
+  if (checking) return null
 
   if (analyzing) return <AnalyzingScreen done={analysisDone} />
 
