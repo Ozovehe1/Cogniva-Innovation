@@ -31,7 +31,7 @@ Intelligence type keys: linguistic, logicalMathematical, spatial, musical, bodil
 Return ONLY valid JSON, no markdown, no explanation.`
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-pro',
+    model: 'gemini-2.5-flash',
     contents: prompt,
     config: {
       thinkingConfig: { thinkingBudget: 128 },
@@ -58,7 +58,7 @@ Return JSON with these keys:
 Return ONLY valid JSON, no markdown.`
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-pro',
+    model: 'gemini-2.5-flash',
     contents: prompt,
     config: {
       thinkingConfig: { thinkingBudget: 128 },
