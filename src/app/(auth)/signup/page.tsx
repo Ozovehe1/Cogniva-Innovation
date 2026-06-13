@@ -21,7 +21,7 @@ export default function SignupPage() {
       user_id: data.user.id, full_name: form.fullName, email: form.email, role: form.role
     })
     if (profileError) { setError(profileError.message); setLoading(false); return }
-    router.push(form.role === 'student' ? '/assessment' : '/dashboard')
+    router.push(form.role === 'student' ? '/assessment' : '/tutor/dashboard')
   }
 
   return (
