@@ -47,11 +47,13 @@ const options = [
 ]
 
 const analysisSteps = [
-  'Mapping your intelligence profile...',
-  'Identifying cognitive strengths...',
-  'Generating learning pathways...',
-  'Matching career directions...',
-  'Building your GeniusMap...',
+  'Reading your response patterns...',
+  'Mapping cognitive strengths across 8 intelligences...',
+  'Identifying your dominant genius type...',
+  'Generating your personalised learning path...',
+  'Crafting your career alignment...',
+  'Writing your Genius Statement...',
+  'Finalising your GeniusMap...',
 ]
 
 const spring = { type: 'spring' as const, stiffness: 280, damping: 26 }
@@ -78,15 +80,28 @@ function SkeletonLine({ width, delay = 0 }: { width: string; delay?: number }) {
   )
 }
 
-function AnalyzingScreen() {
+function AnalyzingScreen({ done }: { done: boolean }) {
   const [activeStep, setActiveStep] = useState(0)
+  const [pct, setPct] = useState(0)
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveStep(s => (s + 1) % analysisSteps.length)
-    }, 900)
-    return () => clearInterval(interval)
+    const stepInterval = setInterval(() => {
+      setActiveStep(s => Math.min(s + 1, analysisSteps.length - 1))
+    }, 1100)
+    return () => clearInterval(stepInterval)
   }, [])
+
+  useEffect(() => {
+    const target = done ? 100 : 92
+    const tick = setInterval(() => {
+      setPct(p => {
+        if (p >= target) { clearInterval(tick); return target }
+        const step = done ? 2 : (target - p > 20 ? 1.5 : 0.4)
+        return Math.min(p + step, target)
+      })
+    }, 40)
+    return () => clearInterval(tick)
+  }, [done])
 
   return (
     <motion.div
@@ -98,28 +113,40 @@ function AnalyzingScreen() {
     >
       {/* Status line */}
       <div className="mb-10">
-        <div className="flex items-center gap-3 mb-3">
-          <motion.div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#7C3AED' }}
-            animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
-            transition={{ duration: 1.2, repeat: Infinity }}
-          />
-          <AnimatePresence mode="wait">
-            <motion.p
-              key={activeStep}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.3 }}
-              className="text-sm font-medium"
-              style={{ color: '#A78BFA' }}
-            >
-              {analysisSteps[activeStep]}
-            </motion.p>
-          </AnimatePresence>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <motion.div
+              className="w-2 h-2 rounded-full flex-shrink-0"
+              style={{ background: done ? '#22C55E' : '#7C3AED' }}
+              animate={done ? { scale: 1 } : { scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
+              transition={{ duration: 1.2, repeat: done ? 0 : Infinity }}
+            />
+            <AnimatePresence mode="wait">
+              <motion.p
+                key={done ? 'done' : activeStep}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.3 }}
+                className="text-sm font-medium"
+                style={{ color: done ? '#4ADE80' : '#A78BFA' }}
+              >
+                {done ? 'Your GeniusMap is ready ✓' : analysisSteps[activeStep]}
+              </motion.p>
+            </AnimatePresence>
+          </div>
+          <span className="text-sm font-semibold tabular-nums" style={{ color: done ? '#4ADE80' : '#7C3AED' }}>
+            {Math.round(pct)}%
+          </span>
         </div>
-        <div className="h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+        <div className="h-0.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <motion.div
+            className="h-full rounded-full"
+            style={{ background: done ? '#22C55E' : '#7C3AED' }}
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: 0.4, ease: 'easeOut' }}
+          />
+        </div>
       </div>
 
       {/* Skeleton profile card */}
@@ -172,6 +199,8 @@ export default function AssessmentPage() {
   const [step, setStep] = useState(0)
   const [direction, setDirection] = useState(1)
   const [analyzing, setAnalyzing] = useState(false)
+  const [analysisDone, setAnalysisDone] = useState(false)
+  const [analysisError, setAnalysisError] = useState('')
   const router = useRouter()
 
   const current = questions[step]
@@ -179,6 +208,7 @@ export default function AssessmentPage() {
 
   async function submitAssessment(finalAnswers: Record<number, number>) {
     setAnalyzing(true)
+    setAnalysisError('')
     const typeScores: Record<string, number[]> = {}
     questions.forEach(q => {
       if (!typeScores[q.type]) typeScores[q.type] = []
@@ -188,13 +218,24 @@ export default function AssessmentPage() {
     Object.entries(typeScores).forEach(([type, vals]) => {
       scores[type] = Math.round((vals.reduce((a, b) => a + b, 0) / (vals.length * 5)) * 10)
     })
-    const res = await fetch('/api/ai/assess', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers: scores }),
-    })
-    if (res.ok) window.location.href = '/dashboard'
-    else setAnalyzing(false)
+    try {
+      const res = await fetch('/api/ai/assess', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers: scores }),
+      })
+      if (res.ok) {
+        setAnalysisDone(true)
+        setTimeout(() => { window.location.href = '/dashboard' }, 1800)
+      } else {
+        const d = await res.json().catch(() => ({}))
+        setAnalysisError(d.error || 'Analysis failed. Please try again.')
+        setAnalyzing(false)
+      }
+    } catch {
+      setAnalysisError('Network error. Please check your connection and try again.')
+      setAnalyzing(false)
+    }
   }
 
   function selectAnswer(val: number) {
@@ -213,7 +254,27 @@ export default function AssessmentPage() {
     setTimeout(() => setStep(s => s - 1), 0)
   }
 
-  if (analyzing) return <AnalyzingScreen />
+  if (analyzing) return <AnalyzingScreen done={analysisDone} />
+
+  if (analysisError) return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={spring}
+      className="max-w-sm mx-auto text-center pt-16"
+    >
+      <div className="w-14 h-14 rounded-2xl mx-auto mb-6 flex items-center justify-center text-2xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>⚠</div>
+      <h2 className="text-white font-semibold mb-2">Something went wrong</h2>
+      <p className="text-zinc-500 text-sm mb-6 leading-relaxed">{analysisError}</p>
+      <button
+        onClick={() => submitAssessment(answers)}
+        className="px-6 py-3 rounded-xl text-sm font-semibold text-white transition"
+        style={{ background: '#7C3AED' }}
+      >
+        Try Again
+      </button>
+    </motion.div>
+  )
 
   const slideVariants = {
     enter: (dir: number) => ({ x: dir > 0 ? 40 : -40, opacity: 0 }),

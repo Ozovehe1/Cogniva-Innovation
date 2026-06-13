@@ -25,8 +25,16 @@ Intelligence types: linguistic, logicalMathematical, spatial, musical, bodilyKin
 Return ONLY valid JSON, no markdown.
 `
   const result = await geminiModel.generateContent(prompt)
-  const text = result.response.text().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-  return JSON.parse(text)
+  const raw = result.response.text().trim()
+  const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  try {
+    return JSON.parse(text)
+  } catch {
+    // Extract JSON object from any surrounding text
+    const match = text.match(/\{[\s\S]*\}/)
+    if (match) return JSON.parse(match[0])
+    throw new Error('AI returned malformed JSON')
+  }
 }
 
 export async function generateProjectForStudent(studentProfile: object, subject: string, difficulty: string) {
