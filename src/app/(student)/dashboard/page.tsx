@@ -41,7 +41,7 @@ export default async function StudentDashboard() {
     supabase.from('intelligence_profiles').select('*').eq('student_id', profile?.id).single(),
     supabase.from('student_growth').select('*').eq('student_id', profile?.id).single(),
     supabase.from('project_assignments')
-      .select('*, project:projects(title, subject, difficulty, estimated_hours, intelligence_activated)')
+      .select('*, project:projects(title, subject, difficulty, estimated_hours)')
       .eq('student_id', profile?.id)
       .order('created_at', { ascending: false }),
   ])
@@ -134,28 +134,13 @@ export default async function StudentDashboard() {
           <div className="space-y-2">
             {activeProjects.map(a => {
               const sc = statusConfig[a.status] || statusConfig.assigned
-              const activated = (a.project?.intelligence_activated as string[] | null) ?? []
               return (
-                <div key={a.id} className="p-3 rounded-xl" style={{ background: '#18181B' }}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium">{a.project?.title}</p>
-                      <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject} · {a.project?.estimated_hours}h</p>
-                    </div>
-                    <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0" style={{ background: sc.bg, color: sc.color }}>{sc.label}</span>
+                <div key={a.id} className="flex items-center justify-between gap-3 p-3 rounded-xl" style={{ background: '#18181B' }}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium truncate">{a.project?.title}</p>
+                    <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject} · {a.project?.estimated_hours}h</p>
                   </div>
-                  {activated.length > 0 && (
-                    <div className="flex gap-1 mt-2 flex-wrap">
-                      {activated.map(key => {
-                        const m = intelligenceMeta[key]
-                        return m ? (
-                          <span key={key} className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.05)', color: m.hex }}>
-                            {m.emoji} {m.label}
-                          </span>
-                        ) : null
-                      })}
-                    </div>
-                  )}
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0" style={{ background: sc.bg, color: sc.color }}>{sc.label}</span>
                 </div>
               )
             })}
@@ -168,31 +153,18 @@ export default async function StudentDashboard() {
         <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
           <h2 className="text-white font-semibold text-sm mb-4">Completed Projects</h2>
           <div className="space-y-3">
-            {completedList.map(a => {
-              const activated = (a.project?.intelligence_activated as string[] | null) ?? []
-              return (
-                <div key={a.id} className="flex items-start gap-3 py-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: 'rgba(34,197,94,0.15)' }}>
-                    <span className="text-emerald-500 text-xs">✓</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white text-sm font-medium">{a.project?.title}</p>
-                    {activated.length > 0 && (
-                      <div className="flex gap-1 mt-1.5 flex-wrap">
-                        {activated.map(key => {
-                          const m = intelligenceMeta[key]
-                          return m ? (
-                            <span key={key} className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: `${m.hex}15`, color: m.hex }}>
-                              {m.emoji} +0.5 {m.label}
-                            </span>
-                          ) : null
-                        })}
-                      </div>
-                    )}
-                  </div>
+            {completedList.map(a => (
+              <div key={a.id} className="flex items-center gap-3 py-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(34,197,94,0.15)' }}>
+                  <span className="text-emerald-500 text-xs">✓</span>
                 </div>
-              )
-            })}
+                <div className="flex-1 min-w-0">
+                  <p className="text-white text-sm font-medium">{a.project?.title}</p>
+                  <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject}</p>
+                </div>
+                <span className="text-xs text-emerald-600 font-medium flex-shrink-0">Approved</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -200,8 +172,7 @@ export default async function StudentDashboard() {
       {/* ── INTELLIGENCE PROFILE (bottom — evolves with projects) ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h2 className="text-white font-semibold text-sm mb-1">Intelligence Profile</h2>
-          <p className="text-zinc-600 text-xs mb-5">Scores increase by +0.5 each time a tutor approves your project</p>
+          <h2 className="text-white font-semibold text-sm mb-5">Intelligence Profile</h2>
           <div className="space-y-3">
             {sortedScores.map(([key, val]) => {
               const meta = intelligenceMeta[key]
