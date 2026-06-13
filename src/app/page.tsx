@@ -59,10 +59,6 @@ export default function HomePage() {
           <div className="w-[600px] h-[600px] rounded-full" style={{ background: 'radial-gradient(circle, rgba(124,58,237,0.15) 0%, transparent 70%)' }} />
         </div>
         <div className="relative max-w-4xl mx-auto">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-6" style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.3)', color: '#A78BFA' }}>
-            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-            AI & Automation for Social Good — Mr. Ori Hammer Programme 2026
-          </div>
           <h1 className="text-5xl md:text-7xl font-bold text-white leading-tight mb-6">
             Every Student is a<br />
             <span style={{ background: 'linear-gradient(135deg, #A78BFA 0%, #7C3AED 50%, #5B21B6 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
@@ -152,7 +148,7 @@ export default function HomePage() {
 
       {/* Footer */}
       <footer className="px-8 py-8 text-center text-zinc-600 text-sm" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        <p>GeniusMap · Mr. Ori Hammer Innovation Programme 2026 · AI for Social Good</p>
+        <p>© {new Date().getFullYear()} GeniusMap. All rights reserved.</p>
       </footer>
     </div>
   )
