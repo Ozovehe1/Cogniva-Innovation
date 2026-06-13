@@ -1,7 +1,6 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 export default function LoginPage() {
@@ -9,27 +8,34 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
   const supabase = createClient()
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError('')
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      if (error.message.toLowerCase().includes('email not confirmed')) {
+
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+    if (signInError) {
+      if (signInError.message.toLowerCase().includes('email not confirmed')) {
         setError('Please confirm your email first — check your inbox for the confirmation link.')
       } else {
-        setError(error.message)
+        setError(signInError.message)
       }
       setLoading(false)
       return
     }
-    const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('user_id', data.user.id).single()
-    if (profileError || !profile) { setError('Account found but profile is missing. Please sign up again.'); setLoading(false); return }
-    router.push(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
-    router.refresh()
+
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles').select('role').eq('user_id', data.user.id).single()
+    if (profileError || !profile) {
+      setError('Account found but profile is missing. Please sign up again.')
+      setLoading(false)
+      return
+    }
+
+    // Full page navigation — server components need fresh cookies, router.push() misses them
+    window.location.href = profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard'
   }
 
   const inputClass = "w-full px-4 py-3 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition"
@@ -77,4 +83,3 @@ export default function LoginPage() {
     </div>
   )
 }
-

@@ -193,7 +193,7 @@ export default function AssessmentPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answers: scores }),
     })
-    if (res.ok) router.push('/dashboard')
+    if (res.ok) window.location.href = '/dashboard'
     else setAnalyzing(false)
   }
 
