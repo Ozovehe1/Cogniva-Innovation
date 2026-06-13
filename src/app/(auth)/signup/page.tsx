@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 export default function SignupPage() {
-  const [step, setStep] = useState<'role' | 'details'>('role')
+  const [step, setStep] = useState<'role' | 'details' | 'confirm'>('role')
   const [role, setRole] = useState<'student' | 'tutor' | null>(null)
   const [form, setForm] = useState({ fullName: '', email: '', password: '' })
   const [error, setError] = useState('')
@@ -23,13 +23,39 @@ export default function SignupPage() {
       password: form.password,
       options: { data: { full_name: form.fullName, role } },
     })
-    if (signUpError || !data.user) { setError(signUpError?.message || 'Signup failed'); setLoading(false); return }
-    router.push(role === 'student' ? '/assessment' : '/tutor/dashboard')
-    router.refresh()
+    if (signUpError) { setError(signUpError.message); setLoading(false); return }
+    if (!data.user) { setError('Signup failed. Please try again.'); setLoading(false); return }
+
+    // If session exists, email confirmation is OFF — redirect immediately
+    if (data.session) {
+      router.push(role === 'student' ? '/assessment' : '/tutor/dashboard')
+      router.refresh()
+      return
+    }
+    // Email confirmation is ON — show check email screen
+    setLoading(false)
+    setStep('confirm')
   }
 
   const inputClass = "w-full px-4 py-3 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition"
   const inputStyle = { background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }
+
+  if (step === 'confirm') {
+    return (
+      <div className="text-center">
+        <div className="w-14 h-14 rounded-2xl mx-auto mb-6 flex items-center justify-center text-2xl" style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.2)' }}>
+          ✉️
+        </div>
+        <h1 className="text-2xl font-bold text-white mb-2">Check your email</h1>
+        <p className="text-zinc-500 text-sm mb-2">We sent a confirmation link to</p>
+        <p className="text-violet-400 font-medium text-sm mb-6">{form.email}</p>
+        <p className="text-zinc-600 text-xs">Click the link in the email to activate your account, then sign in.</p>
+        <Link href="/login" className="mt-8 inline-block text-sm text-violet-400 hover:text-violet-300 transition">
+          Go to Sign In →
+        </Link>
+      </div>
+    )
+  }
 
   if (step === 'role') {
     return (

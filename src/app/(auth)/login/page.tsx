@@ -17,9 +17,17 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) { setError(error.message); setLoading(false); return }
+    if (error) {
+      if (error.message.toLowerCase().includes('email not confirmed')) {
+        setError('Please confirm your email first — check your inbox for the confirmation link.')
+      } else {
+        setError(error.message)
+      }
+      setLoading(false)
+      return
+    }
     const { data: profile, error: profileError } = await supabase.from('profiles').select('role').eq('user_id', data.user.id).single()
-    if (profileError || !profile) { setError('Could not load your profile. Please try again.'); setLoading(false); return }
+    if (profileError || !profile) { setError('Account found but profile is missing. Please sign up again.'); setLoading(false); return }
     router.push(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
     router.refresh()
   }
