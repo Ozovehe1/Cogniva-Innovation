@@ -1,6 +1,6 @@
 'use client'
-import { useState, useActionState } from 'react'
-import { signupAction } from '@/app/actions/auth'
+import { useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 
 const inputClass = "w-full px-4 py-3 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition"
@@ -10,9 +10,56 @@ export default function SignupPage() {
   const [role, setRole] = useState<'student' | 'tutor' | null>(null)
   const [step, setStep] = useState<'role' | 'details'>('role')
   const [email, setEmail] = useState('')
-  const [state, formAction, pending] = useActionState(signupAction, { error: '', confirmEmail: false })
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const [confirmEmail, setConfirmEmail] = useState(false)
 
-  if (state.confirmEmail) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!role) return
+    setPending(true)
+    setError('')
+
+    const fd = new FormData(e.currentTarget)
+    const emailVal = fd.get('email') as string
+    const password = fd.get('password') as string
+    const fullName = fd.get('fullName') as string
+
+    const supabase = createClient()
+    const { data, error: authError } = await supabase.auth.signUp({
+      email: emailVal,
+      password,
+      options: { data: { full_name: fullName, role } },
+    })
+
+    if (authError) {
+      setError(authError.message)
+      setPending(false)
+      return
+    }
+    if (!data.user) {
+      setError('Signup failed. Please try again.')
+      setPending(false)
+      return
+    }
+
+    if (data.session) {
+      // Email confirmation disabled — user is immediately signed in
+      await supabase.rpc('ensure_profile_exists', {
+        p_user_id: data.user.id,
+        p_full_name: fullName,
+        p_email: emailVal,
+        p_role: role,
+      })
+      window.location.href = role === 'student' ? '/assessment' : '/tutor/dashboard'
+      return
+    }
+
+    // Email confirmation required
+    setConfirmEmail(true)
+  }
+
+  if (confirmEmail) {
     return (
       <div className="text-center">
         <div className="w-14 h-14 rounded-2xl mx-auto mb-6 flex items-center justify-center text-2xl" style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.2)' }}>
@@ -87,8 +134,7 @@ export default function SignupPage() {
         </p>
       </div>
 
-      <form action={formAction} className="space-y-4">
-        <input type="hidden" name="role" value={role ?? ''} />
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">Full Name</label>
           <input name="fullName" type="text" required
@@ -105,9 +151,9 @@ export default function SignupPage() {
           <input name="password" type="password" required minLength={6}
             className={inputClass} style={inputStyle} placeholder="Min. 6 characters" />
         </div>
-        {state.error && (
+        {error && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
-            <span>⚠</span> {state.error}
+            <span>⚠</span> {error}
           </div>
         )}
         <button type="submit" disabled={pending}

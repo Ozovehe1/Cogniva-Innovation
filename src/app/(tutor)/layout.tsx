@@ -19,17 +19,36 @@ export default async function TutorLayout({ children }: { children: React.ReactN
     const { error: rpcError } = await supabase.rpc('ensure_profile_exists', {
       p_user_id: user.id, p_full_name: fullName, p_email: user.email!, p_role: role,
     })
-    if (rpcError) {
-      await supabase.from('profiles').upsert(
-        { user_id: user.id, full_name: fullName, email: user.email!, role },
-        { onConflict: 'user_id', ignoreDuplicates: true }
+    const { error: upsertError } = await supabase.from('profiles').upsert(
+      { user_id: user.id, full_name: fullName, email: user.email!, role },
+      { onConflict: 'user_id', ignoreDuplicates: true }
+    )
+    const { data: recovered, error: selectError } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
+    profile = recovered
+
+    if (!profile) {
+      return (
+        <div style={{ color: 'white', padding: '2rem', background: '#09090B', minHeight: '100vh', fontFamily: 'monospace' }}>
+          <h2 style={{ color: '#f87171', marginBottom: '0.5rem' }}>Profile setup failed</h2>
+          <p style={{ color: '#a1a1aa', marginBottom: '1.5rem', fontSize: '14px' }}>Your account was created but the profile could not be loaded.</p>
+          <pre style={{ background: '#18181B', padding: '1rem', borderRadius: '8px', fontSize: '12px', color: '#71717A', marginBottom: '1.5rem', overflowX: 'auto' }}>
+{`user_id:      ${user.id}
+email:        ${user.email}
+rpc_error:    ${rpcError?.message ?? 'none'}
+upsert_error: ${upsertError?.message ?? 'none'}
+select_error: ${selectError?.message ?? 'none'}`}
+          </pre>
+          <form action="/api/auth/signout" method="post">
+            <button style={{ background: '#7C3AED', color: 'white', padding: '0.5rem 1.25rem', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px' }}>
+              Sign out
+            </button>
+          </form>
+        </div>
       )
     }
-    const { data: recovered } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
-    profile = recovered
   }
 
-  if (!profile || profile.role !== 'tutor') redirect('/dashboard')
+  if (profile.role !== 'tutor') redirect('/dashboard')
 
   const navItems = [
     { href: '/tutor/dashboard', icon: '◈', label: 'Dashboard' },
