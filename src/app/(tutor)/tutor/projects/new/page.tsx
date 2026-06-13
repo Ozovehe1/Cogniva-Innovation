@@ -2,14 +2,30 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+const intelligenceOptions = [
+  { key: 'linguistic',           label: 'Linguistic',    emoji: '📖' },
+  { key: 'logicalMathematical',  label: 'Logical-Math',  emoji: '🔢' },
+  { key: 'spatial',              label: 'Spatial',        emoji: '🗺️' },
+  { key: 'musical',              label: 'Musical',        emoji: '🎵' },
+  { key: 'bodilyKinesthetic',    label: 'Kinesthetic',   emoji: '🏃' },
+  { key: 'interpersonal',        label: 'Interpersonal', emoji: '🤝' },
+  { key: 'intrapersonal',        label: 'Intrapersonal', emoji: '🧘' },
+  { key: 'naturalist',           label: 'Naturalist',    emoji: '🌿' },
+]
+
 export default function NewProjectPage() {
   const [form, setForm] = useState({
     title: '', subject: '', difficulty: 'beginner',
     description: '', objectives: '', steps: '', deliverables: '', estimated_hours: 2,
   })
+  const [activated, setActivated] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const router = useRouter()
+
+  function toggleIntelligence(key: string) {
+    setActivated(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -20,7 +36,7 @@ export default function NewProjectPage() {
       objectives: form.objectives.split('\n').filter(Boolean),
       steps: form.steps.split('\n').filter(Boolean),
       deliverables: form.deliverables.split('\n').filter(Boolean),
-      intelligence_activated: [],
+      intelligence_activated: activated,
     }
     const res = await fetch('/api/projects', {
       method: 'POST',
@@ -98,6 +114,29 @@ export default function NewProjectPage() {
             <label className={labelClass}>Estimated Hours</label>
             <input type="number" min="1" max="200" value={form.estimated_hours} onChange={e => setForm({...form, estimated_hours: +e.target.value})}
               className={inputClass} style={inputStyle} />
+          </div>
+          <div>
+            <label className={labelClass}>
+              Intelligences Activated
+              <span className="text-zinc-600 font-normal ml-1">(selecting these grows student scores on completion)</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
+              {intelligenceOptions.map(({ key, label, emoji }) => {
+                const on = activated.includes(key)
+                return (
+                  <button key={key} type="button" onClick={() => toggleIntelligence(key)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition text-left"
+                    style={{
+                      background: on ? 'rgba(124,58,237,0.15)' : '#18181B',
+                      border: `1px solid ${on ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                      color: on ? '#C4B5FD' : '#71717A',
+                    }}>
+                    <span>{emoji}</span>
+                    <span>{label}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
 

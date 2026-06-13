@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
+import { AssignProject } from '@/components/assign-project'
 
 export const dynamic = 'force-dynamic'
 
@@ -159,12 +160,15 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
 
       {/* Assigned Projects */}
       <div className="p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <h2 className="text-white font-semibold mb-4">
-          Assigned Projects
-          <span className="ml-2 text-xs text-zinc-600 font-normal">({(assignments as unknown[])?.length || 0})</span>
-        </h2>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 className="text-white font-semibold">
+            Assigned Projects
+            <span className="ml-2 text-xs text-zinc-600 font-normal">({(assignments as unknown[])?.length || 0})</span>
+          </h2>
+          <AssignProject studentId={id} />
+        </div>
         {!assignments || (assignments as unknown[]).length === 0 ? (
-          <p className="text-zinc-600 text-sm">No projects assigned yet.</p>
+          <p className="text-zinc-600 text-sm">No projects assigned yet. Use the button above to assign one.</p>
         ) : (
           <div className="space-y-2">
             {(assignments as Array<{
