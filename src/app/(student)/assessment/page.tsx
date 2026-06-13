@@ -113,7 +113,10 @@ function AssessmentResults({ profile }: { profile: IntelProfile }) {
 
       {/* Career paths — chip grid */}
       <div>
-        <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#3F3F46' }}>Career paths</p>
+        <div className="flex items-baseline gap-2 mb-3">
+          <p className="text-xs uppercase tracking-widest" style={{ color: '#3F3F46' }}>Possible career paths</p>
+          <p className="text-xs" style={{ color: '#27272A' }}>· not exhaustive</p>
+        </div>
         <div className="flex flex-wrap gap-2">
           {profile.career_suggestions.map((role, i) => (
             <span key={i} className="px-3 py-1.5 rounded-lg text-sm"
