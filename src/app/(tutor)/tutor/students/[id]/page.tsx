@@ -137,15 +137,28 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
             <div className="space-y-4">
               {/* Growth */}
               <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <h3 className="text-white font-semibold text-sm mb-3">Growth</h3>
-                <div className="flex items-center justify-between mb-2">
+                <h3 className="text-white font-semibold text-sm mb-3">Progress</h3>
+                <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-zinc-500">Level</span>
                   <span className="text-sm font-semibold" style={{ color: lc.color }}>{level}</span>
                 </div>
-                <div className="h-1.5 rounded-full mb-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                  <div className="h-1.5 rounded-full" style={{ width: `${growthData?.growth_score || 0}%`, background: lc.color }} />
+                <div className="h-2 rounded-full mb-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                  <div className="h-full rounded-full" style={{ width: `${growthData?.growth_score || 0}%`, background: lc.color }} />
                 </div>
-                <p className="text-xs text-zinc-600">{growthData?.projects_completed || 0} / {growthData?.projects_total || 0} projects</p>
+                <div className="flex items-center justify-between text-xs mb-4">
+                  <span className="text-zinc-600">{growthData?.projects_completed || 0} approved</span>
+                  <span className="text-zinc-600">{growthData?.projects_total || 0} total</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2.5 rounded-lg text-center" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.15)' }}>
+                    <p className="text-lg font-bold" style={{ color: '#22C55E' }}>{growthData?.projects_completed || 0}</p>
+                    <p className="text-xs text-zinc-600 mt-0.5">Approved</p>
+                  </div>
+                  <div className="p-2.5 rounded-lg text-center" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p className="text-lg font-bold text-zinc-400">{(growthData?.projects_total || 0) - (growthData?.projects_completed || 0)}</p>
+                    <p className="text-xs text-zinc-600 mt-0.5">Remaining</p>
+                  </div>
+                </div>
                 <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   <p className="text-xs text-zinc-500">Dominant Intelligence</p>
                   <p className="text-sm font-medium text-white mt-0.5">
