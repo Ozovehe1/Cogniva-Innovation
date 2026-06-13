@@ -253,7 +253,7 @@ export default function AssessmentPage() {
             animate="center"
             exit="exit"
             transition={spring}
-            className="p-8 rounded-2xl"
+            className="p-5 sm:p-8 rounded-2xl"
             style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}
           >
             <p className="text-xs font-medium mb-5 uppercase tracking-widest" style={{ color: '#52525B' }}>

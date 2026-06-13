@@ -17,7 +17,12 @@ export default function TutorProjectsPage() {
     fetch('/api/projects').then(r => r.json()).then(d => { setProjects(d.projects || []); setLoading(false) })
   }, [])
 
-  if (loading) return <div className="text-zinc-600 text-sm">Loading...</div>
+  if (loading) return (
+    <div className="flex items-center gap-2 text-zinc-600 text-sm pt-8">
+      <span className="w-4 h-4 rounded-full border-2 border-zinc-700 border-t-zinc-400 animate-spin flex-shrink-0" />
+      Loading projects...
+    </div>
+  )
 
   return (
     <div className="max-w-4xl space-y-6">

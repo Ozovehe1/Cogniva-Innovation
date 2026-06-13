@@ -50,7 +50,7 @@ export default function NewProjectPage() {
             <input type="text" value={form.title} onChange={e => setForm({...form, title: e.target.value})} required
               className={inputClass} style={inputStyle} placeholder="e.g. Build a mini weather app" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelClass}>Subject *</label>
               <input type="text" value={form.subject} onChange={e => setForm({...form, subject: e.target.value})} required
@@ -59,7 +59,7 @@ export default function NewProjectPage() {
             <div>
               <label className={labelClass}>Difficulty *</label>
               <select value={form.difficulty} onChange={e => setForm({...form, difficulty: e.target.value})}
-                className={inputClass} style={inputStyle}>
+                className={inputClass} style={{ ...inputStyle, colorScheme: 'dark' }}>
                 <option value="beginner">Beginner</option>
                 <option value="intermediate">Intermediate</option>
                 <option value="advanced">Advanced</option>

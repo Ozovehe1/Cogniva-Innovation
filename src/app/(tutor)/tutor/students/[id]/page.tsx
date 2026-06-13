@@ -65,16 +65,16 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
   return (
     <div className="max-w-5xl space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-start gap-4 flex-wrap">
         <div className="w-14 h-14 rounded-2xl bg-emerald-900 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
           {initials}
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-white">{studentData.full_name}</h1>
-          <p className="text-zinc-500 text-sm">{studentData.email}</p>
-        </div>
-        <div className="ml-auto">
-          <span className="text-sm px-3 py-1.5 rounded-full font-medium" style={{ background: lc.bg, color: lc.color }}>{level}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl font-bold text-white">{studentData.full_name}</h1>
+            <span className="text-sm px-3 py-1 rounded-full font-medium flex-shrink-0" style={{ background: lc.bg, color: lc.color }}>{level}</span>
+          </div>
+          <p className="text-zinc-500 text-sm mt-0.5">{studentData.email}</p>
         </div>
       </div>
 
