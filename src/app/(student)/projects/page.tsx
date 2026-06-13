@@ -104,12 +104,23 @@ export default function StudentProjectsPage() {
           <LinkTutor onLinked={() => window.location.reload()} />
         </div>
       ) : total === 0 ? (
-        <div className="rounded-2xl p-8 text-center" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)' }}>
-          <p className="text-white text-sm font-medium mb-1">
-            Connected{tutorName ? ` to ${tutorName}` : ''}
-          </p>
+        <div className="rounded-2xl p-6" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#3F3F46' }}>Your Tutor</p>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-semibold text-white flex-shrink-0"
+              style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.2)' }}>
+              {tutorName ? tutorName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'T'}
+            </div>
+            <div>
+              <p className="text-white text-sm font-medium">{tutorName ?? 'Your Tutor'}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#22C55E' }} />
+                <span className="text-xs" style={{ color: '#3F3F46' }}>Active</span>
+              </div>
+            </div>
+          </div>
           <p className="text-xs leading-relaxed" style={{ color: '#52525B' }}>
-            Your tutor hasn&apos;t assigned any projects yet. Check back soon.
+            No projects have been assigned yet. Your tutor will assign projects when ready.
           </p>
         </div>
       ) : (
