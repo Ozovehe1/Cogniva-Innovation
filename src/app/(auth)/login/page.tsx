@@ -15,7 +15,7 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
     if (signInError) {
       if (signInError.message.toLowerCase().includes('email not confirmed')) {
         setError('Please confirm your email first — check your inbox for the confirmation link.')
@@ -26,34 +26,8 @@ export default function LoginPage() {
       return
     }
 
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles').select('role').eq('user_id', data.user.id).single()
-
-    let role = profile?.role
-    if (profileError || !profile) {
-      // Profile missing — recover from user metadata (handles accounts created before schema fix)
-      const meta = data.user.user_metadata
-      if (meta?.role) {
-        const { data: recoveredRole, error: rpcError } = await supabase.rpc('ensure_profile_exists', {
-          p_user_id: data.user.id,
-          p_full_name: meta.full_name ?? data.user.email!.split('@')[0],
-          p_email: data.user.email!,
-          p_role: meta.role,
-        })
-        if (rpcError || !recoveredRole) {
-          setError('Profile could not be loaded. Please sign up again.')
-          setLoading(false)
-          return
-        }
-        role = recoveredRole
-      } else {
-        setError('Account found but profile is missing. Please sign up again.')
-        setLoading(false)
-        return
-      }
-    }
-
-    window.location.href = role === 'tutor' ? '/tutor/dashboard' : '/dashboard'
+    // Full page reload so server layouts receive fresh session cookies
+    window.location.href = '/dashboard'
   }
 
   const inputClass = "w-full px-4 py-3 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition"

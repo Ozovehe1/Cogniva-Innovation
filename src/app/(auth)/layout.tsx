@@ -1,8 +1,21 @@
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
-export default function AuthLayout({ children }: { children: React.ReactNode }) {
+export default async function AuthLayout({ children }: { children: React.ReactNode }) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profiles').select('role').eq('user_id', user.id).single()
+    if (profile) {
+      redirect(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
+    }
+  }
+
   return (
     <div className="min-h-screen flex" style={{ background: '#09090B' }}>
       {/* Left: Brand panel */}

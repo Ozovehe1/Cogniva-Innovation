@@ -8,7 +8,21 @@ export default async function TutorLayout({ children }: { children: React.ReactN
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
-  const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
+
+  let { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
+
+  // Profile missing — auto-recover from user metadata (handles pre-schema-fix accounts)
+  if (!profile && user.user_metadata?.role) {
+    await supabase.rpc('ensure_profile_exists', {
+      p_user_id: user.id,
+      p_full_name: user.user_metadata.full_name ?? user.email!.split('@')[0],
+      p_email: user.email!,
+      p_role: user.user_metadata.role,
+    })
+    const { data: recovered } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
+    profile = recovered
+  }
+
   if (!profile || profile.role !== 'tutor') redirect('/dashboard')
 
   const navItems = [
