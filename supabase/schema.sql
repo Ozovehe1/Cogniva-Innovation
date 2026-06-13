@@ -250,6 +250,9 @@ create policy "tutors_all_their_students" on tutor_students
 create policy "students_select_their_tutors" on tutor_students
   for select using (student_id = get_my_profile_id());
 
+create policy "students_insert_own_links" on tutor_students
+  for insert with check (student_id = get_my_profile_id());
+
 -- projects
 create policy "tutors_all_projects" on projects
   for all using (tutor_id = get_my_profile_id());
