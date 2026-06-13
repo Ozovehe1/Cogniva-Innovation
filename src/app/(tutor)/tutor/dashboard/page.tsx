@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { CopyButton } from './copy-button'
 
 export const dynamic = 'force-dynamic'
 
@@ -63,6 +64,15 @@ export default async function TutorDashboard() {
         ))}
       </div>
 
+      {/* Tutor ID — always visible so tutors can share it */}
+      <div className="flex items-center gap-3 p-4 rounded-xl flex-wrap" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-zinc-500 mb-1">Your Tutor ID — share this with students to connect</p>
+          <code className="text-sm font-mono break-all" style={{ color: '#A78BFA' }}>{profile.id}</code>
+        </div>
+        <CopyButton value={profile.id} />
+      </div>
+
       {/* Students */}
       <div>
         <div className="flex items-center justify-between mb-4">
@@ -76,8 +86,7 @@ export default async function TutorDashboard() {
           <div className="flex flex-col items-center justify-center py-16 text-center rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div className="text-4xl mb-4">🔗</div>
             <p className="text-white font-medium mb-1">No students linked yet</p>
-            <p className="text-zinc-500 text-sm mb-4">Share your Tutor ID with students to connect</p>
-            <code className="px-4 py-2 rounded-lg text-xs font-mono" style={{ background: '#18181B', color: '#A78BFA', border: '1px solid rgba(124,58,237,0.2)' }}>{profile.id}</code>
+            <p className="text-zinc-500 text-sm">Copy your Tutor ID above and share it with your students</p>
           </div>
         ) : (
           <div className="space-y-2">

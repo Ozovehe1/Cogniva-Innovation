@@ -108,7 +108,7 @@ create table if not exists project_assignments (
   id uuid default uuid_generate_v4() primary key,
   project_id uuid references projects(id) on delete cascade not null,
   student_id uuid references profiles(id) on delete cascade not null,
-  status text check (status in ('assigned', 'in_progress', 'completed')) default 'assigned',
+  status text check (status in ('assigned', 'in_progress', 'pending_review', 'completed')) default 'assigned',
   submitted_at timestamptz,
   feedback text,
   created_at timestamptz default now(),

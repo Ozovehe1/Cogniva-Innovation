@@ -4,9 +4,10 @@ import { LinkTutor } from '@/components/link-tutor'
 import type { ProjectAssignment } from '@/types'
 
 const statusConfig = {
-  assigned:    { label: 'Assigned',    color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
-  in_progress: { label: 'In Progress', color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
-  completed:   { label: 'Completed',   color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
+  assigned:       { label: 'Assigned',      color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
+  in_progress:    { label: 'In Progress',   color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
+  pending_review: { label: 'Under Review',  color: '#A78BFA', bg: 'rgba(124,58,237,0.1)' },
+  completed:      { label: 'Completed',     color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
 }
 
 const difficultyConfig = {
@@ -15,8 +16,10 @@ const difficultyConfig = {
   advanced:     { color: '#EF4444' },
 }
 
+type AssignmentWithFeedback = ProjectAssignment & { feedback?: string | null }
+
 export default function StudentProjectsPage() {
-  const [assignments, setAssignments] = useState<ProjectAssignment[]>([])
+  const [assignments, setAssignments] = useState<AssignmentWithFeedback[]>([])
   const [loading, setLoading] = useState(true)
   const [acting, setActing] = useState<string | null>(null)
 
@@ -27,7 +30,7 @@ export default function StudentProjectsPage() {
     })
   }, [])
 
-  async function updateStatus(projectId: string, action: 'start' | 'complete') {
+  async function updateStatus(projectId: string, action: 'start' | 'submit') {
     setActing(projectId)
     const endpoint = action === 'start'
       ? `/api/projects/${projectId}/start`
@@ -35,7 +38,7 @@ export default function StudentProjectsPage() {
     await fetch(endpoint, { method: 'POST' })
     setAssignments(prev => prev.map(a =>
       a.project_id === projectId
-        ? { ...a, status: action === 'start' ? 'in_progress' : 'completed' }
+        ? { ...a, status: action === 'start' ? 'in_progress' : 'pending_review', feedback: null }
         : a
     ))
     setActing(null)
@@ -43,6 +46,7 @@ export default function StudentProjectsPage() {
 
   const completed = assignments.filter(a => a.status === 'completed').length
   const total = assignments.length
+  const pendingReview = assignments.filter(a => a.status === 'pending_review').length
   const hasNoTutor = !loading && total === 0
 
   if (loading) {
@@ -61,6 +65,9 @@ export default function StudentProjectsPage() {
           <h1 className="text-2xl font-bold text-white">My Projects</h1>
           <p className="text-zinc-500 text-sm mt-0.5">
             {total === 0 ? 'No projects yet' : `${completed} of ${total} completed`}
+            {pendingReview > 0 && (
+              <span className="ml-2 text-violet-400">{pendingReview} awaiting review</span>
+            )}
           </p>
         </div>
         {total > 0 && (
@@ -94,9 +101,10 @@ export default function StudentProjectsPage() {
       ) : (
         <div className="space-y-3">
           {assignments.map(a => {
-            const sc = statusConfig[a.status]
+            const sc = statusConfig[a.status as keyof typeof statusConfig] || statusConfig.assigned
             const diff = difficultyConfig[(a.project?.difficulty as keyof typeof difficultyConfig) || 'beginner']
             const isActing = acting === a.project_id
+            const feedback = (a as AssignmentWithFeedback).feedback
             return (
               <div key={a.id} className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -116,30 +124,37 @@ export default function StudentProjectsPage() {
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
                     {a.status === 'assigned' && (
-                      <button
-                        onClick={() => updateStatus(a.project_id, 'start')}
-                        disabled={isActing}
+                      <button onClick={() => updateStatus(a.project_id, 'start')} disabled={isActing}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50"
-                        style={{ background: 'rgba(59,130,246,0.15)', color: '#60A5FA', border: '1px solid rgba(59,130,246,0.25)' }}
-                      >
+                        style={{ background: 'rgba(59,130,246,0.15)', color: '#60A5FA', border: '1px solid rgba(59,130,246,0.25)' }}>
                         {isActing ? '...' : 'Start'}
                       </button>
                     )}
                     {a.status === 'in_progress' && (
-                      <button
-                        onClick={() => updateStatus(a.project_id, 'complete')}
-                        disabled={isActing}
+                      <button onClick={() => updateStatus(a.project_id, 'submit')} disabled={isActing}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50"
-                        style={{ background: 'rgba(34,197,94,0.15)', color: '#22C55E', border: '1px solid rgba(34,197,94,0.25)' }}
-                      >
-                        {isActing ? '...' : 'Mark Done'}
+                        style={{ background: 'rgba(124,58,237,0.15)', color: '#A78BFA', border: '1px solid rgba(124,58,237,0.25)' }}>
+                        {isActing ? '...' : 'Submit for Review'}
                       </button>
                     )}
+                    {a.status === 'pending_review' && (
+                      <span className="text-xs font-medium px-2 py-1 rounded-lg" style={{ background: 'rgba(124,58,237,0.1)', color: '#A78BFA' }}>
+                        Awaiting tutor
+                      </span>
+                    )}
                     {a.status === 'completed' && (
-                      <span className="text-emerald-500 text-xs font-medium">✓ Done</span>
+                      <span className="text-emerald-500 text-xs font-medium">✓ Approved</span>
                     )}
                   </div>
                 </div>
+
+                {/* Tutor feedback after return */}
+                {feedback && a.status === 'in_progress' && (
+                  <div className="mt-4 pt-4 rounded-lg px-3 py-2.5" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderTop: 'none' }}>
+                    <p className="text-xs font-medium mb-1" style={{ color: '#F59E0B' }}>Tutor feedback</p>
+                    <p className="text-xs text-zinc-400 leading-relaxed">{feedback}</p>
+                  </div>
+                )}
 
                 {a.project?.objectives && (a.project.objectives as string[]).length > 0 && (
                   <div className="mt-4 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>

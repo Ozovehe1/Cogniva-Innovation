@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { AssignProject } from '@/components/assign-project'
+import { TutorProjectActions } from '@/components/tutor-project-actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,9 +25,10 @@ const levelConfig: Record<string, { color: string; bg: string }> = {
 }
 
 const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-  assigned: { label: 'Assigned', color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
-  in_progress: { label: 'In Progress', color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
-  completed: { label: 'Completed', color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
+  assigned:       { label: 'Assigned',     color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
+  in_progress:    { label: 'In Progress',  color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
+  pending_review: { label: 'Needs Review', color: '#A78BFA', bg: 'rgba(124,58,237,0.15)' },
+  completed:      { label: 'Completed',    color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
 }
 
 export default async function StudentProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -59,6 +61,9 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     career_suggestions?: string[];
   } | null
 
+  const pendingReviews = (assignments as Array<{ status: string; project_id: string; project?: { title?: string } }> | null)
+    ?.filter(a => a.status === 'pending_review') ?? []
+
   const level = growthData?.level || 'Seed'
   const lc = levelConfig[level] || levelConfig['Seed']
   const initials = studentData.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
@@ -78,6 +83,16 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
           <p className="text-zinc-500 text-sm mt-0.5">{studentData.email}</p>
         </div>
       </div>
+
+      {/* Pending review alert */}
+      {pendingReviews.length > 0 && (
+        <div className="p-4 rounded-2xl" style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.25)' }}>
+          <p className="text-sm font-semibold mb-1" style={{ color: '#A78BFA' }}>
+            {pendingReviews.length} project{pendingReviews.length > 1 ? 's' : ''} awaiting your review
+          </p>
+          <p className="text-xs text-zinc-500">Scroll to Assigned Projects below to approve or return them.</p>
+        </div>
+      )}
 
       {!intelData ? (
         <div className="p-5 rounded-2xl" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
@@ -174,18 +189,28 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
             {(assignments as Array<{
               id: string;
               status: string;
+              project_id: string;
+              feedback?: string | null;
               project?: { title?: string; subject?: string; difficulty?: string }
             }>).map(a => {
               const sc = statusConfig[a.status] || statusConfig['assigned']
+              const isPending = a.status === 'pending_review'
               return (
-                <div key={a.id} className="flex items-center justify-between py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                  <div>
-                    <p className="text-white text-sm font-medium">{a.project?.title}</p>
-                    <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject} · {a.project?.difficulty}</p>
+                <div key={a.id} className="py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-medium">{a.project?.title}</p>
+                      <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject} · {a.project?.difficulty}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: sc.bg, color: sc.color }}>
+                        {sc.label}
+                      </span>
+                      {isPending && (
+                        <TutorProjectActions projectId={a.project_id} />
+                      )}
+                    </div>
                   </div>
-                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: sc.bg, color: sc.color }}>
-                    {sc.label}
-                  </span>
                 </div>
               )
             })}

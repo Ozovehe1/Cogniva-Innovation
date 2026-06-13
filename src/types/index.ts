@@ -74,9 +74,9 @@ export interface ProjectAssignment {
   id: string
   project_id: string
   student_id: string
-  status: 'assigned' | 'in_progress' | 'completed'
+  status: 'assigned' | 'in_progress' | 'pending_review' | 'completed'
   submitted_at?: string
-  feedback?: string
+  feedback?: string | null
   created_at: string
   project?: Project
 }
