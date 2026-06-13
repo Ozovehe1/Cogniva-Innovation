@@ -27,14 +27,18 @@ export default function SignupPage() {
     if (!data.user) { setError('Signup failed. Please try again.'); setLoading(false); return }
 
     // If session exists, email confirmation is OFF.
-    // The handle_new_user trigger already created the profile — just fetch it.
+    // Use a security definer RPC to create the profile (bypasses RLS, no recursion).
     if (data.session) {
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles').select('role').eq('user_id', data.user.id).single()
-      if (profileError || !profile) {
-        setError('Profile setup failed — please try again.'); setLoading(false); return
+      const { data: userRole, error: rpcError } = await supabase.rpc('ensure_profile_exists', {
+        p_user_id: data.user.id,
+        p_full_name: form.fullName,
+        p_email: form.email,
+        p_role: role,
+      })
+      if (rpcError || !userRole) {
+        setError(rpcError?.message || 'Profile setup failed — please try again.'); setLoading(false); return
       }
-      router.push(profile.role === 'student' ? '/assessment' : '/tutor/dashboard')
+      router.push(userRole === 'student' ? '/assessment' : '/tutor/dashboard')
       router.refresh()
       return
     }
