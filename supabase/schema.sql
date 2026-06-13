@@ -52,6 +52,7 @@ create table if not exists profiles (
   email text not null,
   role text check (role in ('student', 'tutor')) not null,
   avatar_url text,
+  tutor_code text unique,
   created_at timestamptz default now()
 );
 
@@ -206,6 +207,9 @@ create policy "tutors_select_students" on profiles
       and student_id = profiles.id
     )
   );
+
+create policy "anyone_find_tutor_by_code" on profiles
+  for select using (role = 'tutor' and tutor_code is not null);
 
 -- intelligence_profiles
 create policy "students_select_own_intel" on intelligence_profiles
