@@ -14,11 +14,12 @@ export async function GET() {
 
   const { data: intel } = await supabase
     .from('intelligence_profiles')
-    .select('id')
+    .select('*')
     .eq('student_id', (profile as { id: string }).id)
     .maybeSingle()
 
-  return NextResponse.json({ hasProfile: !!intel })
+  if (!intel) return NextResponse.json({ hasProfile: false })
+  return NextResponse.json({ hasProfile: true, profile: intel })
 }
 
 export async function POST(request: Request) {

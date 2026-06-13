@@ -1,7 +1,111 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
+
+const intelligenceMeta: Record<string, { label: string; emoji: string; hex: string }> = {
+  linguistic:          { label: 'Linguistic',    emoji: '📖', hex: '#3B82F6' },
+  logicalMathematical: { label: 'Logical-Math',  emoji: '🔢', hex: '#22C55E' },
+  spatial:             { label: 'Spatial',        emoji: '🗺️', hex: '#EAB308' },
+  musical:             { label: 'Musical',        emoji: '🎵', hex: '#EC4899' },
+  bodilyKinesthetic:   { label: 'Kinesthetic',   emoji: '🏃', hex: '#F97316' },
+  interpersonal:       { label: 'Interpersonal',  emoji: '🤝', hex: '#14B8A6' },
+  intrapersonal:       { label: 'Intrapersonal',  emoji: '🧘', hex: '#8B5CF6' },
+  naturalist:          { label: 'Naturalist',     emoji: '🌿', hex: '#10B981' },
+}
+
+type IntelProfile = {
+  dominant_intelligence: string
+  intelligence_scores: Record<string, number>
+  genius_statement: string
+  personality_insight: string
+  study_tips: string[]
+  learning_path: string[]
+  career_suggestions: string[]
+}
+
+function AssessmentResults({ profile }: { profile: IntelProfile }) {
+  const dominant = intelligenceMeta[profile.dominant_intelligence]
+  const sortedScores = Object.entries(profile.intelligence_scores).sort((a, b) => b[1] - a[1])
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-white">Your GeniusMap</h1>
+        <p className="text-zinc-500 text-sm mt-0.5">Your intelligence assessment results</p>
+      </div>
+
+      {/* Genius statement */}
+      <div className="relative p-6 rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.15) 0%, rgba(91,33,182,0.08) 100%)', border: '1px solid rgba(124,58,237,0.2)' }}>
+        <div className="absolute top-0 right-0 text-6xl opacity-10 pointer-events-none p-4">{dominant?.emoji}</div>
+        <p className="text-xs font-medium mb-2 uppercase tracking-wider" style={{ color: '#A78BFA' }}>Your Genius</p>
+        <p className="text-white text-lg font-semibold leading-snug">{profile.genius_statement}</p>
+      </div>
+
+      {/* Intelligence bars */}
+      <div className="p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <h2 className="text-white font-semibold text-sm mb-5">Intelligence Profile</h2>
+        <div className="space-y-3">
+          {sortedScores.map(([key, val]) => {
+            const meta = intelligenceMeta[key]
+            return (
+              <div key={key}>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">{meta?.emoji}</span>
+                    <span className="text-xs text-zinc-400">{meta?.label}</span>
+                    {key === profile.dominant_intelligence && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: 'rgba(124,58,237,0.15)', color: '#A78BFA' }}>dominant</span>
+                    )}
+                  </div>
+                  <span className="text-xs font-medium" style={{ color: meta?.hex }}>{val}/10</span>
+                </div>
+                <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                  <div className="h-1.5 rounded-full transition-all" style={{ width: `${val * 10}%`, background: meta?.hex }} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Study tips */}
+        <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <h3 className="text-white font-semibold text-sm mb-3">Study Tips</h3>
+          <ul className="space-y-2">
+            {profile.study_tips.slice(0, 4).map((tip, i) => (
+              <li key={i} className="flex gap-2 text-xs text-zinc-400">
+                <span className="text-emerald-500 mt-0.5 flex-shrink-0">✓</span>
+                <span>{tip}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Career suggestions */}
+        <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <h3 className="text-white font-semibold text-sm mb-3">Career Paths</h3>
+          <ul className="space-y-2">
+            {profile.career_suggestions.slice(0, 4).map((c, i) => (
+              <li key={i} className="flex gap-2 text-xs text-zinc-400">
+                <span className="flex-shrink-0" style={{ color: '#A78BFA' }}>→</span>
+                <span>{c}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      {/* Personality insight */}
+      {profile.personality_insight && (
+        <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <h3 className="text-white font-semibold text-sm mb-2">Personality Insight</h3>
+          <p className="text-zinc-400 text-sm leading-relaxed">{profile.personality_insight}</p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // 16 questions — 2 per Gardner intelligence type (as specified in GeniusMap design)
 const questions = [
@@ -202,17 +306,17 @@ export default function AssessmentPage() {
   const [analysisDone, setAnalysisDone] = useState(false)
   const [analysisError, setAnalysisError] = useState('')
   const [checking, setChecking] = useState(true)
-  const router = useRouter()
+  const [existingProfile, setExistingProfile] = useState<IntelProfile | null>(null)
 
   useEffect(() => {
     fetch('/api/ai/assess', { method: 'GET' })
       .then(r => r.json())
       .then(d => {
-        if (d.hasProfile) router.replace('/dashboard')
-        else setChecking(false)
+        if (d.hasProfile) setExistingProfile(d.profile)
+        setChecking(false)
       })
       .catch(() => setChecking(false))
-  }, [router])
+  }, [])
 
   const current = questions[step]
   const progress = (step / questions.length) * 100
@@ -266,6 +370,8 @@ export default function AssessmentPage() {
   }
 
   if (checking) return null
+
+  if (existingProfile) return <AssessmentResults profile={existingProfile} />
 
   if (analyzing) return <AnalyzingScreen done={analysisDone} />
 
