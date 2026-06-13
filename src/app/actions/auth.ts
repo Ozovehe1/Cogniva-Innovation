@@ -6,6 +6,36 @@ import { revalidatePath } from 'next/cache'
 export type LoginState = { error: string }
 export type SignupState = { error: string; confirmEmail: boolean }
 
+async function ensureProfile(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  fullName: string,
+  email: string,
+  role: string
+) {
+  const { data: profile } = await supabase
+    .from('profiles').select('role').eq('user_id', userId).single()
+  if (profile) return profile.role as string
+
+  // Try RPC first (if schema has been run)
+  const { data: rpcRole, error: rpcError } = await supabase.rpc('ensure_profile_exists', {
+    p_user_id: userId,
+    p_full_name: fullName,
+    p_email: email,
+    p_role: role,
+  })
+  if (!rpcError && rpcRole) return rpcRole as string
+
+  // Fallback: direct upsert (works with anon key + user JWT)
+  await supabase.from('profiles').upsert(
+    { user_id: userId, full_name: fullName, email, role },
+    { onConflict: 'user_id', ignoreDuplicates: true }
+  )
+  const { data: created } = await supabase
+    .from('profiles').select('role').eq('user_id', userId).single()
+  return (created?.role ?? role) as string
+}
+
 export async function loginAction(
   _prev: LoginState,
   formData: FormData
@@ -19,31 +49,22 @@ export async function loginAction(
   if (error) {
     return {
       error: error.message.toLowerCase().includes('email not confirmed')
-        ? 'Please confirm your email first — check your inbox for the confirmation link.'
+        ? 'Please confirm your email first — check your inbox.'
         : error.message,
     }
   }
 
-  let { data: profile } = await supabase
-    .from('profiles').select('role').eq('user_id', data.user.id).single()
-
-  if (!profile) {
-    const meta = data.user.user_metadata
-    if (meta?.role) {
-      await supabase.rpc('ensure_profile_exists', {
-        p_user_id: data.user.id,
-        p_full_name: meta.full_name ?? email.split('@')[0],
-        p_email: email,
-        p_role: meta.role,
-      })
-      revalidatePath('/', 'layout')
-      redirect(meta.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
-    }
-    return { error: 'Account found but profile is missing. Please sign up again.' }
-  }
+  const meta = data.user.user_metadata
+  const role = await ensureProfile(
+    supabase,
+    data.user.id,
+    meta?.full_name ?? email.split('@')[0],
+    email,
+    meta?.role ?? 'student'
+  )
 
   revalidatePath('/', 'layout')
-  redirect(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
+  redirect(role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
 }
 
 export async function signupAction(
@@ -66,12 +87,7 @@ export async function signupAction(
   if (!data.user) return { error: 'Signup failed. Please try again.', confirmEmail: false }
 
   if (data.session) {
-    await supabase.rpc('ensure_profile_exists', {
-      p_user_id: data.user.id,
-      p_full_name: fullName,
-      p_email: email,
-      p_role: role,
-    })
+    await ensureProfile(supabase, data.user.id, fullName, email, role)
     revalidatePath('/', 'layout')
     redirect(role === 'student' ? '/assessment' : '/tutor/dashboard')
   }

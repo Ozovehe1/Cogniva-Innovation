@@ -11,14 +11,20 @@ export default async function TutorLayout({ children }: { children: React.ReactN
 
   let { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
 
-  // Profile missing — auto-recover from user metadata (handles pre-schema-fix accounts)
-  if (!profile && user.user_metadata?.role) {
-    await supabase.rpc('ensure_profile_exists', {
-      p_user_id: user.id,
-      p_full_name: user.user_metadata.full_name ?? user.email!.split('@')[0],
-      p_email: user.email!,
-      p_role: user.user_metadata.role,
+  if (!profile) {
+    const meta = user.user_metadata
+    const role = meta?.role ?? 'tutor'
+    const fullName = meta?.full_name ?? user.email!.split('@')[0]
+
+    const { error: rpcError } = await supabase.rpc('ensure_profile_exists', {
+      p_user_id: user.id, p_full_name: fullName, p_email: user.email!, p_role: role,
     })
+    if (rpcError) {
+      await supabase.from('profiles').upsert(
+        { user_id: user.id, full_name: fullName, email: user.email!, role },
+        { onConflict: 'user_id', ignoreDuplicates: true }
+      )
+    }
     const { data: recovered } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
     profile = recovered
   }

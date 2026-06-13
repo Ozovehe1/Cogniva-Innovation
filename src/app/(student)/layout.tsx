@@ -11,14 +11,21 @@ export default async function StudentLayout({ children }: { children: React.Reac
 
   let { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
 
-  // Profile missing — auto-recover from user metadata (handles pre-schema-fix accounts)
-  if (!profile && user.user_metadata?.role) {
-    await supabase.rpc('ensure_profile_exists', {
-      p_user_id: user.id,
-      p_full_name: user.user_metadata.full_name ?? user.email!.split('@')[0],
-      p_email: user.email!,
-      p_role: user.user_metadata.role,
+  if (!profile) {
+    const meta = user.user_metadata
+    const role = meta?.role ?? 'student'
+    const fullName = meta?.full_name ?? user.email!.split('@')[0]
+
+    // Try RPC, then fall back to direct upsert
+    const { error: rpcError } = await supabase.rpc('ensure_profile_exists', {
+      p_user_id: user.id, p_full_name: fullName, p_email: user.email!, p_role: role,
     })
+    if (rpcError) {
+      await supabase.from('profiles').upsert(
+        { user_id: user.id, full_name: fullName, email: user.email!, role },
+        { onConflict: 'user_id', ignoreDuplicates: true }
+      )
+    }
     const { data: recovered } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
     profile = recovered
   }
