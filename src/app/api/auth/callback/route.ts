@@ -4,25 +4,26 @@ import { NextResponse } from 'next/server'
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  const role = searchParams.get('role') as 'student' | 'tutor' | null
 
   if (code) {
     const supabase = await createClient()
     const { data } = await supabase.auth.exchangeCodeForSession(code)
+
     if (data?.user) {
-      const { data: existing } = await supabase.from('profiles').select('id, role').eq('user_id', data.user.id).maybeSingle()
-      if (!existing && role) {
-        const { error: insertError } = await supabase.from('profiles').insert({
-          user_id: data.user.id,
-          full_name: data.user.user_metadata?.full_name || data.user.email?.split('@')[0] || 'User',
-          email: data.user.email!,
-          role,
-        })
-        if (insertError) return NextResponse.redirect(`${origin}/login?error=profile_failed`)
-      }
-      const profileRole = existing?.role || role
-      return NextResponse.redirect(`${origin}${profileRole === 'tutor' ? '/tutor/dashboard' : '/dashboard'}`)
+      const meta = data.user.user_metadata
+      const role = (meta?.role as 'student' | 'tutor') ?? 'student'
+
+      // Create profile if it doesn't exist yet (email-confirmation flow)
+      await supabase.rpc('ensure_profile_exists', {
+        p_user_id: data.user.id,
+        p_full_name: meta?.full_name ?? data.user.email!.split('@')[0],
+        p_email: data.user.email!,
+        p_role: role,
+      })
+
+      return NextResponse.redirect(`${origin}${role === 'tutor' ? '/tutor/dashboard' : '/dashboard'}`)
     }
   }
+
   return NextResponse.redirect(`${origin}/login`)
 }
