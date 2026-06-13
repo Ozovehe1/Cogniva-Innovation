@@ -38,8 +38,7 @@ export default function SignupPage() {
       if (rpcError || !userRole) {
         setError(rpcError?.message || 'Profile setup failed — please try again.'); setLoading(false); return
       }
-      // Full page navigation — server components need fresh cookies, router.push() misses them
-      window.location.href = userRole === 'student' ? '/assessment' : '/tutor/dashboard'
+      window.location.href = '/login'
       return
     }
     // Email confirmation is ON — show check email screen
