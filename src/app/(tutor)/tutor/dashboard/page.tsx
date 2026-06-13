@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { CopyButton } from './copy-button'
+import { TutorCodeEditor } from './tutor-code-editor'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,6 +20,16 @@ export default async function TutorDashboard() {
 
   const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
   if (!profile) redirect('/login')
+
+  // Auto-generate a short tutor code if this tutor doesn't have one yet
+  let tutorCode = (profile as { tutor_code?: string }).tutor_code ?? ''
+  if (!tutorCode) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    let code = ''
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)]
+    await supabase.from('profiles').update({ tutor_code: code }).eq('id', profile.id)
+    tutorCode = code
+  }
 
   const { data: students } = await supabase
     .from('tutor_students')
@@ -64,14 +74,7 @@ export default async function TutorDashboard() {
         ))}
       </div>
 
-      {/* Tutor ID — always visible so tutors can share it */}
-      <div className="flex items-center gap-3 p-4 rounded-xl flex-wrap" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs text-zinc-500 mb-1">Your Tutor ID — share this with students to connect</p>
-          <code className="text-sm font-mono break-all" style={{ color: '#A78BFA' }}>{profile.id}</code>
-        </div>
-        <CopyButton value={profile.id} />
-      </div>
+      <TutorCodeEditor initial={tutorCode} />
 
       {/* Students */}
       <div>

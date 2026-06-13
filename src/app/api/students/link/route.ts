@@ -11,12 +11,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { tutor_id } = await request.json()
-  if (!tutor_id?.trim()) return NextResponse.json({ error: 'Tutor ID is required' }, { status: 400 })
+  const code = (tutor_id ?? '').trim().toUpperCase()
+  if (!code) return NextResponse.json({ error: 'Tutor code is required' }, { status: 400 })
 
   const { data: tutor } = await supabase
-    .from('profiles').select('id, role, full_name').eq('id', tutor_id.trim()).single()
+    .from('profiles').select('id, role, full_name').eq('tutor_code', code).single()
   if (!tutor || (tutor as { role: string }).role !== 'tutor')
-    return NextResponse.json({ error: 'No tutor found with that ID. Double-check and try again.' }, { status: 404 })
+    return NextResponse.json({ error: 'No tutor found with that code. Double-check and try again.' }, { status: 404 })
 
   const { error } = await supabase.from('tutor_students').upsert(
     { tutor_id: (tutor as { id: string }).id, student_id: (profile as { id: string }).id },

@@ -42,15 +42,15 @@ export function LinkTutor({ onLinked }: { onLinked?: (tutorName: string) => void
     <div className="p-5 rounded-2xl space-y-4" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
       <div>
         <p className="text-white font-semibold text-sm mb-1">Connect to a Tutor</p>
-        <p className="text-zinc-500 text-xs">Ask your tutor for their Tutor ID and paste it below</p>
+        <p className="text-zinc-500 text-xs">Ask your tutor for their short code and enter it below</p>
       </div>
       <div className="flex gap-2">
         <input
           type="text"
           value={tutorId}
-          onChange={e => setTutorId(e.target.value)}
+          onChange={e => setTutorId(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
           onKeyDown={e => e.key === 'Enter' && handleLink()}
-          placeholder="Paste tutor ID here..."
+          placeholder="e.g. JOHNS or XK7M2P"
           className="flex-1 px-4 py-2.5 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
           style={{ background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }}
         />
