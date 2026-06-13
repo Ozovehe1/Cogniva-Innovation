@@ -15,9 +15,17 @@ export async function GET() {
   } else {
     const [{ data: assignments }, { data: tutorLink }] = await Promise.all([
       supabase.from('project_assignments').select('*, project:projects(*)').eq('student_id', (profile as { id: string }).id).order('created_at', { ascending: false }),
-      supabase.from('tutor_students').select('tutor_id, tutor:profiles!tutor_students_tutor_id_fkey(full_name)').eq('student_id', (profile as { id: string }).id).limit(1).maybeSingle(),
+      supabase.from('tutor_students').select('tutor_id').eq('student_id', (profile as { id: string }).id).limit(1).maybeSingle(),
     ])
-    return NextResponse.json({ assignments: assignments ?? [], hasTutor: !!tutorLink, tutorName: (tutorLink as { tutor?: { full_name?: string } } | null)?.tutor?.full_name ?? null })
+
+    let tutorName: string | null = null
+    if (tutorLink) {
+      const { data: tp } = await supabase
+        .from('profiles').select('full_name').eq('id', (tutorLink as { tutor_id: string }).tutor_id).maybeSingle()
+      tutorName = (tp as { full_name?: string } | null)?.full_name ?? null
+    }
+
+    return NextResponse.json({ assignments: assignments ?? [], hasTutor: !!tutorLink, tutorName })
   }
 }
 
