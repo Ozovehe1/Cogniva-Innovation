@@ -206,69 +206,53 @@ create policy "tutors_select_students" on profiles
 
 -- intelligence_profiles
 create policy "students_select_own_intel" on intelligence_profiles
-  for select using (
-    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-  );
+  for select using (student_id = get_my_profile_id());
 
 create policy "students_insert_own_intel" on intelligence_profiles
-  for insert with check (
-    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-  );
+  for insert with check (student_id = get_my_profile_id());
 
 create policy "students_update_own_intel" on intelligence_profiles
-  for update using (
-    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-  );
+  for update using (student_id = get_my_profile_id());
 
 create policy "tutors_select_student_intel" on intelligence_profiles
   for select using (
     exists (
       select 1 from tutor_students ts
-      join profiles tp on tp.id = ts.tutor_id
-      where tp.user_id = auth.uid()
+      where ts.tutor_id = get_my_profile_id()
       and ts.student_id = intelligence_profiles.student_id
     )
   );
 
 -- student_growth
 create policy "students_all_own_growth" on student_growth
-  for all using (
-    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-  );
+  for all using (student_id = get_my_profile_id());
 
 create policy "tutors_select_growth" on student_growth
   for select using (
     exists (
       select 1 from tutor_students ts
-      join profiles tp on tp.id = ts.tutor_id
-      where tp.user_id = auth.uid()
+      where ts.tutor_id = get_my_profile_id()
       and ts.student_id = student_growth.student_id
     )
   );
 
 -- tutor_students
 create policy "tutors_all_their_students" on tutor_students
-  for all using (
-    exists (select 1 from profiles p where p.id = tutor_id and p.user_id = auth.uid())
-  );
+  for all using (tutor_id = get_my_profile_id());
 
 create policy "students_select_their_tutors" on tutor_students
-  for select using (
-    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-  );
+  for select using (student_id = get_my_profile_id());
 
 -- projects
 create policy "tutors_all_projects" on projects
-  for all using (
-    exists (select 1 from profiles p where p.id = tutor_id and p.user_id = auth.uid())
-  );
+  for all using (tutor_id = get_my_profile_id());
 
 create policy "students_select_assigned_projects" on projects
   for select using (
     exists (
       select 1 from project_assignments pa
       where pa.project_id = projects.id
-      and exists (select 1 from profiles p where p.id = pa.student_id and p.user_id = auth.uid())
+      and pa.student_id = get_my_profile_id()
     )
   );
 
@@ -277,21 +261,16 @@ create policy "tutors_all_assignments" on project_assignments
   for all using (
     exists (
       select 1 from projects pr
-      join profiles p on p.id = pr.tutor_id
-      where p.user_id = auth.uid()
+      where pr.tutor_id = get_my_profile_id()
       and pr.id = project_assignments.project_id
     )
   );
 
 create policy "students_select_own_assignments" on project_assignments
-  for select using (
-    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-  );
+  for select using (student_id = get_my_profile_id());
 
 create policy "students_update_own_assignments" on project_assignments
-  for update using (
-    exists (select 1 from profiles p where p.id = student_id and p.user_id = auth.uid())
-  );
+  for update using (student_id = get_my_profile_id());
 
 -- ============================================================
 -- STEP 10: Growth recalculation trigger
