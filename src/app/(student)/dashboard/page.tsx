@@ -4,20 +4,23 @@ import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
-const intelligenceLabels: Record<string, { label: string; emoji: string; color: string }> = {
-  linguistic: { label: 'Linguistic', emoji: '📝', color: 'bg-blue-500' },
-  logicalMathematical: { label: 'Logical-Math', emoji: '🔢', color: 'bg-green-500' },
-  spatial: { label: 'Spatial', emoji: '🎨', color: 'bg-yellow-500' },
-  musical: { label: 'Musical', emoji: '🎵', color: 'bg-pink-500' },
-  bodilyKinesthetic: { label: 'Bodily-Kinesthetic', emoji: '⚡', color: 'bg-orange-500' },
-  interpersonal: { label: 'Interpersonal', emoji: '🤝', color: 'bg-teal-500' },
-  intrapersonal: { label: 'Intrapersonal', emoji: '🧘', color: 'bg-purple-500' },
-  naturalist: { label: 'Naturalist', emoji: '🌿', color: 'bg-emerald-500' },
+const intelligenceMeta: Record<string, { label: string; emoji: string; hex: string }> = {
+  linguistic: { label: 'Linguistic', emoji: '📝', hex: '#3B82F6' },
+  logicalMathematical: { label: 'Logical-Math', emoji: '🔢', hex: '#22C55E' },
+  spatial: { label: 'Spatial', emoji: '🎨', hex: '#EAB308' },
+  musical: { label: 'Musical', emoji: '🎵', hex: '#EC4899' },
+  bodilyKinesthetic: { label: 'Kinesthetic', emoji: '⚡', hex: '#F97316' },
+  interpersonal: { label: 'Interpersonal', emoji: '🤝', hex: '#14B8A6' },
+  intrapersonal: { label: 'Intrapersonal', emoji: '🧘', hex: '#8B5CF6' },
+  naturalist: { label: 'Naturalist', emoji: '🌿', hex: '#10B981' },
 }
 
-const levelColors: Record<string, string> = {
-  Seed: 'text-gray-400', Sprout: 'text-green-400', Explorer: 'text-blue-400',
-  Master: 'text-purple-400', Legend: 'text-yellow-400'
+const levelConfig: Record<string, { color: string; bg: string; next: string; xpNeeded: number }> = {
+  Seed: { color: '#71717A', bg: 'rgba(113,113,122,0.1)', next: 'Sprout', xpNeeded: 2 },
+  Sprout: { color: '#22C55E', bg: 'rgba(34,197,94,0.1)', next: 'Explorer', xpNeeded: 5 },
+  Explorer: { color: '#3B82F6', bg: 'rgba(59,130,246,0.1)', next: 'Master', xpNeeded: 10 },
+  Master: { color: '#8B5CF6', bg: 'rgba(139,92,246,0.1)', next: 'Legend', xpNeeded: 20 },
+  Legend: { color: '#F59E0B', bg: 'rgba(245,158,11,0.1)', next: 'Legend', xpNeeded: 20 },
 }
 
 export default async function StudentDashboard() {
@@ -31,11 +34,17 @@ export default async function StudentDashboard() {
 
   if (!intel) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center">
-        <div className="text-6xl mb-6">🧠</div>
-        <h1 className="text-3xl font-bold text-white mb-3">Discover Your Genius</h1>
-        <p className="text-gray-400 mb-8 max-w-md">You haven&apos;t taken the intelligence assessment yet. It takes about 5 minutes and will reveal your unique genius type.</p>
-        <Link href="/assessment" className="px-8 py-3 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-xl transition">
+      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
+        <div className="w-20 h-20 rounded-2xl mb-6 flex items-center justify-center text-4xl" style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.25)' }}>
+          🧠
+        </div>
+        <h1 className="text-2xl font-bold text-white mb-2">Discover Your Genius</h1>
+        <p className="text-zinc-500 text-sm max-w-sm mb-8 leading-relaxed">
+          Complete the 5-minute intelligence assessment and let AI map your unique genius type across Gardner&apos;s 8 intelligences.
+        </p>
+        <Link href="/assessment"
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white transition"
+          style={{ background: '#7C3AED' }}>
           Start Assessment →
         </Link>
       </div>
@@ -43,90 +52,147 @@ export default async function StudentDashboard() {
   }
 
   const scores = intel.intelligence_scores as Record<string, number>
-  const dominant = intelligenceLabels[intel.dominant_intelligence]
+  const sortedScores = Object.entries(scores).sort((a, b) => b[1] - a[1])
+  const dominant = intelligenceMeta[intel.dominant_intelligence]
+  const level = growth?.level || 'Seed'
+  const levelData = levelConfig[level] || levelConfig['Seed']
+  const completedProjects = growth?.projects_completed || 0
+  const totalProjects = growth?.projects_total || 0
+  const growthPct = growth?.growth_score || 0
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-6xl">
+      {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-white">Your GeniusMap</h1>
-        <p className="text-gray-400 mt-1">Welcome back, {profile?.full_name}</p>
+        <h1 className="text-2xl font-bold text-white">Your GeniusMap</h1>
+        <p className="text-zinc-500 text-sm mt-0.5">Good to see you, {profile?.full_name?.split(' ')[0]}</p>
       </div>
 
-      {/* Genius Statement */}
-      <div className="bg-gradient-to-r from-purple-900 to-indigo-900 rounded-2xl p-6 border border-purple-700">
-        <p className="text-purple-300 text-sm mb-2">Your Genius Statement</p>
-        <p className="text-2xl font-bold text-white">{intel.genius_statement}</p>
+      {/* Genius Statement Banner */}
+      <div className="relative p-5 rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(91,33,182,0.1) 100%)', border: '1px solid rgba(124,58,237,0.25)' }}>
+        <div className="absolute top-0 right-0 text-6xl opacity-10 pointer-events-none p-4">{dominant?.emoji}</div>
+        <p className="text-xs text-violet-400 font-medium mb-1 uppercase tracking-wider">Your Genius Statement</p>
+        <p className="text-white font-semibold text-lg leading-snug">{intel.genius_statement}</p>
+      </div>
+
+      {/* KPI Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          {
+            label: 'Dominant Intelligence',
+            value: dominant?.label || '—',
+            sub: 'Primary strength',
+            icon: dominant?.emoji || '🧠',
+            color: '#8B5CF6',
+          },
+          {
+            label: 'Growth Level',
+            value: level,
+            sub: `${completedProjects} projects done`,
+            icon: '📈',
+            color: levelData.color,
+          },
+          {
+            label: 'Completion Rate',
+            value: totalProjects > 0 ? `${growthPct}%` : '—',
+            sub: `${completedProjects}/${totalProjects} projects`,
+            icon: '✓',
+            color: '#22C55E',
+          },
+          {
+            label: 'Assessment',
+            value: 'Complete',
+            sub: 'Genius identified',
+            icon: '⚡',
+            color: '#F59E0B',
+          },
+        ].map(({ label, value, sub, icon, color }) => (
+          <div key={label} className="p-4 rounded-xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs text-zinc-500">{label}</span>
+              <span className="text-base">{icon}</span>
+            </div>
+            <p className="text-lg font-bold" style={{ color }}>{value}</p>
+            <p className="text-xs text-zinc-600 mt-0.5">{sub}</p>
+          </div>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Intelligence Scores */}
-        <div className="lg:col-span-2 bg-gray-900 rounded-2xl p-6 border border-gray-800">
-          <h2 className="text-white font-semibold mb-4">Intelligence Profile</h2>
+        {/* Intelligence Profile */}
+        <div className="lg:col-span-2 p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <h2 className="text-white font-semibold mb-5">Intelligence Profile</h2>
           <div className="space-y-3">
-            {Object.entries(scores).sort((a,b) => b[1]-a[1]).map(([key, val]) => {
-              const meta = intelligenceLabels[key]
+            {sortedScores.map(([key, val]) => {
+              const meta = intelligenceMeta[key]
+              const pct = val * 10
               return (
-                <div key={key} className="flex items-center gap-3">
-                  <span className="text-lg w-6">{meta?.emoji}</span>
-                  <span className="text-gray-400 text-sm w-36">{meta?.label}</span>
-                  <div className="flex-1 bg-gray-800 rounded-full h-2">
-                    <div className={`${meta?.color} h-2 rounded-full`} style={{ width: `${val * 10}%` }} />
+                <div key={key}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">{meta?.emoji}</span>
+                      <span className="text-xs text-zinc-400">{meta?.label}</span>
+                    </div>
+                    <span className="text-xs font-medium" style={{ color: meta?.hex }}>{val}/10</span>
                   </div>
-                  <span className="text-gray-300 text-sm w-8">{val}/10</span>
+                  <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: meta?.hex }} />
+                  </div>
                 </div>
               )
             })}
           </div>
         </div>
 
-        {/* Growth Card */}
+        {/* Right Column */}
         <div className="space-y-4">
-          <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-            <h2 className="text-white font-semibold mb-3">Growth</h2>
-            <div className={`text-3xl font-bold ${levelColors[growth?.level || 'Seed']}`}>{growth?.level || 'Seed'}</div>
-            <div className="mt-3 bg-gray-800 rounded-full h-2">
-              <div className="bg-green-500 h-2 rounded-full" style={{ width: `${growth?.growth_score || 0}%` }} />
+          {/* Level Card */}
+          <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white font-semibold text-sm">Growth Level</h3>
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: levelData.bg, color: levelData.color }}>{level}</span>
             </div>
-            <p className="text-gray-500 text-sm mt-2">{growth?.projects_completed || 0} / {growth?.projects_total || 0} projects done</p>
+            <div className="h-1.5 rounded-full mb-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
+              <div className="h-1.5 rounded-full transition-all" style={{ width: `${Math.min((completedProjects / levelData.xpNeeded) * 100, 100)}%`, background: levelData.color }} />
+            </div>
+            <p className="text-xs text-zinc-600">{completedProjects} / {levelData.xpNeeded} projects to next level</p>
           </div>
-          <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800 text-center">
-            <div className="text-4xl mb-2">{dominant?.emoji}</div>
-            <p className="text-purple-400 text-sm">Dominant Intelligence</p>
-            <p className="text-white font-bold mt-1">{dominant?.label}</p>
+
+          {/* Study Tips */}
+          <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <h3 className="text-white font-semibold text-sm mb-3">Study Tips</h3>
+            <ul className="space-y-2">
+              {(intel.study_tips as string[]).slice(0, 3).map((tip, i) => (
+                <li key={i} className="flex gap-2 text-xs text-zinc-400">
+                  <span className="text-emerald-500 mt-0.5 flex-shrink-0">✓</span>
+                  <span>{tip}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Learning Path */}
-        <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-          <h2 className="text-white font-semibold mb-4">Learning Path</h2>
-          <ul className="space-y-2">
+      {/* Learning Path + Careers */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <h2 className="text-white font-semibold mb-4 text-sm">Learning Path</h2>
+          <ol className="space-y-3">
             {(intel.learning_path as string[]).map((item, i) => (
-              <li key={i} className="flex gap-2 text-gray-300 text-sm">
-                <span className="text-purple-400 font-bold">{i+1}.</span> {item}
+              <li key={i} className="flex gap-3 text-xs">
+                <span className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold" style={{ background: 'rgba(124,58,237,0.2)', color: '#A78BFA' }}>{i + 1}</span>
+                <span className="text-zinc-400 leading-relaxed pt-0.5">{item}</span>
               </li>
             ))}
-          </ul>
+          </ol>
         </div>
-
-        {/* Career Suggestions */}
-        <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-          <h2 className="text-white font-semibold mb-4">Career Paths</h2>
+        <div className="p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <h2 className="text-white font-semibold mb-4 text-sm">Career Paths</h2>
           <ul className="space-y-2">
             {(intel.career_suggestions as string[]).map((item, i) => (
-              <li key={i} className="text-gray-300 text-sm py-1 border-b border-gray-800 last:border-0">{item}</li>
-            ))}
-          </ul>
-        </div>
-
-        {/* Study Tips */}
-        <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-          <h2 className="text-white font-semibold mb-4">Study Tips</h2>
-          <ul className="space-y-2">
-            {(intel.study_tips as string[]).map((item, i) => (
-              <li key={i} className="flex gap-2 text-gray-300 text-sm">
-                <span className="text-green-400">✓</span> {item}
+              <li key={i} className="flex items-center gap-3 py-2" style={{ borderBottom: i < (intel.career_suggestions as string[]).length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#7C3AED' }} />
+                <span className="text-xs text-zinc-400">{item}</span>
               </li>
             ))}
           </ul>

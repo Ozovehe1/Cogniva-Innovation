@@ -4,9 +4,12 @@ import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
 
-const levelColors: Record<string, string> = {
-  Seed: 'text-gray-400', Sprout: 'text-green-400', Explorer: 'text-blue-400',
-  Master: 'text-purple-400', Legend: 'text-yellow-400'
+const levelConfig: Record<string, { color: string }> = {
+  Seed: { color: '#71717A' },
+  Sprout: { color: '#22C55E' },
+  Explorer: { color: '#3B82F6' },
+  Master: { color: '#8B5CF6' },
+  Legend: { color: '#F59E0B' },
 }
 
 export default async function TutorDashboard() {
@@ -22,66 +25,92 @@ export default async function TutorDashboard() {
     .select('*, student:profiles!tutor_students_student_id_fkey(*)')
     .eq('tutor_id', profile.id)
 
-  const studentIds = students?.map((s: { student_id: string }) => s.student_id) || []
-  const { data: growthData } = studentIds.length > 0
-    ? await supabase.from('student_growth').select('*').in('student_id', studentIds)
-    : { data: [] }
-  const { data: intelData } = studentIds.length > 0
-    ? await supabase.from('intelligence_profiles').select('student_id, dominant_intelligence, genius_statement').in('student_id', studentIds)
-    : { data: [] }
+  const studentIds = (students || []).map((s: { student_id: string }) => s.student_id)
+  const [{ data: growthData }, { data: intelData }, { data: projectsData }] = await Promise.all([
+    studentIds.length > 0 ? supabase.from('student_growth').select('*').in('student_id', studentIds) : Promise.resolve({ data: [] }),
+    studentIds.length > 0 ? supabase.from('intelligence_profiles').select('student_id, dominant_intelligence, genius_statement').in('student_id', studentIds) : Promise.resolve({ data: [] }),
+    supabase.from('projects').select('id').eq('tutor_id', profile.id),
+  ])
 
-  const growthMap = Object.fromEntries((growthData || []).map((g: { student_id: string; level?: string; growth_score?: number; projects_completed?: number }) => [g.student_id, g]))
+  const growthMap = Object.fromEntries((growthData || []).map((g: { student_id: string; level?: string; projects_completed?: number }) => [g.student_id, g]))
   const intelMap = Object.fromEntries((intelData || []).map((i: { student_id: string; genius_statement?: string }) => [i.student_id, i]))
 
+  const totalCompleted = (growthData || []).reduce((sum: number, g: { projects_completed?: number }) => sum + (g.projects_completed || 0), 0)
+  const assessedCount = (intelData || []).length
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white">Tutor Dashboard</h1>
-          <p className="text-gray-400 mt-1">Welcome, {profile.full_name}</p>
-        </div>
-        <div className="text-right">
-          <p className="text-2xl font-bold text-white">{students?.length || 0}</p>
-          <p className="text-gray-400 text-sm">Total Students</p>
-        </div>
+    <div className="max-w-5xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-white">Tutor Dashboard</h1>
+        <p className="text-zinc-500 text-sm mt-0.5">Welcome back, {profile.full_name.split(' ')[0]}</p>
       </div>
 
-      {(!students || students.length === 0) ? (
-        <div className="text-center py-20 bg-gray-900 rounded-2xl border border-gray-800">
-          <p className="text-4xl mb-4">👨‍🎓</p>
-          <p className="text-gray-400">No students linked yet. Share your tutor ID with students to connect.</p>
-          <p className="mt-4 text-emerald-400 font-mono text-sm bg-gray-800 px-4 py-2 rounded-lg inline-block">{profile.id}</p>
+      {/* KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: 'Total Students', value: students?.length || 0, icon: '👨‍🎓', color: '#A78BFA' },
+          { label: 'Projects Created', value: projectsData?.length || 0, icon: '📋', color: '#34D399' },
+          { label: 'Projects Completed', value: totalCompleted, icon: '✓', color: '#22C55E' },
+          { label: 'Assessed', value: assessedCount, icon: '🧠', color: '#F59E0B' },
+        ].map(({ label, value, icon, color }) => (
+          <div key={label} className="p-4 rounded-xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs text-zinc-500">{label}</span>
+              <span>{icon}</span>
+            </div>
+            <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Students */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white font-semibold">Your Students</h2>
+          <Link href="/tutor/projects/new" className="text-xs px-3 py-1.5 rounded-lg transition font-medium" style={{ background: 'rgba(5,150,105,0.15)', color: '#34D399', border: '1px solid rgba(5,150,105,0.25)' }}>
+            + New Project
+          </Link>
         </div>
-      ) : (
-        <div className="grid gap-4">
-          {students?.map(({ student, student_id }: { student: { full_name?: string; email?: string }; student_id: string }) => {
-            const growth = growthMap[student_id] as { level?: string; growth_score?: number; projects_completed?: number } | undefined
-            const intel = intelMap[student_id] as { genius_statement?: string } | undefined
-            return (
-              <Link key={student_id} href={`/tutor/students/${student_id}`}
-                className="bg-gray-900 rounded-2xl p-6 border border-gray-800 hover:border-emerald-700 transition block">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-emerald-700 flex items-center justify-center text-white font-bold text-lg">
-                      {student?.full_name?.[0]}
-                    </div>
-                    <div>
-                      <p className="text-white font-semibold">{student?.full_name}</p>
-                      <p className="text-gray-500 text-sm">{student?.email}</p>
-                      {intel && <p className="text-emerald-400 text-sm mt-1">&quot;{intel.genius_statement}&quot;</p>}
-                    </div>
+
+        {!students || students.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="text-4xl mb-4">🔗</div>
+            <p className="text-white font-medium mb-1">No students linked yet</p>
+            <p className="text-zinc-500 text-sm mb-4">Share your Tutor ID with students to connect</p>
+            <code className="px-4 py-2 rounded-lg text-xs font-mono" style={{ background: '#18181B', color: '#A78BFA', border: '1px solid rgba(124,58,237,0.2)' }}>{profile.id}</code>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {students.map(({ student, student_id }: { student: { full_name?: string }; student_id: string }) => {
+              const growth = growthMap[student_id] as { level?: string; projects_completed?: number } | undefined
+              const intel = intelMap[student_id] as { genius_statement?: string } | undefined
+              const level = growth?.level || 'Seed'
+              const lc = levelConfig[level] || levelConfig['Seed']
+              return (
+                <Link key={student_id} href={`/tutor/students/${student_id}`}
+                  className="flex items-center gap-4 p-4 rounded-xl transition group"
+                  style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="w-10 h-10 rounded-full bg-emerald-900 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
+                    {student?.full_name?.[0]}
                   </div>
-                  <div className="text-right">
-                    <p className={`font-bold ${levelColors[growth?.level || 'Seed']}`}>{growth?.level || 'Seed'}</p>
-                    <p className="text-gray-500 text-sm">{growth?.projects_completed || 0} projects done</p>
-                    {!intel && <p className="text-yellow-500 text-xs mt-1">Assessment pending</p>}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium">{student?.full_name}</p>
+                    {intel ? (
+                      <p className="text-zinc-600 text-xs truncate mt-0.5">{intel.genius_statement}</p>
+                    ) : (
+                      <p className="text-xs mt-0.5" style={{ color: '#F59E0B' }}>Assessment pending</p>
+                    )}
                   </div>
-                </div>
-              </Link>
-            )
-          })}
-        </div>
-      )}
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-sm font-semibold" style={{ color: lc.color }}>{level}</p>
+                    <p className="text-zinc-600 text-xs">{growth?.projects_completed || 0} projects</p>
+                  </div>
+                </Link>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

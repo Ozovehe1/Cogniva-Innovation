@@ -25,78 +25,112 @@ const questions = [
   { id: 20, text: 'I prefer working alone and tend to follow my own inner guide.', type: 'intrapersonal' },
 ]
 
+const options = [
+  { val: 1, label: 'Strongly Disagree' },
+  { val: 2, label: 'Disagree' },
+  { val: 3, label: 'Neutral' },
+  { val: 4, label: 'Agree' },
+  { val: 5, label: 'Strongly Agree' },
+]
+
 export default function AssessmentPage() {
   const [answers, setAnswers] = useState<Record<number, number>>({})
-  const [loading, setLoading] = useState(false)
   const [step, setStep] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [done, setDone] = useState(false)
   const router = useRouter()
 
   const current = questions[step]
-  const progress = (step / questions.length) * 100
 
   async function handleSubmit() {
     setLoading(true)
-    const scores: Record<string, number> = {}
+    const typeScores: Record<string, number[]> = {}
     questions.forEach(q => {
-      if (!scores[q.type]) scores[q.type] = 0
-      scores[q.type] += (answers[q.id] || 3)
+      if (!typeScores[q.type]) typeScores[q.type] = []
+      typeScores[q.type].push(answers[q.id] || 3)
     })
-    Object.keys(scores).forEach(k => { scores[k] = Math.round((scores[k] / (questions.filter(q=>q.type===k).length * 5)) * 10) })
-    const res = await fetch('/api/ai/assess', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: scores }) })
+    const scores: Record<string, number> = {}
+    Object.entries(typeScores).forEach(([type, vals]) => {
+      scores[type] = Math.round((vals.reduce((a, b) => a + b, 0) / (vals.length * 5)) * 10)
+    })
+    const res = await fetch('/api/ai/assess', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers: scores }),
+    })
     if (res.ok) router.push('/dashboard')
-    setLoading(false)
+    else setLoading(false)
   }
 
   function selectAnswer(val: number) {
     setAnswers(prev => ({ ...prev, [current.id]: val }))
-    if (step < questions.length - 1) setStep(s => s + 1)
+    if (step < questions.length - 1) {
+      setTimeout(() => setStep(s => s + 1), 150)
+    } else {
+      setDone(true)
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
+        <div className="w-20 h-20 rounded-2xl mb-6 flex items-center justify-center text-4xl animate-bounce" style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.25)' }}>
+          🎉
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-2">Assessment Complete!</h2>
+        <p className="text-zinc-500 text-sm mb-8 max-w-sm">Gemini AI is now analyzing your responses to build your personalised intelligence profile.</p>
+        <button onClick={handleSubmit} disabled={loading}
+          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50"
+          style={{ background: '#7C3AED' }}>
+          {loading ? (
+            <>
+              <span className="w-4 h-4 rounded-full border-2 border-violet-300 border-t-white animate-spin" />
+              Building your GeniusMap...
+            </>
+          ) : 'Reveal My Genius →'}
+        </button>
+      </div>
+    )
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className="max-w-xl mx-auto">
+      {/* Progress bar + count */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">Intelligence Assessment</h1>
-        <p className="text-gray-400">Answer honestly — there are no right or wrong answers.</p>
-        <div className="mt-4 bg-gray-800 rounded-full h-2">
-          <div className="bg-purple-600 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
+        <div className="flex items-center justify-between mb-2">
+          <h1 className="text-white font-semibold">Intelligence Assessment</h1>
+          <span className="text-xs text-zinc-500">{step + 1} / {questions.length}</span>
         </div>
-        <p className="text-gray-500 text-sm mt-1">{step} of {questions.length} answered</p>
+        <div className="h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="h-1 rounded-full transition-all duration-300" style={{ width: `${((step + 1) / questions.length) * 100}%`, background: '#7C3AED' }} />
+        </div>
       </div>
 
-      {step < questions.length ? (
-        <div className="bg-gray-900 rounded-2xl p-8 border border-gray-800">
-          <p className="text-xs text-purple-400 uppercase tracking-wide mb-4">Question {step + 1} of {questions.length}</p>
-          <h2 className="text-xl text-white font-medium mb-8 leading-relaxed">{current.text}</h2>
-          <div className="space-y-3">
-            {[
-              { val: 1, label: 'Strongly Disagree' },
-              { val: 2, label: 'Disagree' },
-              { val: 3, label: 'Neutral' },
-              { val: 4, label: 'Agree' },
-              { val: 5, label: 'Strongly Agree' },
-            ].map(({ val, label }) => (
-              <button key={val} onClick={() => selectAnswer(val)}
-                className={`w-full text-left px-5 py-3 rounded-xl border transition ${answers[current.id] === val ? 'border-purple-500 bg-purple-900 text-white' : 'border-gray-700 text-gray-300 hover:border-purple-600 hover:bg-gray-800'}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-          {step > 0 && (
-            <button onClick={() => setStep(s => s - 1)} className="mt-4 text-gray-500 hover:text-gray-300 text-sm">
-              ← Previous
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="bg-gray-900 rounded-2xl p-8 border border-gray-800 text-center">
-          <div className="text-5xl mb-4">🧠</div>
-          <h2 className="text-2xl text-white font-bold mb-2">Assessment Complete!</h2>
-          <p className="text-gray-400 mb-6">Gemini AI is now analyzing your intelligence profile...</p>
-          <button onClick={handleSubmit} disabled={loading}
-            className="px-8 py-3 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-xl transition disabled:opacity-50">
-            {loading ? 'Generating your GeniusMap...' : 'Reveal My Genius'}
+      {/* Question card */}
+      <div className="p-8 rounded-2xl mb-6" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <p className="text-xs text-violet-400 font-medium mb-4 uppercase tracking-wider">Question {step + 1}</p>
+        <h2 className="text-white text-lg font-medium leading-relaxed">{current.text}</h2>
+      </div>
+
+      {/* Options */}
+      <div className="space-y-2.5">
+        {options.map(({ val, label }) => (
+          <button key={val} onClick={() => selectAnswer(val)}
+            className="w-full text-left px-5 py-3.5 rounded-xl text-sm transition font-medium"
+            style={{
+              background: answers[current.id] === val ? 'rgba(124,58,237,0.2)' : '#111113',
+              border: `1px solid ${answers[current.id] === val ? 'rgba(124,58,237,0.5)' : 'rgba(255,255,255,0.08)'}`,
+              color: answers[current.id] === val ? '#A78BFA' : '#A1A1AA',
+            }}>
+            {label}
           </button>
-        </div>
+        ))}
+      </div>
+
+      {step > 0 && (
+        <button onClick={() => setStep(s => s - 1)} className="mt-4 text-xs text-zinc-600 hover:text-zinc-400 transition">
+          ← Previous question
+        </button>
       )}
     </div>
   )

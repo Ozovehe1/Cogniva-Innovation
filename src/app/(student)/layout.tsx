@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { LogOut, LayoutDashboard, Brain, FolderOpen } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,51 +8,64 @@ export default async function StudentLayout({ children }: { children: React.Reac
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
-
   const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
   if (!profile) redirect('/login')
+  if (profile.role === 'tutor') redirect('/tutor/dashboard')
 
   const navItems = [
-    { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { href: '/assessment', icon: Brain, label: 'Assessment' },
-    { href: '/projects', icon: FolderOpen, label: 'My Projects' },
+    { href: '/dashboard', icon: '◈', label: 'Dashboard' },
+    { href: '/assessment', icon: '⬡', label: 'Assessment' },
+    { href: '/projects', icon: '⬢', label: 'My Projects' },
   ]
 
+  const initials = profile.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+
   return (
-    <div className="flex h-screen bg-gray-950">
-      <aside className="w-64 bg-indigo-950 border-r border-indigo-800 flex flex-col">
-        <div className="p-6 border-b border-indigo-800">
-          <h1 className="text-xl font-bold text-white">GeniusMap</h1>
-          <p className="text-indigo-400 text-xs mt-1">Student Portal</p>
+    <div className="flex h-screen" style={{ background: '#09090B' }}>
+      {/* Sidebar */}
+      <aside className="w-56 flex flex-col flex-shrink-0" style={{ background: '#0D0D10', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+        {/* Logo */}
+        <div className="flex items-center gap-2 px-4 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="w-6 h-6 rounded-md bg-violet-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">G</div>
+          <span className="text-white font-semibold text-sm">GeniusMap</span>
         </div>
-        <nav className="flex-1 p-4 space-y-1">
-          {navItems.map(({ href, icon: Icon, label }) => (
+
+        {/* Nav */}
+        <nav className="flex-1 p-2 space-y-0.5 pt-3">
+          {navItems.map(({ href, icon, label }) => (
             <Link key={href} href={href}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-indigo-300 hover:bg-indigo-800 hover:text-white transition">
-              <Icon size={18} />
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition group hover:text-white"
+              style={{ color: '#71717A' }}>
+              <span className="text-base">{icon}</span>
               <span>{label}</span>
             </Link>
           ))}
         </nav>
-        <div className="p-4 border-t border-indigo-800">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-sm font-bold">
-              {profile.full_name[0]}
+
+        {/* User */}
+        <div className="p-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+            <div className="w-7 h-7 rounded-full bg-violet-700 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+              {initials}
             </div>
-            <div>
-              <p className="text-white text-sm font-medium">{profile.full_name}</p>
-              <p className="text-indigo-400 text-xs">Student</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-xs font-medium truncate">{profile.full_name}</p>
+              <p className="text-zinc-500 text-xs">Student</p>
             </div>
           </div>
-          <form action="/api/auth/signout" method="post">
-            <button className="flex items-center gap-2 text-indigo-400 hover:text-white text-sm transition w-full">
-              <LogOut size={16} /> Sign Out
+          <form action="/api/auth/signout" method="post" className="mt-1">
+            <button className="w-full text-left px-2 py-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition rounded">
+              Sign out
             </button>
           </form>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto bg-gray-950 p-8">
-        {children}
+
+      {/* Main */}
+      <main className="flex-1 overflow-auto">
+        <div className="p-8">
+          {children}
+        </div>
       </main>
     </div>
   )

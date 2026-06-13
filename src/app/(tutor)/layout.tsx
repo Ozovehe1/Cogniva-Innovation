@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { LogOut, LayoutDashboard, Users, FolderOpen, PlusCircle } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,52 +8,50 @@ export default async function TutorLayout({ children }: { children: React.ReactN
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
-
   const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
-  if (!profile || (profile as { role: string }).role !== 'tutor') redirect('/dashboard')
+  if (!profile || profile.role !== 'tutor') redirect('/dashboard')
 
   const navItems = [
-    { href: '/tutor/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { href: '/tutor/students', icon: Users, label: 'My Students' },
-    { href: '/tutor/projects', icon: FolderOpen, label: 'Projects' },
-    { href: '/tutor/projects/new', icon: PlusCircle, label: 'New Project' },
+    { href: '/tutor/dashboard', icon: '◈', label: 'Dashboard' },
+    { href: '/tutor/students', icon: '⬡', label: 'Students' },
+    { href: '/tutor/projects', icon: '⬢', label: 'Projects' },
+    { href: '/tutor/projects/new', icon: '+', label: 'New Project' },
   ]
 
+  const initials = profile.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+
   return (
-    <div className="flex h-screen bg-gray-950">
-      <aside className="w-64 bg-emerald-950 border-r border-emerald-800 flex flex-col">
-        <div className="p-6 border-b border-emerald-800">
-          <h1 className="text-xl font-bold text-white">GeniusMap</h1>
-          <p className="text-emerald-400 text-xs mt-1">Tutor Portal</p>
+    <div className="flex h-screen" style={{ background: '#09090B' }}>
+      <aside className="w-56 flex flex-col flex-shrink-0" style={{ background: '#0A0F0C', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center gap-2 px-4 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="w-6 h-6 rounded-md bg-emerald-700 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">G</div>
+          <span className="text-white font-semibold text-sm">GeniusMap</span>
         </div>
-        <nav className="flex-1 p-4 space-y-1">
-          {navItems.map(({ href, icon: Icon, label }) => (
+        <nav className="flex-1 p-2 space-y-0.5 pt-3">
+          {navItems.map(({ href, icon, label }) => (
             <Link key={href} href={href}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-emerald-300 hover:bg-emerald-800 hover:text-white transition">
-              <Icon size={18} />
+              className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition hover:text-white"
+              style={{ color: '#71717A' }}>
+              <span className="text-base w-4 text-center">{icon}</span>
               <span>{label}</span>
             </Link>
           ))}
         </nav>
-        <div className="p-4 border-t border-emerald-800">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white text-sm font-bold">
-              {(profile as { full_name: string }).full_name[0]}
-            </div>
-            <div>
-              <p className="text-white text-sm font-medium">{(profile as { full_name: string }).full_name}</p>
-              <p className="text-emerald-400 text-xs">Tutor</p>
+        <div className="p-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+            <div className="w-7 h-7 rounded-full bg-emerald-800 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">{initials}</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-xs font-medium truncate">{profile.full_name}</p>
+              <p className="text-zinc-500 text-xs">Tutor</p>
             </div>
           </div>
-          <form action="/api/auth/signout" method="post">
-            <button className="flex items-center gap-2 text-emerald-400 hover:text-white text-sm transition w-full">
-              <LogOut size={16} /> Sign Out
-            </button>
+          <form action="/api/auth/signout" method="post" className="mt-1">
+            <button className="w-full text-left px-2 py-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition rounded">Sign out</button>
           </form>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto bg-gray-950 p-8">
-        {children}
+      <main className="flex-1 overflow-auto">
+        <div className="p-8">{children}</div>
       </main>
     </div>
   )
