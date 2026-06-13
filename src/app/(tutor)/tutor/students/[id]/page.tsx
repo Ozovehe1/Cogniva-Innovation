@@ -103,8 +103,14 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
         <>
           {/* Genius Statement */}
           <div className="relative p-5 rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(5,150,105,0.15) 0%, rgba(4,120,87,0.08) 100%)', border: '1px solid rgba(5,150,105,0.2)' }}>
-            <p className="text-xs font-medium mb-1 uppercase tracking-wider" style={{ color: '#34D399' }}>Genius Statement</p>
-            <p className="text-white font-semibold text-lg leading-snug">{intelData.genius_statement}</p>
+            <p className="text-xs font-medium mb-1 uppercase tracking-wider" style={{ color: '#34D399' }}>
+              {studentData.full_name.split(' ')[0]}&apos;s Genius Profile
+            </p>
+            <p className="text-white font-semibold text-lg leading-snug">
+              {intelData.genius_statement
+                .replace(/^You are\b/i, `${studentData.full_name.split(' ')[0]} is`)
+                .replace(/^You\b/i, studentData.full_name.split(' ')[0])}
+            </p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

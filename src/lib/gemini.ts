@@ -25,7 +25,7 @@ Generate a JSON response with exactly these keys:
 - learningPath: array of 5 specific, actionable learning strategies tailored to their dominant intelligence
 - careerSuggestions: array of 7 specific job role titles only (e.g. "Content Strategist", "Data Scientist", "UX Researcher") — no descriptions, no fields, just role names that match their intelligence profile
 - studyTips: array of 4 concrete, personalised study techniques (not generic advice — specific to their top 2 intelligences)
-- geniusStatement: string (one short, powerful sentence that names their dominant intelligence and what it gives them, e.g. "You are a Spatial thinker who sees structure in chaos before others see anything at all")
+- geniusStatement: string (one short, powerful sentence written in third person describing this learner, e.g. "A Spatial thinker who sees structure in chaos before others see anything at all" — do NOT start with "You")
 
 Intelligence type keys: linguistic, logicalMathematical, spatial, musical, bodilyKinesthetic, interpersonal, intrapersonal, naturalist
 Return ONLY valid JSON, no markdown, no explanation.`

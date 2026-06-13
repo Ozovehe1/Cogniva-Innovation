@@ -267,14 +267,14 @@ create policy "students_select_assigned_projects" on projects
   );
 
 -- project_assignments
+-- uses a security definer function to avoid cross-table RLS recursion with projects
+create or replace function is_my_project(p_project_id uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (select 1 from projects where id = p_project_id and tutor_id = get_my_profile_id());
+$$;
+
 create policy "tutors_all_assignments" on project_assignments
-  for all using (
-    exists (
-      select 1 from projects pr
-      where pr.tutor_id = get_my_profile_id()
-      and pr.id = project_assignments.project_id
-    )
-  );
+  for all using (is_my_project(project_id));
 
 create policy "students_select_own_assignments" on project_assignments
   for select using (student_id = get_my_profile_id());
