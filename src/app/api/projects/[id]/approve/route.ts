@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -10,6 +10,9 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   const { data: tutorProfile } = await supabase.from('profiles').select('id, role').eq('user_id', user.id).single()
   if (!tutorProfile || (tutorProfile as { role: string }).role !== 'tutor')
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const { score } = await request.json().catch(() => ({ score: null }))
+  const validScore = (typeof score === 'number' && score >= 1 && score <= 10) ? score : null
 
   const { data: project } = await supabase
     .from('projects').select('id, tutor_id').eq('id', id).single()
@@ -21,7 +24,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   if (!assignment) return NextResponse.json({ error: 'No pending submission found' }, { status: 404 })
 
   const { error } = await supabase.from('project_assignments')
-    .update({ status: 'completed' })
+    .update({ status: 'completed', score: validScore })
     .eq('id', (assignment as { id: string }).id)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

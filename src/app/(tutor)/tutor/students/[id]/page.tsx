@@ -51,7 +51,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
   if (!student) notFound()
 
   const studentData = student as { full_name: string; email: string }
-  const growthData = growth as { level?: string; growth_score?: number; projects_completed?: number; projects_total?: number } | null
+  const growthData = growth as { level?: string; growth_score?: number; projects_completed?: number; projects_total?: number; sublevel?: number; average_score?: number } | null
   const intelData = intel as {
     genius_statement: string;
     dominant_intelligence: string;
@@ -135,31 +135,34 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
 
             {/* Right column */}
             <div className="space-y-4">
-              {/* Growth */}
+              {/* Progress */}
               <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <h3 className="text-white font-semibold text-sm mb-3">Progress</h3>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-zinc-500">Level</span>
-                  <span className="text-sm font-semibold" style={{ color: lc.color }}>{level}</span>
+                  <span className="text-sm font-bold" style={{ color: lc.color }}>{level}</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: lc.bg, color: lc.color }}>
+                    {growthData?.sublevel || 1}/9
+                  </span>
                 </div>
-                <div className="h-2 rounded-full mb-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                  <div className="h-full rounded-full" style={{ width: `${growthData?.growth_score || 0}%`, background: lc.color }} />
+                <div className="h-2 rounded-full mb-1" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                  <div className="h-full rounded-full" style={{ width: `${((growthData?.sublevel || 1) / 9) * 100}%`, background: lc.color }} />
                 </div>
-                <div className="flex items-center justify-between text-xs mb-4">
-                  <span className="text-zinc-600">{growthData?.projects_completed || 0} approved</span>
-                  <span className="text-zinc-600">{growthData?.projects_total || 0} total</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
+                <p className="text-xs text-zinc-600 mb-4">sublevel {growthData?.sublevel || 1} of 9 in {level}</p>
+
+                <div className="grid grid-cols-2 gap-2 mb-3">
                   <div className="p-2.5 rounded-lg text-center" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.15)' }}>
                     <p className="text-lg font-bold" style={{ color: '#22C55E' }}>{growthData?.projects_completed || 0}</p>
                     <p className="text-xs text-zinc-600 mt-0.5">Approved</p>
                   </div>
                   <div className="p-2.5 rounded-lg text-center" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <p className="text-lg font-bold text-zinc-400">{(growthData?.projects_total || 0) - (growthData?.projects_completed || 0)}</p>
-                    <p className="text-xs text-zinc-600 mt-0.5">Remaining</p>
+                    <p className="text-lg font-bold" style={{ color: (growthData?.average_score || 0) >= 8 ? '#22C55E' : (growthData?.average_score || 0) >= 6 ? '#F59E0B' : '#71717A' }}>
+                      {growthData?.average_score ? growthData.average_score.toFixed(1) : '—'}
+                    </p>
+                    <p className="text-xs text-zinc-600 mt-0.5">Avg Grade</p>
                   </div>
                 </div>
-                <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+
+                <div className="pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   <p className="text-xs text-zinc-500">Dominant Intelligence</p>
                   <p className="text-sm font-medium text-white mt-0.5">
                     {intelligenceMeta[intelData.dominant_intelligence]?.emoji} {intelligenceMeta[intelData.dominant_intelligence]?.label}
@@ -203,6 +206,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
               id: string;
               status: string;
               project_id: string;
+              score?: number | null;
               feedback?: string | null;
               project?: { title?: string; subject?: string; difficulty?: string }
             }>).map(a => {
@@ -216,6 +220,14 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
                       <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject} · {a.project?.difficulty}</p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                      {a.status === 'completed' && a.score != null && (
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{
+                          background: a.score >= 8 ? 'rgba(34,197,94,0.1)' : a.score >= 6 ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                          color: a.score >= 8 ? '#22C55E' : a.score >= 6 ? '#F59E0B' : '#EF4444',
+                        }}>
+                          {a.score}/10
+                        </span>
+                      )}
                       <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: sc.bg, color: sc.color }}>
                         {sc.label}
                       </span>

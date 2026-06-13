@@ -47,11 +47,14 @@ export default async function StudentDashboard() {
   ])
 
   const level = growth?.level || 'Seed'
+  const sublevel = (growth as { sublevel?: number } | null)?.sublevel || 1
+  const avgScore = (growth as { average_score?: number } | null)?.average_score || 0
   const levelData = levelConfig[level] || levelConfig['Seed']
   const completedProjects = growth?.projects_completed || 0
   const totalProjects = growth?.projects_total || 0
-  const progressPct = totalProjects > 0 ? Math.round((completedProjects / totalProjects) * 100) : 0
-  const toNextLevel = Math.max(0, levelData.xpNeeded - completedProjects)
+  const overallPct = Math.min(Math.round((completedProjects / 45) * 100), 100)
+  const sublevelPct = Math.round((sublevel / 9) * 100)
+  const toNextSublevel = 9 - sublevel
 
   const activeProjects = (assignments || []).filter(a => a.status !== 'completed')
   const completedList = (assignments || []).filter(a => a.status === 'completed')
@@ -84,35 +87,55 @@ export default async function StudentDashboard() {
         <p className="text-zinc-500 text-sm mt-0.5">Welcome back, {profile?.full_name?.split(' ')[0]}</p>
       </div>
 
-      {/* ── TOP ROW: Level + Progress bar ── */}
+      {/* ── TOP ROW: Level + Progress ── */}
       <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="text-2xl font-bold" style={{ color: levelData.color }}>{level}</span>
-              {level !== 'Legend' && (
-                <span className="text-xs text-zinc-600">→ {levelData.next}</span>
-              )}
+              <span className="text-sm font-medium px-2 py-0.5 rounded-full" style={{ background: levelData.bg, color: levelData.color }}>
+                {sublevel}/9
+              </span>
             </div>
             <p className="text-zinc-500 text-sm">
               {completedProjects} project{completedProjects !== 1 ? 's' : ''} approved
-              {totalProjects > 0 && <span className="text-zinc-600"> out of {totalProjects} assigned</span>}
+              {totalProjects > 0 && <span className="text-zinc-600"> · {totalProjects} assigned</span>}
             </p>
           </div>
           <div className="text-right">
-            <p className="text-3xl font-bold" style={{ color: levelData.color }}>{progressPct}%</p>
-            <p className="text-zinc-600 text-xs">overall completion</p>
+            <p className="text-3xl font-bold" style={{ color: levelData.color }}>{overallPct}%</p>
+            <p className="text-zinc-600 text-xs">of all 45 stages</p>
+            {avgScore > 0 && (
+              <p className="text-xs mt-0.5" style={{ color: avgScore >= 8 ? '#22C55E' : avgScore >= 6 ? '#F59E0B' : '#EF4444' }}>
+                avg grade: {avgScore.toFixed(1)}/10
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Full-width progress bar */}
-        <div className="h-2 rounded-full overflow-hidden mb-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
-          <div className="h-full rounded-full transition-all duration-700"
-            style={{ width: `${Math.min((completedProjects / Math.max(levelData.xpNeeded, 1)) * 100, 100)}%`, background: levelData.color }} />
+        {/* Sublevel progress within current level */}
+        <div className="mb-1.5">
+          <div className="flex justify-between text-xs text-zinc-600 mb-1">
+            <span>{level} sublevel {sublevel}/9</span>
+            {level !== 'Legend' && <span>{toNextSublevel} to next sublevel</span>}
+          </div>
+          <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <div className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${sublevelPct}%`, background: levelData.color }} />
+          </div>
         </div>
-        {level !== 'Legend' && (
-          <p className="text-xs text-zinc-600">{toNextLevel} more approval{toNextLevel !== 1 ? 's' : ''} to reach {levelData.next}</p>
-        )}
+
+        {/* Overall progress across all 45 stages */}
+        <div className="mt-3">
+          <div className="flex justify-between text-xs text-zinc-600 mb-1">
+            <span>Overall progress</span>
+            <span>{completedProjects}/45 stages</span>
+          </div>
+          <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <div className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${overallPct}%`, background: 'rgba(124,58,237,0.6)' }} />
+          </div>
+        </div>
       </div>
 
       {/* ── ACTIVE PROJECTS ── */}

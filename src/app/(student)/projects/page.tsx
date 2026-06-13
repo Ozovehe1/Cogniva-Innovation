@@ -143,7 +143,15 @@ export default function StudentProjectsPage() {
                       </span>
                     )}
                     {a.status === 'completed' && (
-                      <span className="text-emerald-500 text-xs font-medium">✓ Approved</span>
+                      <span className="text-xs font-semibold">
+                        {(a as AssignmentWithFeedback & { score?: number | null }).score != null ? (
+                          <span style={{ color: (a as AssignmentWithFeedback & { score?: number | null }).score! >= 8 ? '#22C55E' : (a as AssignmentWithFeedback & { score?: number | null }).score! >= 6 ? '#F59E0B' : '#EF4444' }}>
+                            ✓ {(a as AssignmentWithFeedback & { score?: number | null }).score}/10
+                          </span>
+                        ) : (
+                          <span className="text-emerald-500">✓ Approved</span>
+                        )}
+                      </span>
                     )}
                   </div>
                 </div>

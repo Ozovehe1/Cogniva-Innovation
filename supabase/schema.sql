@@ -76,6 +76,8 @@ create table if not exists student_growth (
   projects_completed integer default 0,
   projects_total integer default 0,
   level text default 'Seed',
+  sublevel integer default 1,
+  average_score numeric default 0,
   badges jsonb default '[]',
   updated_at timestamptz default now()
 );
@@ -109,6 +111,7 @@ create table if not exists project_assignments (
   project_id uuid references projects(id) on delete cascade not null,
   student_id uuid references profiles(id) on delete cascade not null,
   status text check (status in ('assigned', 'in_progress', 'pending_review', 'completed')) default 'assigned',
+  score integer check (score >= 1 and score <= 10),
   submitted_at timestamptz,
   feedback text,
   created_at timestamptz default now(),
@@ -280,8 +283,12 @@ returns trigger as $$
 declare
   completed_count integer;
   total_count integer;
-  new_score integer;
+  capped integer;
+  level_index integer;
   new_level text;
+  new_sublevel integer;
+  new_avg_score numeric;
+  levels text[] := array['Seed','Sprout','Explorer','Master','Legend'];
 begin
   if NEW.status = 'completed' and OLD.status != 'completed' then
     select count(*) into completed_count
@@ -290,24 +297,33 @@ begin
     select count(*) into total_count
       from project_assignments
       where student_id = NEW.student_id;
-    new_score := (completed_count * 100) / greatest(total_count, 1);
-    new_level := case
-      when completed_count >= 20 then 'Legend'
-      when completed_count >= 10 then 'Master'
-      when completed_count >= 5  then 'Explorer'
-      when completed_count >= 2  then 'Sprout'
-      else 'Seed'
-    end;
+
+    -- Average score from graded completions (1-10 scale)
+    select coalesce(avg(score), 0) into new_avg_score
+      from project_assignments
+      where student_id = NEW.student_id and status = 'completed' and score is not null;
+
+    -- 5 levels × 9 sublevels = 45 total stages
+    -- Each 9 completions = 1 major level
+    capped := least(completed_count, 44);
+    level_index := least(capped / 9, 4);
+    new_level := levels[level_index + 1];
+    new_sublevel := (capped % 9) + 1;
+
     insert into student_growth
-      (student_id, growth_score, projects_completed, projects_total, level, updated_at)
+      (student_id, growth_score, projects_completed, projects_total, level, sublevel, average_score, updated_at)
     values
-      (NEW.student_id, new_score, completed_count, total_count, new_level, now())
+      (NEW.student_id,
+       least((completed_count * 100) / 45, 100),
+       completed_count, total_count, new_level, new_sublevel, new_avg_score, now())
     on conflict (student_id) do update set
-      growth_score = new_score,
+      growth_score     = least((completed_count * 100) / 45, 100),
       projects_completed = completed_count,
-      projects_total = total_count,
-      level = new_level,
-      updated_at = now();
+      projects_total   = total_count,
+      level            = new_level,
+      sublevel         = new_sublevel,
+      average_score    = new_avg_score,
+      updated_at       = now();
   end if;
   return NEW;
 end;

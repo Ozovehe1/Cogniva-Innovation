@@ -42,6 +42,8 @@ export interface StudentGrowth {
   projects_completed: number
   projects_total: number
   level: string
+  sublevel: number
+  average_score: number
   badges: string[]
   updated_at: string
 }
@@ -76,6 +78,7 @@ export interface ProjectAssignment {
   student_id: string
   status: 'assigned' | 'in_progress' | 'pending_review' | 'completed'
   submitted_at?: string
+  score?: number | null
   feedback?: string | null
   created_at: string
   project?: Project

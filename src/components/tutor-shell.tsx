@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { IdleTimeout } from './idle-timeout'
 
 interface NavItem { href: string; icon: string; label: string }
 
@@ -55,6 +56,7 @@ export function TutorShell({
 
   return (
     <div className="flex h-screen" style={{ background: '#09090B' }}>
+      <IdleTimeout />
       {/* Desktop sidebar */}
       <aside className="hidden md:flex w-56 flex-col flex-shrink-0" style={{ background: '#0A0F0C', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
         <div className="flex items-center gap-2 px-4 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
