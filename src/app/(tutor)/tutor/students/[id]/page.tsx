@@ -3,15 +3,29 @@ import { redirect, notFound } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
-const intelligenceLabels: Record<string, { label: string; emoji: string; color: string }> = {
-  linguistic: { label: 'Linguistic', emoji: '📝', color: 'bg-blue-500' },
-  logicalMathematical: { label: 'Logical-Math', emoji: '🔢', color: 'bg-green-500' },
-  spatial: { label: 'Spatial', emoji: '🎨', color: 'bg-yellow-500' },
-  musical: { label: 'Musical', emoji: '🎵', color: 'bg-pink-500' },
-  bodilyKinesthetic: { label: 'Bodily-Kinesthetic', emoji: '⚡', color: 'bg-orange-500' },
-  interpersonal: { label: 'Interpersonal', emoji: '🤝', color: 'bg-teal-500' },
-  intrapersonal: { label: 'Intrapersonal', emoji: '🧘', color: 'bg-purple-500' },
-  naturalist: { label: 'Naturalist', emoji: '🌿', color: 'bg-emerald-500' },
+const intelligenceMeta: Record<string, { label: string; emoji: string; hex: string }> = {
+  linguistic: { label: 'Linguistic', emoji: '📝', hex: '#3B82F6' },
+  logicalMathematical: { label: 'Logical-Math', emoji: '🔢', hex: '#22C55E' },
+  spatial: { label: 'Spatial', emoji: '🎨', hex: '#EAB308' },
+  musical: { label: 'Musical', emoji: '🎵', hex: '#EC4899' },
+  bodilyKinesthetic: { label: 'Kinesthetic', emoji: '⚡', hex: '#F97316' },
+  interpersonal: { label: 'Interpersonal', emoji: '🤝', hex: '#14B8A6' },
+  intrapersonal: { label: 'Intrapersonal', emoji: '🧘', hex: '#8B5CF6' },
+  naturalist: { label: 'Naturalist', emoji: '🌿', hex: '#10B981' },
+}
+
+const levelConfig: Record<string, { color: string; bg: string }> = {
+  Seed: { color: '#71717A', bg: 'rgba(113,113,122,0.1)' },
+  Sprout: { color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
+  Explorer: { color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
+  Master: { color: '#8B5CF6', bg: 'rgba(139,92,246,0.1)' },
+  Legend: { color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
+}
+
+const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
+  assigned: { label: 'Assigned', color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
+  in_progress: { label: 'In Progress', color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
+  completed: { label: 'Completed', color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
 }
 
 export default async function StudentProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -33,88 +47,144 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
 
   if (!student) notFound()
 
+  const studentData = student as { full_name: string; email: string }
+  const growthData = growth as { level?: string; growth_score?: number; projects_completed?: number; projects_total?: number } | null
+  const intelData = intel as {
+    genius_statement: string;
+    dominant_intelligence: string;
+    intelligence_scores: Record<string, number>;
+    study_tips?: string[];
+    learning_path?: string[];
+    career_suggestions?: string[];
+  } | null
+
+  const level = growthData?.level || 'Seed'
+  const lc = levelConfig[level] || levelConfig['Seed']
+  const initials = studentData.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+
   return (
-    <div className="space-y-6">
+    <div className="max-w-5xl space-y-6">
+      {/* Header */}
       <div className="flex items-center gap-4">
-        <div className="w-16 h-16 rounded-full bg-emerald-700 flex items-center justify-center text-white font-bold text-2xl">
-          {(student as { full_name: string }).full_name[0]}
+        <div className="w-14 h-14 rounded-2xl bg-emerald-900 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+          {initials}
         </div>
         <div>
-          <h1 className="text-3xl font-bold text-white">{(student as { full_name: string }).full_name}</h1>
-          <p className="text-gray-400">{(student as { email: string }).email}</p>
+          <h1 className="text-2xl font-bold text-white">{studentData.full_name}</h1>
+          <p className="text-zinc-500 text-sm">{studentData.email}</p>
+        </div>
+        <div className="ml-auto">
+          <span className="text-sm px-3 py-1.5 rounded-full font-medium" style={{ background: lc.bg, color: lc.color }}>{level}</span>
         </div>
       </div>
 
-      {!intel ? (
-        <div className="bg-yellow-900/30 border border-yellow-700 rounded-xl p-4 text-yellow-400">
-          This student hasn&apos;t completed their intelligence assessment yet.
+      {!intelData ? (
+        <div className="p-5 rounded-2xl" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+          <p className="text-sm font-medium" style={{ color: '#F59E0B' }}>Assessment Pending</p>
+          <p className="text-xs text-zinc-500 mt-1">This student hasn&apos;t completed their intelligence assessment yet.</p>
         </div>
       ) : (
         <>
-          <div className="bg-gradient-to-r from-emerald-900 to-teal-900 rounded-2xl p-6 border border-emerald-700">
-            <p className="text-emerald-300 text-sm mb-1">Genius Statement</p>
-            <p className="text-xl font-bold text-white">{(intel as { genius_statement: string }).genius_statement}</p>
+          {/* Genius Statement */}
+          <div className="relative p-5 rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(5,150,105,0.15) 0%, rgba(4,120,87,0.08) 100%)', border: '1px solid rgba(5,150,105,0.2)' }}>
+            <p className="text-xs font-medium mb-1 uppercase tracking-wider" style={{ color: '#34D399' }}>Genius Statement</p>
+            <p className="text-white font-semibold text-lg leading-snug">{intelData.genius_statement}</p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 bg-gray-900 rounded-2xl p-6 border border-gray-800">
-              <h2 className="text-white font-semibold mb-4">Intelligence Scores</h2>
+            {/* Intelligence Profile */}
+            <div className="lg:col-span-2 p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <h2 className="text-white font-semibold mb-5">Intelligence Profile</h2>
               <div className="space-y-3">
-                {Object.entries((intel as { intelligence_scores: Record<string, number> }).intelligence_scores).sort((a,b) => b[1]-a[1]).map(([key, val]) => {
-                  const meta = intelligenceLabels[key]
+                {Object.entries(intelData.intelligence_scores).sort((a, b) => b[1] - a[1]).map(([key, val]) => {
+                  const meta = intelligenceMeta[key]
+                  const pct = val * 10
                   return (
-                    <div key={key} className="flex items-center gap-3">
-                      <span className="text-lg w-6">{meta?.emoji}</span>
-                      <span className="text-gray-400 text-sm w-36">{meta?.label}</span>
-                      <div className="flex-1 bg-gray-800 rounded-full h-2">
-                        <div className={`${meta?.color} h-2 rounded-full`} style={{ width: `${val * 10}%` }} />
+                    <div key={key}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">{meta?.emoji}</span>
+                          <span className="text-xs text-zinc-400">{meta?.label}</span>
+                        </div>
+                        <span className="text-xs font-medium" style={{ color: meta?.hex }}>{val}/10</span>
                       </div>
-                      <span className="text-gray-300 text-sm w-8">{val}/10</span>
+                      <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                        <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: meta?.hex }} />
+                      </div>
                     </div>
                   )
                 })}
               </div>
             </div>
 
-            <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-              <h2 className="text-white font-semibold mb-4">Growth</h2>
-              <p className="text-2xl font-bold text-purple-400">{(growth as { level?: string } | null)?.level || 'Seed'}</p>
-              <div className="mt-2 bg-gray-800 rounded-full h-2">
-                <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(growth as { growth_score?: number } | null)?.growth_score || 0}%` }} />
+            {/* Right column */}
+            <div className="space-y-4">
+              {/* Growth */}
+              <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <h3 className="text-white font-semibold text-sm mb-3">Growth</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-zinc-500">Level</span>
+                  <span className="text-sm font-semibold" style={{ color: lc.color }}>{level}</span>
+                </div>
+                <div className="h-1.5 rounded-full mb-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                  <div className="h-1.5 rounded-full" style={{ width: `${growthData?.growth_score || 0}%`, background: lc.color }} />
+                </div>
+                <p className="text-xs text-zinc-600">{growthData?.projects_completed || 0} / {growthData?.projects_total || 0} projects</p>
+                <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <p className="text-xs text-zinc-500">Dominant Intelligence</p>
+                  <p className="text-sm font-medium text-white mt-0.5">
+                    {intelligenceMeta[intelData.dominant_intelligence]?.emoji} {intelligenceMeta[intelData.dominant_intelligence]?.label}
+                  </p>
+                </div>
               </div>
-              <p className="text-gray-500 text-sm mt-2">
-                {(growth as { projects_completed?: number } | null)?.projects_completed || 0} / {(growth as { projects_total?: number } | null)?.projects_total || 0} projects
-              </p>
-              <p className="text-gray-400 mt-4 text-sm">
-                <span className="text-gray-500">Dominant: </span>
-                {intelligenceLabels[(intel as { dominant_intelligence: string }).dominant_intelligence]?.label}
-              </p>
+
+              {/* Study Tips */}
+              {intelData.study_tips && intelData.study_tips.length > 0 && (
+                <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <h3 className="text-white font-semibold text-sm mb-3">Study Tips</h3>
+                  <ul className="space-y-2">
+                    {intelData.study_tips.slice(0, 3).map((tip, i) => (
+                      <li key={i} className="flex gap-2 text-xs text-zinc-400">
+                        <span className="text-emerald-500 flex-shrink-0">✓</span>
+                        <span>{tip}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
         </>
       )}
 
-      <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-        <h2 className="text-white font-semibold mb-4">Assigned Projects ({(assignments as unknown[])?.length || 0})</h2>
+      {/* Assigned Projects */}
+      <div className="p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <h2 className="text-white font-semibold mb-4">
+          Assigned Projects
+          <span className="ml-2 text-xs text-zinc-600 font-normal">({(assignments as unknown[])?.length || 0})</span>
+        </h2>
         {!assignments || (assignments as unknown[]).length === 0 ? (
-          <p className="text-gray-500">No projects assigned yet.</p>
+          <p className="text-zinc-600 text-sm">No projects assigned yet.</p>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {(assignments as Array<{
               id: string;
               status: string;
               project?: { title?: string; subject?: string; difficulty?: string }
-            }>).map(a => (
-              <div key={a.id} className="flex items-center justify-between py-3 border-b border-gray-800 last:border-0">
-                <div>
-                  <p className="text-white font-medium">{a.project?.title}</p>
-                  <p className="text-gray-500 text-sm">{a.project?.subject} · {a.project?.difficulty}</p>
+            }>).map(a => {
+              const sc = statusConfig[a.status] || statusConfig['assigned']
+              return (
+                <div key={a.id} className="flex items-center justify-between py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div>
+                    <p className="text-white text-sm font-medium">{a.project?.title}</p>
+                    <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject} · {a.project?.difficulty}</p>
+                  </div>
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: sc.bg, color: sc.color }}>
+                    {sc.label}
+                  </span>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${a.status === 'completed' ? 'bg-green-900 text-green-400' : a.status === 'in_progress' ? 'bg-blue-900 text-blue-400' : 'bg-yellow-900 text-yellow-400'}`}>
-                  {a.status.replace('_', ' ')}
-                </span>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
