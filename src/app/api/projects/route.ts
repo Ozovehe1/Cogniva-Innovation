@@ -13,8 +13,11 @@ export async function GET() {
     const { data } = await supabase.from('projects').select('*').eq('tutor_id', (profile as { id: string }).id).order('created_at', { ascending: false })
     return NextResponse.json({ projects: data })
   } else {
-    const { data } = await supabase.from('project_assignments').select('*, project:projects(*)').eq('student_id', (profile as { id: string }).id).order('created_at', { ascending: false })
-    return NextResponse.json({ assignments: data })
+    const [{ data: assignments }, { data: tutorLink }] = await Promise.all([
+      supabase.from('project_assignments').select('*, project:projects(*)').eq('student_id', (profile as { id: string }).id).order('created_at', { ascending: false }),
+      supabase.from('tutor_students').select('tutor_id, tutor:profiles!tutor_students_tutor_id_fkey(full_name)').eq('student_id', (profile as { id: string }).id).limit(1).maybeSingle(),
+    ])
+    return NextResponse.json({ assignments: assignments ?? [], hasTutor: !!tutorLink, tutorName: (tutorLink as { tutor?: { full_name?: string } } | null)?.tutor?.full_name ?? null })
   }
 }
 

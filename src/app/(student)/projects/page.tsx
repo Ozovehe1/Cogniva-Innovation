@@ -22,10 +22,14 @@ export default function StudentProjectsPage() {
   const [assignments, setAssignments] = useState<AssignmentWithFeedback[]>([])
   const [loading, setLoading] = useState(true)
   const [acting, setActing] = useState<string | null>(null)
+  const [hasTutor, setHasTutor] = useState(false)
+  const [tutorName, setTutorName] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then(d => {
       setAssignments(d.assignments || [])
+      setHasTutor(d.hasTutor ?? false)
+      setTutorName(d.tutorName ?? null)
       setLoading(false)
     })
   }, [])
@@ -47,7 +51,7 @@ export default function StudentProjectsPage() {
   const completed = assignments.filter(a => a.status === 'completed').length
   const total = assignments.length
   const pendingReview = assignments.filter(a => a.status === 'pending_review').length
-  const hasNoTutor = !loading && total === 0
+  const hasNoTutor = !loading && !hasTutor
 
   if (loading) {
     return (
@@ -91,12 +95,22 @@ export default function StudentProjectsPage() {
 
       {hasNoTutor ? (
         <div className="space-y-4">
-          <div className="flex flex-col items-center justify-center py-12 text-center rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <div className="text-4xl mb-4">📂</div>
-            <p className="text-white font-medium mb-1">No projects yet</p>
-            <p className="text-zinc-500 text-sm">Connect to a tutor to start receiving projects</p>
+          <div className="rounded-2xl p-6 text-center" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <p className="text-white text-sm font-medium mb-1">No tutor connected yet</p>
+            <p className="text-xs leading-relaxed" style={{ color: '#52525B' }}>
+              Ask your tutor for their short code and enter it below to connect.
+            </p>
           </div>
           <LinkTutor onLinked={() => window.location.reload()} />
+        </div>
+      ) : total === 0 ? (
+        <div className="rounded-2xl p-8 text-center" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <p className="text-white text-sm font-medium mb-1">
+            Connected{tutorName ? ` to ${tutorName}` : ''}
+          </p>
+          <p className="text-xs leading-relaxed" style={{ color: '#52525B' }}>
+            Your tutor hasn&apos;t assigned any projects yet. Check back soon.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
