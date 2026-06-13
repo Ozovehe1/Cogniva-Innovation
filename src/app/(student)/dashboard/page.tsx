@@ -5,11 +5,11 @@ import Link from 'next/link'
 export const dynamic = 'force-dynamic'
 
 const intelligenceMeta: Record<string, { label: string; emoji: string; hex: string }> = {
-  linguistic: { label: 'Linguistic', emoji: '📝', hex: '#3B82F6' },
-  logicalMathematical: { label: 'Logical-Math', emoji: '🔢', hex: '#22C55E' },
-  spatial: { label: 'Spatial', emoji: '🎨', hex: '#EAB308' },
+  linguistic: { label: 'Linguistic', emoji: '📖', hex: '#3B82F6' },
+  logicalMathematical: { label: 'Logical-Mathematical', emoji: '🔢', hex: '#22C55E' },
+  spatial: { label: 'Spatial', emoji: '🗺️', hex: '#EAB308' },
   musical: { label: 'Musical', emoji: '🎵', hex: '#EC4899' },
-  bodilyKinesthetic: { label: 'Kinesthetic', emoji: '⚡', hex: '#F97316' },
+  bodilyKinesthetic: { label: 'Bodily-Kinesthetic', emoji: '🏃', hex: '#F97316' },
   interpersonal: { label: 'Interpersonal', emoji: '🤝', hex: '#14B8A6' },
   intrapersonal: { label: 'Intrapersonal', emoji: '🧘', hex: '#8B5CF6' },
   naturalist: { label: 'Naturalist', emoji: '🌿', hex: '#10B981' },

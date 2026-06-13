@@ -3,35 +3,47 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 
+// 16 questions — 2 per Gardner intelligence type (as specified in GeniusMap design)
 const questions = [
-  { id: 1, text: 'I enjoy reading books, articles, and stories in my spare time.', type: 'linguistic' },
-  { id: 2, text: 'I express myself well through writing or storytelling.', type: 'linguistic' },
-  { id: 3, text: 'I enjoy solving puzzles, brain teasers, and logic problems.', type: 'logicalMathematical' },
-  { id: 4, text: 'I think in patterns and love working with numbers.', type: 'logicalMathematical' },
-  { id: 5, text: 'I can visualize objects and spaces clearly in my mind.', type: 'spatial' },
-  { id: 6, text: 'I enjoy drawing, designing, or imagining how things look from different angles.', type: 'spatial' },
-  { id: 7, text: 'I can easily remember and reproduce melodies or rhythms.', type: 'musical' },
-  { id: 8, text: 'Music plays a big role in how I feel and think.', type: 'musical' },
-  { id: 9, text: 'I learn best by doing physical activities or using my hands.', type: 'bodilyKinesthetic' },
-  { id: 10, text: 'I am good at sports, dancing, or any physical skill.', type: 'bodilyKinesthetic' },
-  { id: 11, text: 'I find it easy to understand and connect with other people.', type: 'interpersonal' },
-  { id: 12, text: 'I am good at leading groups or helping others solve their problems.', type: 'interpersonal' },
-  { id: 13, text: 'I often reflect deeply on my own feelings and motivations.', type: 'intrapersonal' },
-  { id: 14, text: 'I have a clear sense of my own strengths, weaknesses, and goals.', type: 'intrapersonal' },
-  { id: 15, text: 'I notice patterns and details in nature that others often miss.', type: 'naturalist' },
-  { id: 16, text: 'I enjoy spending time outdoors and am curious about animals and plants.', type: 'naturalist' },
-  { id: 17, text: 'I prefer to think out loud or discuss ideas with others.', type: 'linguistic' },
-  { id: 18, text: 'I find scientific experiments and logical deductions exciting.', type: 'logicalMathematical' },
-  { id: 19, text: 'I can sense the mood of a room as soon as I walk in.', type: 'interpersonal' },
-  { id: 20, text: 'I prefer working alone and tend to follow my own inner guide.', type: 'intrapersonal' },
+  // Linguistic — Thinks in language and stories
+  { id: 1, text: 'When you want to explain something, do you find the right words easily and enjoy it?', type: 'linguistic' },
+  { id: 2, text: 'Do you enjoy reading, writing stories, or making up your own poems in your free time?', type: 'linguistic' },
+
+  // Logical-Mathematical — Loves patterns and reasoning
+  { id: 3, text: 'Do you enjoy puzzles, number games, or figuring out exactly how something works step by step?', type: 'logicalMathematical' },
+  { id: 4, text: 'When something goes wrong, do you want to find the exact cause rather than guess?', type: 'logicalMathematical' },
+
+  // Spatial — Thinks in pictures and shapes
+  { id: 5, text: 'Can you picture objects or places clearly in your mind even when they are not in front of you?', type: 'spatial' },
+  { id: 6, text: 'Do you often doodle, sketch, or imagine how things would look from a different angle?', type: 'spatial' },
+
+  // Musical — Sensitive to rhythm and sound
+  { id: 7, text: 'Do you notice rhythms or background music that others seem to miss, and does it affect your mood?', type: 'musical' },
+  { id: 8, text: 'Do melodies or beats stick in your head easily and help you remember things better?', type: 'musical' },
+
+  // Bodily-Kinesthetic — Learns through movement
+  { id: 9, text: 'Do you learn something best when you physically do it yourself, rather than just watching or reading?', type: 'bodilyKinesthetic' },
+  { id: 10, text: 'Are you skilled with your hands — building things, playing a sport, dancing, or crafting?', type: 'bodilyKinesthetic' },
+
+  // Interpersonal — Understands people naturally
+  { id: 11, text: 'Can you usually tell how someone is feeling even before they say a word?', type: 'interpersonal' },
+  { id: 12, text: 'Do people often come to you for advice, or naturally follow your lead in group situations?', type: 'interpersonal' },
+
+  // Intrapersonal — Deeply self-aware
+  { id: 13, text: 'Do you know your own strengths and weaknesses well, and think about why you react the way you do?', type: 'intrapersonal' },
+  { id: 14, text: 'Do you prefer to figure things out on your own and trust your own judgment over the group?', type: 'intrapersonal' },
+
+  // Naturalist — Observes patterns in nature
+  { id: 15, text: 'Do you notice animals, plants, weather patterns, or natural details that most people walk past?', type: 'naturalist' },
+  { id: 16, text: 'Do you feel more calm and focused when you are outdoors or in a natural environment?', type: 'naturalist' },
 ]
 
 const options = [
-  { val: 1, label: 'Strongly Disagree' },
-  { val: 2, label: 'Disagree' },
-  { val: 3, label: 'Neutral' },
-  { val: 4, label: 'Agree' },
-  { val: 5, label: 'Strongly Agree' },
+  { val: 1, label: 'Not at all like me' },
+  { val: 2, label: 'Rarely like me' },
+  { val: 3, label: 'Sometimes like me' },
+  { val: 4, label: 'Often like me' },
+  { val: 5, label: 'Exactly like me' },
 ]
 
 const analysisSteps = [
