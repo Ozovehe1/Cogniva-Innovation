@@ -26,16 +26,15 @@ export default function SignupPage() {
     if (signUpError) { setError(signUpError.message); setLoading(false); return }
     if (!data.user) { setError('Signup failed. Please try again.'); setLoading(false); return }
 
-    // If session exists, email confirmation is OFF — create profile then redirect
+    // If session exists, email confirmation is OFF.
+    // The handle_new_user trigger already created the profile — just fetch it.
     if (data.session) {
-      const { error: profileError } = await supabase.from('profiles').upsert({
-        user_id: data.user.id,
-        full_name: form.fullName,
-        email: form.email,
-        role,
-      }, { onConflict: 'user_id' })
-      if (profileError) { setError(profileError.message); setLoading(false); return }
-      router.push(role === 'student' ? '/assessment' : '/tutor/dashboard')
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles').select('role').eq('user_id', data.user.id).single()
+      if (profileError || !profile) {
+        setError('Profile setup failed — please try again.'); setLoading(false); return
+      }
+      router.push(profile.role === 'student' ? '/assessment' : '/tutor/dashboard')
       router.refresh()
       return
     }
