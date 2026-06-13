@@ -104,12 +104,18 @@ alter table tutor_students enable row level security;
 alter table projects enable row level security;
 alter table project_assignments enable row level security;
 
--- Profiles: users can read own profile, tutors can read their students
+-- Helper: get current user's profile id without triggering RLS recursion
+create or replace function get_my_profile_id()
+returns uuid language sql security definer stable as $$
+  select id from profiles where user_id = auth.uid() limit 1;
+$$;
+
+-- Profiles: users can manage own profile, tutors can read their students
 create policy "Users can view own profile" on profiles for select using (auth.uid() = user_id);
 create policy "Users can update own profile" on profiles for update using (auth.uid() = user_id);
 create policy "Users can insert own profile" on profiles for insert with check (auth.uid() = user_id);
 create policy "Tutors can view their students profiles" on profiles for select using (
-  exists (select 1 from tutor_students ts join profiles p on p.id = ts.tutor_id where p.user_id = auth.uid() and ts.student_id = profiles.id)
+  exists (select 1 from tutor_students where tutor_id = get_my_profile_id() and student_id = profiles.id)
 );
 
 -- Intelligence profiles: student sees own, tutor sees their students
