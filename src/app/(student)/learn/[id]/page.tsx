@@ -1,5 +1,9 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { after } from 'next/server'
+import { headers } from 'next/headers'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { prefetchNextLesson } from '@/lib/path'
 import { ArrowLeft } from 'lucide-react'
 import { getSessionProfile } from '@/lib/auth'
 import { validateScript } from '@/lib/lesson-schema'
@@ -9,6 +13,7 @@ import { LessonSession } from '@/components/lesson-session'
 import { LessonPreparing } from '@/components/lesson-preparing'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300
 
 export default async function LessonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -21,7 +26,18 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
   const l = lesson as { id: string; title: string; subject: string; objectives: string[] | null; script: unknown; chapters: unknown; status: string; owner_student_id: string | null; draft_status: string }
   const own = !!profile && l.owner_student_id === profile.id
   if (!own && l.status !== 'approved') notFound()
-  const { data: topicRow } = own ? await supabase.from('path_topics').select('id').eq('lesson_id', id).maybeSingle() : { data: null }
+  const { data: topicRow } = own ? await supabase.from('path_topics').select('id, status').eq('lesson_id', id).maybeSingle() : { data: null }
+  if (own && topicRow) {
+    const h = await headers()
+    const origin = h.get('host') ? `${h.get('x-forwarded-proto') ?? 'https'}://${h.get('host')}` : undefined
+    after(async () => {
+      const db = createAdminClient()
+      // A lesson written ahead becomes the one being learned once it is opened.
+      if ((topicRow as { status: string }).status === 'ready') await db.from('path_topics').update({ status: 'learning' }).eq('id', (topicRow as { id: string }).id)
+      // While this one plays, write the next lesson in the path (once this one is fully drafted).
+      await prefetchNextLesson(db, id, { origin }).catch(() => null)
+    })
+  }
   const { data: lp } = own ? await supabase.from('learner_profiles').select('age_band').eq('student_id', profile!.id).maybeSingle() : { data: null }
   const minor = lp ? ['under13', '13to17'].includes((lp as { age_band: string | null }).age_band ?? '') : null
   const drafting = own && ['outlining', 'drafting', 'paused'].includes(l.draft_status)

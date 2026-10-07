@@ -20,28 +20,18 @@ export function LessonPreparing({ lessonId, own, compact = false, readySections 
       const data = res?.ok ? await res.json().catch(() => null) : null
       if (stop || !data) return
       setState(data)
-      // Before the lesson can start, reload as soon as the first section exists. Mid-lesson, offer it instead
-      // (reloading swaps the script under the player).
-      if (seen === 0 && data.sectionsReady > 0) { seen = data.sectionsReady; router.refresh() }
+      // Reload as soon as a new section exists. Mid-lesson the player appends it in place, so playback
+      // carries straight on into it (no reset, no button).
+      if (data.sectionsReady > seen) { seen = data.sectionsReady; router.refresh() }
       if (['ready', 'partial', 'failed'].includes(data.status)) return
-      setTimeout(tick, compact ? 15_000 : 5_000)
+      setTimeout(tick, compact ? 8_000 : 4_000)
     }
     void tick()
     return () => { stop = true }
   }, [lessonId, own, compact, readySections, router])
 
-  if (compact) {
-    const more = (state?.sectionsReady ?? readySections) > readySections
-    return (
-      <p className="mb-3 flex flex-wrap items-center gap-2 text-[13px] text-muted">
-        {more ? (
-          <>New sections are ready.<button type="button" onClick={() => router.refresh()} className="font-medium text-accent hover:underline underline-offset-4">Add them to the lesson</button></>
-        ) : (
-          <><Spinner className="h-3 w-3 text-accent" />Later sections are still being written. You can start now.</>
-        )}
-      </p>
-    )
-  }
+  // Mid-lesson nothing is shown: later sections stream in behind the one being taught.
+  if (compact) return null
   const paused = state?.status === 'paused'
   return (
     <div className="rounded-[14px] border border-line bg-surface p-6 md:p-8">

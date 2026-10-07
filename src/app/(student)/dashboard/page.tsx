@@ -1,8 +1,10 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { ArrowRight, Check, Circle, Lock, RotateCcw } from 'lucide-react'
+import { ArrowRight, Check, Circle, Lock, Plus, RotateCcw } from 'lucide-react'
 import { getSessionProfile } from '@/lib/auth'
-import { loadPathView, PURPOSE_LABEL, formatDue } from '@/lib/path-view'
+import { loadPathView, openingLines, PURPOSE_LABEL, formatDue } from '@/lib/path-view'
+import { learnerForPath } from '@/lib/learner'
+import { VoiceWarm } from '@/components/voice-warm'
 import { Card, Eyebrow, PageHeader, ProgressBar, SectionTitle, buttonClass, cx } from '@/components/ui'
 import { TopicStart } from '@/components/topic-start'
 
@@ -12,11 +14,11 @@ export default async function Dashboard() {
   const { supabase, profile } = await getSessionProfile()
   if (!profile) redirect('/login')
   const firstName = profile.full_name?.split(' ')[0] ?? 'there'
-  const { learner, path, topics, progress, next } = await loadPathView(supabase, profile.id)
+  const { learner, paths, diagnosing, path, topics, progress, next } = await loadPathView(supabase, profile.id)
 
   if (!learner?.completed_at || !path || path.status !== 'ready') {
     const started = !!learner && Object.keys(learner.answers ?? {}).length > 0
-    const checking = path?.status === 'diagnosing'
+    const checking = !!diagnosing
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center">
         <Eyebrow className="mb-3">Welcome, {firstName}</Eyebrow>
@@ -44,18 +46,30 @@ export default async function Dashboard() {
   const nextStarted = next?.lesson_id ? (progress.get(next.lesson_id)?.step_index ?? 0) > 0 : false
   const knownNow = [...new Set([...(path.known ?? []), ...topics.filter(t => t.status === 'mastered').map(t => t.node_id)])]
   const upNext = topics.filter(t => t.status === 'ready' || t.status === 'review' || t.status === 'learning').map(t => t.title)
+  const goalLearner = learnerForPath(learner, path)
+  // Fetch the up-next lesson's opening lines into the voice cache now, so Start speaks at once.
+  const lines = next?.lesson_id && !nextLessonDone ? await openingLines(supabase, next.lesson_id) : []
 
   return (
     <div>
-      <PageHeader eyebrow="Home" title={<>Hello, {firstName}</>} />
+      <VoiceWarm lessonId={next?.lesson_id && !nextLessonDone ? next.lesson_id : null} lines={lines} />
+      <PageHeader eyebrow="Home" title={<>Hello, {firstName}</>}
+        actions={<Link href="/start?new=1" className={buttonClass('secondary', 'md')}><Plus className="h-4 w-4" strokeWidth={2} />Learn something new</Link>} />
+
+      {diagnosing && (
+        <section className="mb-6 flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-5 sm:flex-row sm:items-center">
+          <p className="flex-1 text-[15px] leading-relaxed text-ink">Your short check for <span className="font-medium">{diagnosing.goal}</span> is waiting. Finish it to add this path.</p>
+          <Link href="/start" className={buttonClass('primary', 'md')}>Continue the check<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
+        </section>
+      )}
 
       {/* Goal and plan */}
       <Card className="mb-6">
-        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Your goal</p>
+        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">{paths.length > 1 ? 'Your most recent goal' : 'Your goal'}</p>
         <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink md:text-[28px]">{path.goal}</h2>
         <dl className="mt-4 grid grid-cols-2 gap-y-3 text-[14px] sm:grid-cols-4">
-          <div><dt className="text-muted">For</dt><dd className="mt-0.5 font-medium text-ink">{PURPOSE_LABEL[learner.purpose ?? ''] ?? '—'}</dd></div>
-          <div><dt className="text-muted">Deadline</dt><dd className="tnum mt-0.5 font-medium text-ink">{learner.deadline ? formatDue(learner.deadline) : 'None'}</dd></div>
+          <div><dt className="text-muted">For</dt><dd className="mt-0.5 font-medium text-ink">{PURPOSE_LABEL[goalLearner.purpose ?? ''] ?? '—'}</dd></div>
+          <div><dt className="text-muted">Deadline</dt><dd className="tnum mt-0.5 font-medium text-ink">{goalLearner.deadline ? formatDue(goalLearner.deadline) : 'None'}</dd></div>
           <div><dt className="text-muted">Lessons</dt><dd className="tnum mt-0.5 font-medium text-ink">About {path.plan.lessonMinutes} min</dd></div>
           <div><dt className="text-muted">Rhythm</dt><dd className="tnum mt-0.5 font-medium text-ink">{path.plan.sessionsPerWeek}× a week</dd></div>
         </dl>
@@ -84,21 +98,40 @@ export default async function Dashboard() {
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <section className="lg:col-span-3">
-          <SectionTitle action={<Link href="/learn" className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline underline-offset-4">All lessons <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} /></Link>}>Your path</SectionTitle>
-          <Card padded={false}>
-            <ol className="divide-y divide-line">
-              {topics.map(t => (
-                <li key={t.id} className="flex items-center gap-3 px-5 py-3.5">
-                  <span className={cx('flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border', t.status === 'mastered' ? 'border-accent bg-accent text-white' : t.status === 'locked' ? 'border-line text-faint' : 'border-accent text-accent')}>
-                    {t.status === 'mastered' ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : t.status === 'locked' ? <Lock className="h-3 w-3" strokeWidth={2} /> : t.status === 'review' ? <RotateCcw className="h-3 w-3" strokeWidth={2} /> : <Circle className="h-2.5 w-2.5 fill-current" />}
-                  </span>
-                  <span className={cx('min-w-0 flex-1 text-[15px] leading-snug', t.status === 'locked' ? 'text-muted' : 'text-ink')}>{t.title}</span>
-                  {t.due_on && t.status !== 'mastered' && <span className="tnum flex-shrink-0 text-[12px] text-faint">{formatDue(t.due_on)}</span>}
-                </li>
-              ))}
-            </ol>
-          </Card>
+        <section className="space-y-6 lg:col-span-3">
+          {paths.map(entry => (
+            <div key={entry.path.id}>
+              <SectionTitle action={<span className="tnum text-[13px] text-muted">{entry.mastered} of {entry.topics.length} mastered</span>}>
+                {paths.length > 1 ? entry.path.goal : 'Your path'}
+              </SectionTitle>
+              <Card padded={false}>
+                <ol className="divide-y divide-line">
+                  {entry.topics.map(t => {
+                    const p = t.lesson_id ? progress.get(t.lesson_id) : undefined
+                    const open = t.status !== 'locked'
+                    const state = t.status === 'mastered' ? 'Mastered' : p?.completed_at ? 'Check due' : (p?.step_index ?? 0) > 0 ? 'In progress' : t.status === 'locked' ? 'Locked' : t.lesson_id ? 'Ready' : 'Not started'
+                    const body = (
+                      <>
+                        <span className={cx('flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border', t.status === 'mastered' ? 'border-accent bg-accent text-white' : t.status === 'locked' ? 'border-line text-faint' : 'border-accent text-accent')}>
+                          {t.status === 'mastered' ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : t.status === 'locked' ? <Lock className="h-3 w-3" strokeWidth={2} /> : t.status === 'review' ? <RotateCcw className="h-3 w-3" strokeWidth={2} /> : <Circle className="h-2.5 w-2.5 fill-current" />}
+                        </span>
+                        <span className={cx('min-w-0 flex-1 text-[15px] leading-snug', open ? 'text-ink' : 'text-muted')}>{t.title}</span>
+                        <span className="tnum flex-shrink-0 text-[12px] text-muted">{state}</span>
+                      </>
+                    )
+                    return (
+                      <li key={t.id}>
+                        {open && t.lesson_id
+                          ? <Link href={p?.completed_at && t.status !== 'mastered' ? `/learn/${t.lesson_id}/check` : `/learn/${t.lesson_id}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-sunken">{body}</Link>
+                          : <div className="flex items-center gap-3 px-5 py-3.5">{body}</div>}
+                      </li>
+                    )
+                  })}
+                </ol>
+              </Card>
+            </div>
+          ))}
+          <Link href="/learn" className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline underline-offset-4">All lessons <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} /></Link>
         </section>
         <aside className="space-y-6 lg:col-span-2">
           <section>

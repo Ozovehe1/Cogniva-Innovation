@@ -178,18 +178,29 @@ Return {"steps": [...]} only.`
 
 export interface OutlineSection { title: string; goal: string; minutes: number; keyPoints: string[] }
 
-/** Roughly how many steps fill a minute of lesson (narrated steps average ~7 s; checks take longer). */
-export const STEPS_PER_MINUTE = 8
+/**
+ * Pacing, measured on production lessons played with the Kokoro voice: a narrated
+ * step plays about 4-7 s (the voice speaks ~2.9 words a second), so the length of a
+ * section comes from how much is said and demonstrated, not from its step count.
+ */
+export const STEPS_PER_MINUTE = 9
+/** Spoken words of narration per minute of lesson (the rest is motion, pauses and checks). */
+export const WORDS_PER_MINUTE = 135
 
 export function sectionStepTarget(minutes: number) {
   const n = Math.round(minutes * STEPS_PER_MINUTE)
-  return { min: Math.max(8, Math.round(n * 0.75)), max: Math.min(SECTION_MAX_STEPS - 4, Math.max(14, Math.round(n * 1.15))) }
+  return { min: Math.max(10, Math.round(n * 0.8)), max: Math.min(SECTION_MAX_STEPS - 10, Math.max(18, Math.round(n * 1.4))) }
 }
 
-/** How many sections a lesson of `minutes` should have (sections of about 6-10 minutes). */
+/** Spoken words a section of `minutes` needs across its "say" lines. */
+export function sectionWordTarget(minutes: number) {
+  return Math.round(minutes * WORDS_PER_MINUTE / 10) * 10
+}
+
+/** How many sections a lesson of `minutes` should have (sections of about 5-7 minutes). */
 export function sectionCountFor(minutes: number) {
-  if (minutes <= 12) return Math.max(1, Math.round(minutes / 6))
-  return Math.min(16, Math.max(2, Math.round(minutes / 7.5)))
+  if (minutes <= 8) return 1
+  return Math.min(24, Math.max(2, Math.round(minutes / 6)))
 }
 
 const mockMode = () => process.env.LESSON_AI_MOCK === '1' && process.env.VERCEL_ENV !== 'production'
@@ -214,7 +225,7 @@ function cleanOutline(raw: unknown, targetMinutes: number, count: number): Outli
   if (out.length === 0) throw new Error('AI returned an empty outline')
   // Scale minutes so the sections add up to the target, each 3..15 minutes.
   const sum = out.reduce((a, b) => a + b.minutes, 0) || 1
-  for (const o of out) o.minutes = Math.round(Math.min(15, Math.max(3, (o.minutes / sum) * targetMinutes)) * 10) / 10
+  for (const o of out) o.minutes = Math.round(Math.min(10, Math.max(3, (o.minutes / sum) * targetMinutes)) * 10) / 10
   return out
 }
 
@@ -236,7 +247,8 @@ Objectives:
 ${lesson.objectives.map(o => `- ${o}`).join('\n')}
 ${notes ? `Teaching notes for this learner (follow them):\n${notes}\n` : ''}
 Rules:
-- About ${count} sections (between ${Math.max(1, count - 2)} and ${count + 2}); each section is one coherent idea taught in about 5 to 10 minutes, and the minutes add up to about ${targetMinutes}.
+- About ${count} sections (between ${Math.max(1, count - 2)} and ${count + 2}); each section is one coherent idea taught in about 5 to 7 minutes, and the minutes add up to about ${targetMinutes}.
+- A section of N minutes needs enough to teach for N minutes: plan for each one an intuition demonstration, at least two worked examples shown on the board (one simple, one harder), a "what if we change this?" demonstration, and checks.
 - Build from intuition to formal understanding to practice; the last section consolidates and reviews.
 - Every objective is covered by at least one section.
 - Each section has: "title" (under 60 characters, no numbering), "goal" (one sentence: what the student can do after it), "minutes" (number), "keyPoints" (3 to 6 short phrases, in teaching order).
@@ -283,6 +295,7 @@ export async function draftLessonSection(input: {
     return mockSectionSteps(section, position, outline.length)
   }
   const { min, max } = sectionStepTarget(section.minutes)
+  const words = sectionWordTarget(section.minutes)
   const prev = outline[position - 1]
   const next = outline[position + 1]
   const prompt = `Write ONE section of a longer whiteboard lesson.
@@ -304,7 +317,8 @@ ${LAYOUT_RULES}
 - Only refer to ids created in this section.
 ${SHOW_DONT_TELL}
 - Count before answering: at least ${Math.ceil(min * 0.5)} steps must be draw / animate / move / transform / scale / highlight / fade, and they must outnumber the write + math steps. Evolve an equation with transform (one element changing in place) instead of writing a new math line for every step of working.
-- At least ${min} and at most ${max} steps: this section must fill about ${section.minutes} minutes of teaching, so go step by step with worked examples, not a summary.
+- Length: this section must PLAY for about ${section.minutes} minutes. The narration is read aloud at about 2.9 words a second, so the "say" lines together must total about ${words} spoken words (most narrated steps say 15 to 35 words while the board moves). Use ${min} to ${max} steps.
+- Fill the time with teaching, never filler: a visual intuition first, then at least two worked examples demonstrated on the board step by step (one simple, one harder or from real life), a "watch what happens when we change this" demonstration (animate a variable), and the checks. Do not pad with repetition, recaps or empty praise.
 - After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach".
 Return {"steps": [...]} only.`
   let steps = await generateSteps(prompt, { maxSteps: SECTION_MAX_STEPS, timeoutMs: 120_000, primaryTimeoutMs: 100_000, meta: input.meta })
@@ -324,6 +338,70 @@ Rewrite the section so each idea is demonstrated visually (draw it, then animate
     steps = repaired
   }
   return withSectionStart(steps, position)
+}
+
+/**
+ * Lengthens a section that plays shorter than its target: asks for more teaching
+ * that continues the section on the board (another worked example demonstrated
+ * step by step, a "change this and watch" demonstration, a check), never filler.
+ * Returns only the new steps; the caller appends them and re-measures.
+ */
+export async function expandLessonSection(input: {
+  lesson: LessonLite
+  outline: OutlineSection[]
+  position: number
+  steps: Step[]
+  playedMinutes: number
+  notes?: string
+  meta?: GenMeta
+}): Promise<Step[]> {
+  const { lesson, outline, position, steps } = input
+  const section = outline[position]
+  const missing = Math.max(1, Math.round((section.minutes - input.playedMinutes) * 10) / 10)
+  const words = sectionWordTarget(missing)
+  const { min, max } = sectionStepTarget(missing)
+  if (mockMode()) {
+    const out: Step[] = [{ type: 'clear', targets: boardIdsAfter(steps).ids.filter(id => id !== 'title') }]
+    for (let i = 0; i < Math.max(6, Math.round(missing * STEPS_PER_MINUTE)); i++) {
+      out.push({ type: 'write', id: `x${i}`, text: `Extra example ${i + 1}`, x: 470, y: 110 + (i % 6) * 52, size: 'sm', font: 'sans', maxWidth: 300, say: `Here is another worked example, number ${i + 1}, for ${section.title}.` })
+      if (i % 6 === 5) out.push({ type: 'clear', targets: Array.from({ length: 6 }, (_, k) => `x${i - 5 + k}`) })
+    }
+    return out
+  }
+  const { ids, axes, vars } = boardIdsAfter(steps)
+  const covered = steps.filter(st => st.say).map(st => st.say!).join(' ').slice(-2500)
+  const prompt = `Continue ONE section of a whiteboard lesson: it plays for ${input.playedMinutes} minutes but must teach for about ${section.minutes}. Add about ${missing} more minutes of real teaching at the end of it.
+Lesson: ${lesson.title} (${lesson.subject})
+This section (${position + 1} of ${outline.length}): "${section.title}"
+Goal: ${section.goal}
+Key points: ${section.keyPoints.join('; ')}
+${outline[position + 1] ? `The next section will cover "${outline[position + 1].title}", so do not start it here.` : 'This is the final section of the lesson.'}
+${input.notes ? `Teaching notes for this learner (follow them):\n${input.notes}\n` : ''}
+What the section has said so far (end of it): ${covered}
+
+The section's last steps (JSON):
+${JSON.stringify(steps.slice(-14)).slice(0, 7000)}
+
+Elements currently on the board (ids you may highlight/transform/clear): ${ids.join(', ') || 'none'}
+Axes on the board (ids usable in "on"): ${axes.join(', ') || 'none'}
+Variables already set: ${vars.join(', ') || 'none'}
+
+${SCRIPT_SCHEMA_PROMPT}
+
+${LAYOUT_RULES}
+${SHOW_DONT_TELL}
+What to add (in this order, deepening the same key points; do not repeat what was already shown):
+- Start by clearing what you no longer need (clear with targets; keep "title"), then draw a fresh diagram.
+- A new worked example demonstrated on the board step by step (draw the situation, then move / animate / transform as the narration explains each step), harder or more real-world than the earlier ones.
+- A "watch what happens when we change this" demonstration: animate a variable and narrate what the learner sees change.
+- A check: kind "choice" or "short" with "explanation" and a "reteach" (3-6 steps), about the new example.
+- Length: about ${words} spoken words across the new "say" lines (15 to 35 words per narrated step), ${min} to ${max} new steps. No recaps, no filler, no empty praise.
+New ids must not clash with ids on the board unless you clear them first.
+Return {"steps": [...]} with ONLY the new steps.`
+  const more = await generateSteps(prompt, { knownIds: ids, knownAxes: axes, knownVars: vars, maxSteps: Math.max(20, SECTION_MAX_STEPS - steps.length), timeoutMs: 110_000, primaryTimeoutMs: 90_000, meta: input.meta, played: steps, layoutRepair: false })
+  const problem = visualProblem(more)
+  if (problem) throw new Error(`Expansion is mostly text (${problem})`)
+  return more
 }
 
 export type TutorReason = 'explain_differently' | 'wrong_answer' | 'continue' | 'worked_example'

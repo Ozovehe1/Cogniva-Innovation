@@ -49,6 +49,9 @@ export interface PathRow {
   known: string[]
   ready: string[]
   plan: PathPlan
+  /** The intake answers this path was planned from (a later intake for another goal never changes them). */
+  learner_snapshot?: Partial<LearnerRow> | null
+  created_at?: string
 }
 
 export interface TopicRow {
@@ -119,6 +122,43 @@ export async function loadLearner(db: SupabaseClient, studentId: string): Promis
   const { data } = await db.from('learner_profiles').select('*').eq('student_id', studentId).maybeSingle()
   return (data as LearnerRow | null) ?? null
 }
+
+/** Intake fields that belong to one goal: saved on its path so a new intake never changes an existing path. */
+export const PATH_SNAPSHOT_KEYS = ['goal_text', 'goal', 'subject', 'why_text', 'value_type', 'purpose', 'deadline', 'weekly_hours', 'efficacy', 'goal_orientation', 'anxiety', 'example_pref', 'interests', 'barriers', 'last_studied'] as const
+
+export function learnerSnapshot(l: LearnerRow): Partial<LearnerRow> {
+  const out: Record<string, unknown> = {}
+  for (const k of PATH_SNAPSHOT_KEYS) out[k] = l[k] ?? null
+  return out as Partial<LearnerRow>
+}
+
+/** The learner as they were when this path was planned (current profile for anything not snapshotted). */
+export function learnerForPath(l: LearnerRow, path: Pick<PathRow, 'learner_snapshot'> | null | undefined): LearnerRow {
+  const snap = path?.learner_snapshot
+  if (!snap || typeof snap !== 'object') return l
+  const out = { ...l } as Record<string, unknown>
+  for (const k of PATH_SNAPSHOT_KEYS) if (k in snap) out[k] = (snap as Record<string, unknown>)[k]
+  return out as unknown as LearnerRow
+}
+
+/** Every path the learner has (newest first), archived ones excluded. */
+export async function listPaths(db: SupabaseClient, studentId: string): Promise<PathRow[]> {
+  const { data } = await db.from('learning_paths').select('*').eq('student_id', studentId).neq('status', 'archived').order('created_at', { ascending: false })
+  return (data ?? []) as PathRow[]
+}
+
+/** The path a diagnostic action works on: the newest unfinished check, otherwise the newest path. */
+export async function diagnosticPath(db: SupabaseClient, studentId: string, pathId?: string | null): Promise<PathRow | null> {
+  if (pathId) {
+    const { data } = await db.from('learning_paths').select('*').eq('student_id', studentId).eq('id', pathId).neq('status', 'archived').maybeSingle()
+    if (data) return data as PathRow
+  }
+  const { data } = await db.from('learning_paths').select('*').eq('student_id', studentId).eq('status', 'diagnosing').order('created_at', { ascending: false }).limit(1).maybeSingle()
+  return (data as PathRow | null) ?? await latestPath(db, studentId)
+}
+
+export const sameGoal = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a && !!b && a.trim().toLowerCase().replace(/[.!\s]+$/, '') === b.trim().toLowerCase().replace(/[.!\s]+$/, '')
 
 export async function latestPath(db: SupabaseClient, studentId: string): Promise<PathRow | null> {
   const { data } = await db.from('learning_paths').select('*').eq('student_id', studentId).neq('status', 'archived').order('created_at', { ascending: false }).limit(1).maybeSingle()

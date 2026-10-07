@@ -1,18 +1,25 @@
 import { redirect } from 'next/navigation'
 import { getSessionProfile } from '@/lib/auth'
-import { latestPath, loadLearner } from '@/lib/learner'
+import { diagnosticPath, loadLearner } from '@/lib/learner'
 import { emptyState, knownSkills, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type DiagState } from '@/lib/diagnostic-core'
 import { IntakeFlow } from '@/components/intake-flow'
+
+/** Intake questions that belong to one goal (asked again for each new path). */
+const GOAL_ITEMS = ['goal', 'goal_pick', 'last_studied', 'why', 'purpose', 'deadline', 'efficacy', 'anxiety']
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Get started · GeniusMap', robots: { index: false } }
 
-export default async function StartPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
-  const { edit } = await searchParams
+export default async function StartPage({ searchParams }: { searchParams: Promise<{ edit?: string; new?: string }> }) {
+  const sp = await searchParams
+  // ?new=1: learn something else. The intake re-asks only the goal questions; finishing it adds a new path
+  // and every existing path (and its lessons) stays as it is.
+  const fresh = sp.new === '1'
+  const edit = sp.edit
   const { supabase, profile } = await getSessionProfile()
   if (!profile) redirect('/login?next=/start')
   const learner = await loadLearner(supabase, profile.id)
-  const path = learner?.completed_at ? await latestPath(supabase, profile.id) : null
+  const path = learner?.completed_at && !fresh ? await diagnosticPath(supabase, profile.id) : null
   let view = null
   if (path?.graph?.nodes) {
     // RLS lets the learner read their own path; only the current question (no answers) goes to the browser.
@@ -28,11 +35,12 @@ export default async function StartPage({ searchParams }: { searchParams: Promis
   return (
     <IntakeFlow
       firstName={profile.full_name.split(' ')[0] || 'there'}
-      initialAnswers={learner?.answers ?? {}}
+      initialAnswers={fresh ? Object.fromEntries(Object.entries(learner?.answers ?? {}).filter(([k]) => !GOAL_ITEMS.includes(k))) : learner?.answers ?? {}}
+      startAt={fresh ? 'goal' : undefined}
       initialItem={learner?.current_item ?? null}
       completed={!!learner?.completed_at}
       initialPath={view}
-      edit={edit === '1'}
+      edit={edit === '1' || fresh}
     />
   )
 }

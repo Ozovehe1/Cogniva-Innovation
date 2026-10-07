@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { buildGraph, latestPath, loadLearner, type PathRow } from '@/lib/learner'
+import { buildGraph, diagnosticPath, learnerForPath, learnerSnapshot, listPaths, loadLearner, sameGoal, type PathRow } from '@/lib/learner'
 import { buildPath } from '@/lib/path'
 import { GeminiQuotaError } from '@/lib/gemini'
 import { applyAnswer, emptyState, knownSkills, nextItem, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type Confidence, type DiagState } from '@/lib/diagnostic-core'
@@ -35,7 +35,7 @@ function view(path: PathRow) {
 export async function GET() {
   const { supabase, profile } = await getSessionProfile()
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const path = await latestPath(supabase, profile.id)
+  const path = await diagnosticPath(supabase, profile.id)
   if (!path || !path.graph?.nodes) return NextResponse.json({ path: null })
   return NextResponse.json({ path: view(path) })
 }
@@ -50,14 +50,22 @@ export async function GET() {
 export async function POST(request: Request) {
   const { profile } = await getSessionProfile()
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const body = await request.json().catch(() => ({})) as { action?: string; restart?: boolean; node?: string; item?: number; choice?: number | null; confidence?: string | null }
+  const body = await request.json().catch(() => ({})) as { action?: string; restart?: boolean; pathId?: string; node?: string; item?: number; choice?: number | null; confidence?: string | null }
   const db = createAdminClient()
   const learner = await loadLearner(db, profile.id)
   if (!learner?.completed_at) return NextResponse.json({ error: 'Finish the intake first.' }, { status: 400 })
-  let path = await latestPath(db, profile.id)
+  let path = await diagnosticPath(db, profile.id, body.pathId)
 
   if (body.action === 'start') {
-    if (path && path.status === 'diagnosing' && path.graph?.nodes && !body.restart) return NextResponse.json({ path: view(path) })
+    // A learner can have many paths. Starting a check for the goal of an unfinished check resumes it;
+    // the goal of a finished path opens that path; any other goal adds a new path. Only "Retake the
+    // check" replaces a path (that one path, nothing else).
+    const goal = learner.goal ?? learner.goal_text
+    if (!body.restart) {
+      if (path && path.status === 'diagnosing' && path.graph?.nodes && sameGoal(path.goal, goal)) return NextResponse.json({ path: view(path) })
+      const existing = (await listPaths(db, profile.id)).find(p => p.status === 'ready' && sameGoal(p.goal, goal))
+      if (existing) return NextResponse.json({ path: view(existing) })
+    }
     const since = new Date(Date.now() - 86_400_000).toISOString()
     const { count } = await db.from('learning_paths').select('id', { count: 'exact', head: true }).eq('student_id', profile.id).gte('created_at', since)
     if ((count ?? 0) >= 6) return NextResponse.json({ error: 'You have started several new checks today. Try again tomorrow.' }, { status: 429 })
@@ -68,12 +76,14 @@ export async function POST(request: Request) {
       const quota = err instanceof GeminiQuotaError
       return NextResponse.json({ error: quota ? 'The AI is busy right now. Please try again in a minute.' : 'Could not prepare your check. Please try again.', detail: (err instanceof Error ? err.message : String(err)).slice(0, 200) }, { status: quota ? 503 : 502 })
     }
-    if (path) await db.from('learning_paths').update({ status: 'archived' }).eq('student_id', profile.id).neq('status', 'archived')
+    // Retake: replace only the path being retaken. Unfinished checks for other goals are dropped; finished paths stay.
+    if (body.restart && path) await db.from('learning_paths').update({ status: 'archived' }).eq('id', path.id)
+    await db.from('learning_paths').update({ status: 'archived' }).eq('student_id', profile.id).eq('status', 'diagnosing')
     const st = emptyState()
     st.current = nextItem(graph, st)
     const { data, error } = await db.from('learning_paths').insert({
-      student_id: profile.id, goal: learner.goal ?? learner.goal_text ?? graph.subject, subject: graph.subject || learner.subject || '',
-      status: 'diagnosing', graph, diagnostic: { state: st },
+      student_id: profile.id, goal: goal ?? graph.subject, subject: graph.subject || learner.subject || '',
+      status: 'diagnosing', graph, diagnostic: { state: st }, learner_snapshot: { ...learnerSnapshot(learner), subject: graph.subject || learner.subject || null },
     }).select('*').single()
     if (error || !data) return NextResponse.json({ error: error?.message ?? 'Could not save' }, { status: 500 })
     if (graph.subject && !learner.subject) await db.from('learner_profiles').update({ subject: graph.subject }).eq('student_id', profile.id)
@@ -106,7 +116,7 @@ export async function POST(request: Request) {
     if (!st.done) { st.done = true; st.current = null }
     path.diagnostic = { ...path.diagnostic, state: st }
     try {
-      const r = await buildPath(db, learner, path)
+      const r = await buildPath(db, learnerForPath(learner, path), path)
       // Start drafting the first lesson now so it is ready (or nearly) when they open it.
       if (r.firstLessonId) {
         const { after } = await import('next/server')

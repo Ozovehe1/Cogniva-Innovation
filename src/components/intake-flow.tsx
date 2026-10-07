@@ -43,6 +43,7 @@ export function IntakeFlow({
   completed,
   initialPath,
   edit,
+  startAt,
 }: {
   firstName: string
   initialAnswers: Answers
@@ -50,11 +51,13 @@ export function IntakeFlow({
   completed: boolean
   initialPath: DiagView | null
   edit: boolean
+  /** Item to open on (e.g. 'goal' when adding a new path). */
+  startAt?: string
 }) {
   const [answers, setAnswers] = useState<Answers>(initialAnswers)
   const items = useMemo(() => visibleItems(answers), [answers])
   const startIndex = useMemo(() => {
-    if (edit) return 0
+    if (edit) { const at = startAt ? items.findIndex(i => i.id === startAt) : -1; return at >= 0 ? at : 0 }
     const at = initialItem ? items.findIndex(i => i.id === initialItem) : -1
     if (at >= 0) return at
     const firstOpen = items.findIndex(i => !initialAnswers[i.id])
@@ -273,7 +276,7 @@ export function IntakeFlow({
               <Link href="/dashboard" className={buttonClass('secondary', 'lg')}>Go to your dashboard</Link>
             </div>
             <div className="mt-8 border-t border-line pt-5 text-[14px] text-muted">
-              Want to learn something else? <Link href="/start?edit=1" className="font-medium text-accent hover:underline underline-offset-4">Change your goal</Link>
+              Want to learn something else too? <Link href="/start?new=1" className="font-medium text-accent hover:underline underline-offset-4">Add another goal</Link>
               {' · '}
               <button type="button" onClick={() => startDiag(true)} className="font-medium text-accent hover:underline underline-offset-4">Retake the check</button>
             </div>

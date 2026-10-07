@@ -5,7 +5,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ancestors, knownSkills, readyToLearn, topoOrder, type DiagState } from './diagnostic-core'
-import { pathNodes, planFor, teachingNotes, type LearnerRow, type PathRow, type TopicRow } from './learner'
+import { learnerForPath, loadLearner, pathNodes, planFor, teachingNotes, type LearnerRow, type PathRow, type TopicRow } from './learner'
 
 export async function recentLowMood(db: SupabaseClient, studentId: string): Promise<boolean> {
   const { data } = await db.from('learner_checkins').select('mood, energy, confidence').eq('student_id', studentId)
@@ -48,8 +48,9 @@ export async function buildPath(db: SupabaseClient, learner: LearnerRow, path: P
 }
 
 /** Create the AI lesson for a topic (drafting starts in the background). Returns the lesson id. */
-export async function createTopicLesson(db: SupabaseClient, learner: LearnerRow, path: PathRow, topic: TopicRow, opts: { firstLesson?: boolean } = {}): Promise<string> {
+export async function createTopicLesson(db: SupabaseClient, learner: LearnerRow, path: PathRow, topic: TopicRow, opts: { firstLesson?: boolean; prefetch?: boolean } = {}): Promise<string> {
   if (topic.lesson_id) return topic.lesson_id
+  learner = learnerForPath(learner, path)
   const lowMood = await recentLowMood(db, path.student_id)
   const notes = teachingNotes({ learner, path, nodeId: topic.node_id, firstLesson: !!opts.firstLesson, lowMood })
   let minutes = topic.target_minutes ?? path.plan.lessonMinutes ?? 15
@@ -63,7 +64,39 @@ export async function createTopicLesson(db: SupabaseClient, learner: LearnerRow,
   }).select('id').single()
   if (error || !data) throw new Error(error?.message ?? 'Could not create the lesson')
   const id = (data as { id: string }).id
-  await db.from('path_topics').update({ lesson_id: id, status: topic.status === 'locked' ? 'ready' : 'learning' }).eq('id', topic.id)
+  // A prefetched lesson (written ahead while an earlier one plays) leaves the topic's status alone: a locked topic stays locked.
+  // Only one lesson per topic, even when two requests race: the loser drops its lesson and uses the winner's.
+  const { data: won } = await db.from('path_topics')
+    .update(opts.prefetch ? { lesson_id: id } : { lesson_id: id, status: topic.status === 'locked' ? 'ready' : 'learning' })
+    .eq('id', topic.id).is('lesson_id', null).select('id')
+  if (!won?.length) {
+    await db.from('lessons').delete().eq('id', id)
+    const { data: t } = await db.from('path_topics').select('lesson_id').eq('id', topic.id).maybeSingle()
+    return (t as { lesson_id: string | null } | null)?.lesson_id ?? id
+  }
+  return id
+}
+
+/**
+ * Write the next lesson of the path ahead of time, while the learner is on this one, so
+ * it opens instantly. One lesson ahead only, and only once the current lesson is fully
+ * drafted (so the two never compete for the AI quota). Returns the new lesson id, if any.
+ */
+export async function prefetchNextLesson(db: SupabaseClient, currentLessonId: string, opts: { origin?: string } = {}): Promise<string | null> {
+  const { data: cur } = await db.from('path_topics').select('*').eq('lesson_id', currentLessonId).maybeSingle()
+  const topic = cur as TopicRow | null
+  if (!topic) return null
+  const { data: l } = await db.from('lessons').select('draft_status').eq('id', currentLessonId).maybeSingle()
+  if (!l || !['ready', 'partial'].includes((l as { draft_status: string }).draft_status)) return null
+  const { data: rest } = await db.from('path_topics').select('*').eq('path_id', topic.path_id).gt('position', topic.position).neq('status', 'mastered').order('position').limit(1)
+  const next = ((rest ?? []) as TopicRow[])[0]
+  if (!next || next.lesson_id) return null
+  const { data: p } = await db.from('learning_paths').select('*').eq('id', topic.path_id).maybeSingle()
+  const learner = await loadLearner(db, topic.student_id)
+  if (!p || !learner || (p as PathRow).status !== 'ready') return null
+  const id = await createTopicLesson(db, learner, p as PathRow, next, { prefetch: true })
+  const { runDraftWork } = await import('./lesson-drafting')
+  await runDraftWork(id, opts).catch(err => console.warn('Prefetched lesson draft failed:', err instanceof Error ? err.message : err))
   return id
 }
 

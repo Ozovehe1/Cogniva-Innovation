@@ -1,6 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { needsWorker, runDraftWork, selfOrigin } from '@/lib/lesson-drafting'
+import { prefetchNextLesson } from '@/lib/path'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 export const maxDuration = 300
@@ -31,6 +32,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (needsWorker(l)) {
     const origin = selfOrigin(request)
     after(() => runDraftWork(id, { origin }).then(() => undefined).catch(err => console.error('Draft worker failed:', err)))
+  }
+  // This lesson is written: write the next one in the path while the learner plays it.
+  if (l.draft_status === 'ready' || l.draft_status === 'partial') {
+    const origin = selfOrigin(request)
+    after(() => prefetchNextLesson(createAdminClient(), id, { origin }).then(() => undefined).catch(() => {}))
   }
   return NextResponse.json({
     status: l.draft_status,

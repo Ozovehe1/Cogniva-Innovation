@@ -1,11 +1,6 @@
-// Regenerates supabase/migrations/20261007120000_live_tutor.sql from the schema below and the seed lesson.
+// Regenerates supabase/migrations/20261007120000_live_tutor.sql from the schema below (no seed lessons: the sample lesson lives in code, src/lib/flagship-lesson.ts).
 // Run: npx tsx scripts/gen-live-tutor-migration.ts
 import { writeFileSync } from 'node:fs'
-import { SAMPLE_LESSON, SAMPLE_SCRIPT } from '../src/lib/seed-lessons'
-import { validateScript } from '../src/lib/lesson-schema'
-
-const v = validateScript(SAMPLE_SCRIPT)
-if (!v.ok) throw new Error('Seed script invalid: ' + v.errors.join('; '))
 
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`
 const sql = `-- Live Tutor: lessons, progress, Manim render jobs, clip storage.
@@ -100,19 +95,6 @@ create policy "tutors_manage_own_jobs" on manim_jobs
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('manim-clips', 'manim-clips', true, 104857600, array['video/mp4'])
 on conflict (id) do update set public = excluded.public, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
-
--- Seed: one generic sample lesson (demo only; tutors write the real syllabus).
-insert into lessons (id, tutor_id, title, subject, objectives, status, script)
-values (
-  ${q(SAMPLE_LESSON.id)},
-  null,
-  ${q(SAMPLE_LESSON.title)},
-  ${q(SAMPLE_LESSON.subject)},
-  array[${SAMPLE_LESSON.objectives.map(q).join(', ')}]::text[],
-  'approved',
-  ${q(JSON.stringify(SAMPLE_SCRIPT))}::jsonb
-)
-on conflict (id) do update set title = excluded.title, subject = excluded.subject, objectives = excluded.objectives, script = excluded.script, status = 'approved';
 `
 writeFileSync(new URL('../supabase/migrations/20261007120000_live_tutor.sql', import.meta.url), sql)
 console.log('wrote migration', sql.length, 'bytes')

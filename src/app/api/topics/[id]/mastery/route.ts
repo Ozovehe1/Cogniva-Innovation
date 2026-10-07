@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { GeminiQuotaError } from '@/lib/gemini'
-import { loadLearner, masteryItems, type PathRow, type TopicRow } from '@/lib/learner'
-import { masterTopic, recheckItems, reopenPrerequisite } from '@/lib/path'
+import { learnerForPath, loadLearner, masteryItems, type PathRow, type TopicRow } from '@/lib/learner'
+import { masterTopic, prefetchNextLesson, recheckItems, reopenPrerequisite } from '@/lib/path'
+import { selfOrigin } from '@/lib/lesson-drafting'
 
 export const maxDuration = 120
 
@@ -61,7 +62,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const learner = await loadLearner(db, profile.id)
       if (!learner) return NextResponse.json({ error: 'Not found' }, { status: 404 })
       try {
-        const items = await masteryItems({ learner, topicTitle: topic.title, summary: topic.summary, goal: path.goal })
+        const items = await masteryItems({ learner: learnerForPath(learner, path), topicTitle: topic.title, summary: topic.summary, goal: path.goal })
         const { data } = await db.from('path_topics').update({ mastery: { ...topic.mastery, items, startedAt: new Date().toISOString() } }).eq('id', topic.id).select('*').single()
         topic = data as TopicRow
       } catch (err) {
@@ -80,6 +81,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (score >= PASS) {
       const { unlocked } = await masterTopic(db, path, topic, score)
       const { data: next } = await db.from('path_topics').select('id, title, lesson_id').eq('path_id', path.id).in('status', ['ready', 'review']).order('position').limit(1)
+      // Keep one lesson written ahead: the one after the topic that just opened up.
+      const nextLesson = ((next ?? [])[0] as { lesson_id: string | null } | undefined)?.lesson_id
+      const origin = selfOrigin(request)
+      after(() => prefetchNextLesson(db, nextLesson ?? topic.lesson_id ?? '', { origin }).then(() => undefined).catch(() => {}))
       return NextResponse.json({ passed: true, score, results, unlocked: unlocked.length, next: (next ?? [])[0] ?? null })
     }
     const streak = topic.wrong_streak + 1

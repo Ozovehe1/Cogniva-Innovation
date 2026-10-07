@@ -35,6 +35,14 @@ export interface NeedStepsRequest {
   boardAxes: string[]
 }
 
+/** Warm the browser cache with a rendered clip before its step (once per URL per page). */
+const prefetchedClips = new Set<string>()
+function prefetchClip(url: string) {
+  if (typeof window === 'undefined' || prefetchedClips.has(url)) return
+  prefetchedClips.add(url)
+  void fetch(url, { cache: 'force-cache' }).catch(() => { prefetchedClips.delete(url) })
+}
+
 export interface WhiteboardPlayerProps {
   steps: Step[]
   autoPlay?: boolean
@@ -122,16 +130,30 @@ export function WhiteboardPlayer({
   /** Restored position waiting for the student to choose how to continue. */
   const [resumeOffer, setResumeOffer] = useState(!autoPlay && initialIndex > 0)
   const completedRef = useRef(false)
+  /** Playback reached the end of a script that may still grow. */
+  const waitingAtEndRef = useRef(false)
   const onEventRef = useRef(onEvent)
   useEffect(() => { onEventRef.current = onEvent }, [onEvent])
   const emit = useCallback((e: PlayerEvent) => onEventRef.current?.(e), [])
 
-  // Reset when a new script is passed in (e.g. tutor regenerates).
+  // Reset when a new script is passed in (e.g. tutor regenerates). A script that only grew at the end
+  // (later sections of a lesson that is still being written) is appended in place: playback carries on.
   const scriptKey = useMemo(() => JSON.stringify(initialSteps).length + ':' + initialSteps.length, [initialSteps])
   const lastKey = useRef(scriptKey)
+  const lastScript = useRef(initialSteps)
   useEffect(() => {
     if (lastKey.current === scriptKey) return
     lastKey.current = scriptKey
+    const prev = lastScript.current
+    lastScript.current = initialSteps
+    if (prev.length > 0 && initialSteps.length > prev.length && JSON.stringify(initialSteps.slice(0, prev.length)) === JSON.stringify(prev)) {
+      const tail = initialSteps.slice(prev.length)
+      setSteps(cur => [...cur, ...tail])
+      setOrig(cur => [...cur, ...tail.map((_, k) => prev.length + k)])
+      // The learner reached the end of what was written: continue straight into the new section.
+      if (completedRef.current || waitingAtEndRef.current) { completedRef.current = false; waitingAtEndRef.current = false; setPlaying(true) }
+      return
+    }
     setSteps(initialSteps)
     setOrig(initialSteps.map((_, i) => i))
     setCursor(0); setAnimIdx(-1); setPendingCheck(null); setClipIdx(null); setResolved(new Set())
@@ -177,6 +199,8 @@ export function WhiteboardPlayer({
     return base.map((c, k) => ({ ...c, start: starts[k], count: (k + 1 < base.length ? starts[k + 1] : steps.length) - starts[k] }))
   }, [chaptersProp, title, origTotal, orig, steps.length])
   const multi = chapters.length > 1
+  const chaptersRef = useRef<Chapter[]>(chapters)
+  useEffect(() => { chaptersRef.current = chapters }, [chapters])
   const section = chapterAt(chapters, cursor - 1)
   const sectionStart = chapters[section]?.start ?? 0
   /** Original-script position for a live cursor: original steps done. */
@@ -187,7 +211,7 @@ export function WhiteboardPlayer({
   /** Remaining time from each live index to the end. */
   const suffixMs = useMemo(() => {
     const out = new Array<number>(steps.length + 1).fill(0)
-    for (let i = steps.length - 1; i >= 0; i--) out[i] = out[i + 1] + estimateStepMs(steps[i])
+    for (let i = steps.length - 1; i >= 0; i--) out[i] = out[i + 1] + estimateStepMs(steps[i], i)
     return out
   }, [steps])
   const [furthest, setFurthest] = useState(() => Math.max(furthestProp, initialIndex))
@@ -305,7 +329,11 @@ export function WhiteboardPlayer({
     n.preload?.(texts)
     let live = true
     setVoicePrep('preparing')
-    void n.prepare(texts[0], NATURAL_VOICE_WAIT_MS).then(t => { if (live) setVoicePrep(t ? 'ready' : 'failed') })
+    void n.prepare(texts[0], NATURAL_VOICE_WAIT_MS).then(t => {
+      if (live) setVoicePrep(t ? 'ready' : 'failed')
+      // Then the rest of this section and the next one, while the learner reads the page.
+      if (t) preloadRef.current?.(at)
+    })
     return () => { live = false }
     // Runs once per script and voice setting, before the lesson starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -331,18 +359,30 @@ export function WhiteboardPlayer({
     if (on) unlockVoice()
     else narratorRef.current?.cancel()
   }
-  // Fetch the narration of the next few steps ahead of time.
+  // Fetch narration (audio + word timings) and rendered clips ahead: the rest of this section and all
+  // of the next one, so a section boundary never waits on the network. Already-fetched lines are free.
   const preloadFrom = useCallback((i: number) => {
-    const n = narratorRef.current
-    if (!n?.preload || !voiceOnRef.current) return
     const list = stepsRef.current
+    const ch = chaptersRef.current
+    const k0 = chapterAt(ch, Math.max(0, i))
+    const nextCh = ch[k0 + 1]
+    const end = Math.min(list.length, nextCh ? nextCh.start + nextCh.count : list.length, Math.max(0, i) + 160)
     const texts: string[] = []
-    for (let k = Math.max(0, i); k < list.length && texts.length < 4; k++) {
-      const t = stepSpeech(list[k])
+    const clips: string[] = []
+    for (let k = Math.max(0, i); k < end; k++) {
+      const st = list[k]
+      const t = stepSpeech(st)
       if (t) texts.push(t)
+      if (st.type === 'check' && st.reteach) for (const r of st.reteach) { const rt = stepSpeech(r); if (rt) texts.push(rt) }
+      if (st.type === 'manim_clip') clips.push(st.url)
     }
-    n.preload(texts)
+    const n = narratorRef.current
+    // Nearest lines first: the narrator resolves them in order.
+    if (n?.preload && voiceOnRef.current) n.preload(texts)
+    for (const url of clips) prefetchClip(url)
   }, [])
+  const preloadRef = useRef(preloadFrom)
+  useEffect(() => { preloadRef.current = preloadFrom }, [preloadFrom])
 
   /**
    * Play the step that just started (animIdx): get its narration timing (real word
@@ -431,6 +471,7 @@ export function WhiteboardPlayer({
     if (cursor >= steps.length) {
       if (animIdx === cursor - 1 && doneId !== playId && animIdx >= 0) return
       setPlaying(false)
+      if (started) waitingAtEndRef.current = true
       if (!completedRef.current && steps.length) { completedRef.current = true; emit({ type: 'complete' }) }
       return
     }
@@ -442,7 +483,7 @@ export function WhiteboardPlayer({
     } else wait = slow ? 900 : 300
     const t = setTimeout(() => goTo(cursor, true), wait)
     return () => clearTimeout(t)
-  }, [playing, blocked, hold, cursor, steps, animIdx, playId, doneId, goTo, emit, slow])
+  }, [playing, blocked, hold, cursor, steps, animIdx, playId, doneId, goTo, emit, slow, started])
 
   const togglePlay = () => {
     unlockVoice()

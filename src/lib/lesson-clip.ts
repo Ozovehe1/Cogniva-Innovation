@@ -41,19 +41,23 @@ export async function queueLessonClip(db: SupabaseClient, lessonId: string) {
 }
 
 /**
- * Place finished auto clips into their section once that section is drafted.
- * Called by the render callback (clip done) and by the drafting worker (section done).
+ * Place finished auto clips into a section as it is released. Called by the drafting
+ * worker with the position of the section it has just finished, before that section
+ * is published to the learner's script: a section the learner may already be playing
+ * is never changed (that would restart their player). A clip that finishes rendering
+ * after its section was released goes into the next section to be released instead.
  * A placed clip's job is marked 'approved' so it is only placed once.
  */
-export async function attachReadyClips(db: SupabaseClient, lessonId: string): Promise<boolean> {
+export async function attachReadyClips(db: SupabaseClient, lessonId: string, position?: number): Promise<boolean> {
+  if (position === undefined) return false
   const { data: jobs } = await db.from('manim_jobs').select('*').eq('lesson_id', lessonId).eq('auto_insert', true).eq('status', 'done')
   const done = (jobs ?? []) as (ManimJob & { prompt: string })[]
   if (!done.length) return false
   const { data: secs } = await db.from('lesson_sections').select('id, position, title, goal, key_points, status, steps').eq('lesson_id', lessonId).order('position')
   const sections = (secs ?? []) as SectionLite[]
-  if (!sections.length) return false
-  const s = sections[targetPosition(sections.length)]
-  if (s.status !== 'ready' || !Array.isArray(s.steps)) return false
+  if (!sections.length || position < targetPosition(sections.length)) return false
+  const s = sections.find(x => x.position === position)
+  if (!s || s.status !== 'ready' || !Array.isArray(s.steps)) return false
   let placed = false
   for (const job of done) {
     if (!job.video_path) continue
@@ -67,10 +71,6 @@ export async function attachReadyClips(db: SupabaseClient, lessonId: string): Pr
     await db.from('manim_jobs').update({ status: 'approved' }).eq('id', job.id)
     s.steps = steps
     placed = true
-  }
-  if (placed) {
-    const { syncLessonScript } = await import('./lesson-drafting')
-    await syncLessonScript(db, lessonId)
   }
   return placed
 }

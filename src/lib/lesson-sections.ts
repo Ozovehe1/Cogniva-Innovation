@@ -7,8 +7,7 @@
  * Pure helpers: safe on the server and in the browser.
  */
 import { validateScript, type Step } from './lesson-schema'
-import { animMs } from '@/components/whiteboard/board-state'
-import { estimateSpeechMs, stepSpeech } from '@/components/whiteboard/speech'
+import { measureMs, measureStepMs } from './lesson-timing'
 
 export interface Chapter {
   title: string
@@ -27,26 +26,23 @@ export interface SectionLite {
 }
 
 /** Per-section and whole-lesson step caps (a 2 hour lesson is roughly 600-900 steps). */
-export const SECTION_MAX_STEPS = 90
-export const LESSON_MAX_STEPS = 1500
+export const SECTION_MAX_STEPS = 120
+export const LESSON_MAX_STEPS = 2000
 export const TARGET_MINUTES = [10, 15, 20, 30, 45, 60, 90, 120] as const
 export const MIN_TARGET = 5
 export const MAX_TARGET = 180
 
-/** Rough time a student spends on one step: narration or drawing, whichever is longer. */
-export function estimateStepMs(step: Step): number {
-  if (step.type === 'check') return 25_000
-  if (step.type === 'manim_clip') return 20_000
-  if (step.type === 'pause') return step.ms
-  const speech = stepSpeech(step)
-  const spoken = speech ? estimateSpeechMs(speech) + 300 : 0
-  return Math.max(spoken, animMs(step) + 350)
+/**
+ * Play time of one step as the player runs it: its narration (calibrated to the
+ * Kokoro voice) and every timed action, plus the gap to the next step; checks add
+ * the learner's answer time. See lesson-timing.ts.
+ */
+export function estimateStepMs(step: Step, index = 0): number {
+  return measureStepMs(step, index)
 }
 
 export function estimateMs(steps: Step[], from = 0, to = steps.length): number {
-  let ms = 0
-  for (let i = Math.max(0, from); i < Math.min(to, steps.length); i++) ms += estimateStepMs(steps[i])
-  return ms
+  return measureMs(steps, undefined, from, to)
 }
 
 /** "1 h 24 min", "12 min", "under a minute". */

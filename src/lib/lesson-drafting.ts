@@ -13,9 +13,10 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
 import { GeminiQuotaError } from './gemini'
-import { draftLessonOutline, draftLessonSection, type OutlineSection } from './lesson-ai'
+import { draftLessonOutline, draftLessonSection, expandLessonSection, type OutlineSection } from './lesson-ai'
 import { flattenSections, validateSection, type Chapter } from './lesson-sections'
 import type { Step } from './lesson-schema'
+import { LENGTH_MIN_RATIO, lengthReport } from './lesson-timing'
 import { pregenerateNarration } from './tts-server'
 import { attachReadyClips, queueLessonClip } from './lesson-clip'
 
@@ -24,6 +25,10 @@ const LOCK_MS = 295_000
 const RUN_BUDGET_MS = 240_000
 /** Don't start a section with less than this left in the budget. */
 const SECTION_RESERVE_MS = 125_000
+/** Don't start a length expansion with less than this left in the budget. */
+const EXPAND_RESERVE_MS = 115_000
+/** Length expansions per section before it is accepted as it is. */
+export const MAX_EXPANSIONS = 2
 /** Short rate-limit waits are slept through inside the worker instead of pausing. */
 const MAX_INLINE_WAIT_MS = 65_000
 
@@ -43,6 +48,8 @@ export interface SectionRow {
   notes: string | null
   error: string | null
   attempts: number
+  expansions?: number | null
+  play_ms?: number | null
   updated_at: string
 }
 
@@ -210,18 +217,73 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         await db.from('lessons').update({ draft_status: status, draft_error: null, draft_retry_at: null }).eq('id', lessonId)
         return status
       }
-      if (Date.now() - t0 > RUN_BUDGET_MS - SECTION_RESERVE_MS) { handOver = true; return 'handover' }
+      // A section that is drafted but plays short of its target is lengthened before it is released.
+      const expanding = next.status === 'drafting' && Array.isArray(next.steps) && next.steps.length > 0
+      if (Date.now() - t0 > RUN_BUDGET_MS - (expanding ? EXPAND_RESERVE_MS : SECTION_RESERVE_MS)) { handOver = true; return 'handover' }
+
+      const notes = [lesson.draft_notes, next.notes].filter(Boolean).join('\n') || undefined
+      const finish = async (steps: Step[], expansions: number, note?: string) => {
+        const len = lengthReport(steps, Number(next.minutes) || 6)
+        const short = len.ratio < LENGTH_MIN_RATIO
+        // The opening section is released as soon as it is written (the learner may be waiting to start);
+        // whatever it is short of its target is carried into the next section instead.
+        const maxExpansions = next.position === 0 ? 0 : MAX_EXPANSIONS
+        if (short && expansions < maxExpansions) {
+          // Keep the steps and come back to lengthen them (this run if time allows, otherwise the next).
+          await db.from('lesson_sections').update({ status: 'drafting', steps, expansions, play_ms: Math.round(len.ms), error: note ?? null }).eq('id', next.id)
+          return
+        }
+        await db.from('lesson_sections').update({
+          status: 'ready', steps, expansions, play_ms: Math.round(len.ms),
+          error: short ? `Plays ${len.minutes} of ${next.minutes} min after ${expansions} expansions; shortfall carried forward${note ? ` (${note})` : ''}` : null,
+        }).eq('id', next.id)
+        if (short) {
+          // Carry the shortfall into the next section that is still to be written, so the lesson keeps its length.
+          const later = rows.find(r => r.position > next.position && r.status === 'pending')
+          const deficit = Math.round((len.targetMs - len.ms) / 6000) / 10
+          if (later && deficit > 0) await db.from('lesson_sections').update({ minutes: Math.min(12, Math.round((Number(later.minutes) + deficit) * 10) / 10) }).eq('id', later.id)
+        }
+        // A finished clip goes into this section before it is published (published sections never change).
+        if (lesson.generated_by === 'ai') await attachReadyClips(db, lessonId, next.position).catch(() => false)
+        // Voice the whole section before it is published, so it plays at once with the natural voice
+        // (bounded: anything not voiced in time is voiced on demand and by the lesson-open warm-up).
+        const fresh = (await loadSections(db, lessonId))
+        const mine = fresh.find(r => r.id === next.id)
+        await pregenerateNarration(mine?.steps ?? steps, Math.min(next.position === 0 ? 20_000 : 60_000, Math.max(15_000, RUN_BUDGET_MS - (Date.now() - t0) - 20_000))).catch(() => null)
+        await syncLessonScript(db, lessonId, fresh)
+      }
+
+      if (expanding) {
+        const expansions = (next.expansions ?? 0) + 1
+        const have = next.steps
+        try {
+          const len = lengthReport(have, Number(next.minutes) || 6)
+          const more = await expandLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, steps: have, playedMinutes: len.minutes, notes })
+          const v = validateSection([...have, ...more], next.position)
+          if (!v.ok) throw new Error(v.errors.slice(0, 2).join('; '))
+          await finish(v.steps, expansions)
+        } catch (err) {
+          if (err instanceof GeminiQuotaError) {
+            if (!err.daily && (err.retryAfterMs ?? 90_000) <= MAX_INLINE_WAIT_MS && Date.now() - t0 + MAX_INLINE_WAIT_MS < RUN_BUDGET_MS - EXPAND_RESERVE_MS) {
+              await sleep(err.retryAfterMs ?? MAX_INLINE_WAIT_MS); continue
+            }
+            await db.from('lessons').update({ draft_status: 'paused', draft_error: 'quota', draft_retry_at: retryAt(err) }).eq('id', lessonId)
+            return 'paused'
+          }
+          // A failed expansion never loses the drafted section: it counts as a try and the section is kept.
+          const msg = err instanceof Error ? err.message : String(err)
+          console.warn(`Section ${next.position + 1} expansion ${expansions} failed:`, msg)
+          await finish(have, expansions, msg.slice(0, 200))
+        }
+        continue
+      }
 
       await db.from('lesson_sections').update({ status: 'drafting', error: null }).eq('id', next.id)
       try {
-        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes: [lesson.draft_notes, next.notes].filter(Boolean).join('\n') || undefined })
+        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes })
         const v = validateSection(steps, next.position)
         if (!v.ok) throw new Error(v.errors.slice(0, 2).join('; '))
-        await db.from('lesson_sections').update({ status: 'ready', steps: v.steps, error: null }).eq('id', next.id)
-        await syncLessonScript(db, lessonId)
-        if (lesson.generated_by === 'ai') await attachReadyClips(db, lessonId).catch(() => false)
-        // Voice the section in the background while the next one is drafted (unchanged lines are reused).
-        void pregenerateNarration(v.steps, Math.max(20_000, RUN_BUDGET_MS - (Date.now() - t0))).catch(() => {})
+        await finish(v.steps, 0)
       } catch (err) {
         if (err instanceof GeminiQuotaError) {
           await db.from('lesson_sections').update({ status: 'pending' }).eq('id', next.id)
@@ -237,6 +299,7 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         await db.from('lesson_sections').update({
           status: attempts >= 3 ? 'failed' : 'pending',
           attempts,
+          steps: [],
           error: msg.slice(0, 300),
         }).eq('id', next.id)
       }
