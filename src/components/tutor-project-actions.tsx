@@ -1,33 +1,46 @@
 'use client'
 import { useState } from 'react'
 
-export function TutorProjectActions({ projectId }: { projectId: string }) {
+export function TutorProjectActions({ projectId, studentId }: { projectId: string; studentId: string }) {
   const [loading, setLoading] = useState<'approve' | 'return' | null>(null)
   const [done, setDone] = useState<'approved' | 'returned' | null>(null)
   const [mode, setMode] = useState<'idle' | 'grading' | 'returning'>('idle')
   const [score, setScore] = useState<number>(8)
   const [feedback, setFeedback] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   async function approve() {
     setLoading('approve')
-    await fetch(`/api/projects/${projectId}/approve`, {
+    setError(null)
+    const res = await fetch(`/api/projects/${projectId}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ score }),
+      body: JSON.stringify({ score, studentId }),
     })
-    setDone('approved')
     setLoading(null)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || 'Could not approve. Try again.')
+      return
+    }
+    setDone('approved')
   }
 
   async function sendBack() {
     setLoading('return')
-    await fetch(`/api/projects/${projectId}/return`, {
+    setError(null)
+    const res = await fetch(`/api/projects/${projectId}/return`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ feedback }),
+      body: JSON.stringify({ feedback, studentId }),
     })
-    setDone('returned')
     setLoading(null)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error || 'Could not return. Try again.')
+      return
+    }
+    setDone('returned')
   }
 
   if (done === 'approved') return (
@@ -69,6 +82,7 @@ export function TutorProjectActions({ projectId }: { projectId: string }) {
             Cancel
           </button>
         </div>
+        {error && <p className="text-xs text-red-400">{error}</p>}
       </div>
     )
   }
@@ -91,6 +105,7 @@ export function TutorProjectActions({ projectId }: { projectId: string }) {
             Cancel
           </button>
         </div>
+        {error && <p className="text-xs text-red-400">{error}</p>}
       </div>
     )
   }

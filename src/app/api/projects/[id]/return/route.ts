@@ -12,7 +12,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!tutorProfile || (tutorProfile as { role: string }).role !== 'tutor')
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const { feedback } = await request.json().catch(() => ({ feedback: '' }))
+  const { feedback, studentId } = await request.json().catch(() => ({ feedback: '', studentId: null }))
+  if (!studentId || typeof studentId !== 'string')
+    return NextResponse.json({ error: 'studentId is required' }, { status: 400 })
 
   const { data: project } = await supabase
     .from('projects').select('id, tutor_id').eq('id', id).single()
@@ -22,6 +24,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { error } = await supabase.from('project_assignments')
     .update({ status: 'in_progress', feedback: feedback || null, submitted_at: null })
     .eq('project_id', id)
+    .eq('student_id', studentId)
     .eq('status', 'pending_review')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

@@ -11,7 +11,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!tutorProfile || (tutorProfile as { role: string }).role !== 'tutor')
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const { score } = await request.json().catch(() => ({ score: null }))
+  const { score, studentId } = await request.json().catch(() => ({ score: null, studentId: null }))
+  if (!studentId || typeof studentId !== 'string')
+    return NextResponse.json({ error: 'studentId is required' }, { status: 400 })
   const validScore = (typeof score === 'number' && score >= 1 && score <= 10) ? score : null
 
   const { data: project } = await supabase
@@ -20,7 +22,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   const { data: assignment } = await supabase.from('project_assignments')
-    .select('id').eq('project_id', id).eq('status', 'pending_review').single()
+    .select('id').eq('project_id', id).eq('student_id', studentId).eq('status', 'pending_review').maybeSingle()
   if (!assignment) return NextResponse.json({ error: 'No pending submission found' }, { status: 404 })
 
   const { error } = await supabase.from('project_assignments')

@@ -238,7 +238,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
                         {sc.label}
                       </span>
                       {isPending && (
-                        <TutorProjectActions projectId={a.project_id} />
+                        <TutorProjectActions projectId={a.project_id} studentId={id} />
                       )}
                     </div>
                   </div>

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-const AWAY_TIMEOUT_MS = 30 * 1000 // sign out 30s after leaving the tab
+const AWAY_TIMEOUT_MS = 30 * 60 * 1000 // sign out 30 minutes after leaving the tab
 
 export function IdleTimeout() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
