@@ -358,7 +358,13 @@ def _latex_culprit(spec: dict, media_dir: str) -> str | None:
         for o in spec.get("objects", []):
             snippets = []
             if o.get("kind") == "tex":
-                snippets = gm_scene.split_terms(o.get("tex", ""))
+                pieces = gm_scene.split_terms(o.get("tex", ""))
+                # the scene compiles a formula whole when its groups only make sense inside it (\frac{{{a}}}{2})
+                try:
+                    MathTex("".join(pieces))
+                    snippets = []
+                except Exception:  # noqa: BLE001
+                    snippets = ["".join(pieces)]
             elif o.get("kind") == "matrix":
                 snippets = [str(c) for r in o.get("rows", []) for c in r]
             for key in ("label", "prefix", "suffix"):

@@ -277,6 +277,11 @@ def split_terms(raw: str) -> list[str]:
     """Split "a {{\\hat{x}}} b" into ["a ", "\\hat{x}", " b"]: {{...}} groups may contain nested braces."""
     out, buf, i, n = [], "", 0, len(raw)
     while i < n:
+        if raw.startswith("{{{", i) and not raw.startswith("{{{{", i):
+            # \frac{{{a}} + b}{2}: the first brace is the argument's own, the group starts after it
+            buf += "{"
+            i += 1
+            continue
         if raw.startswith("{{", i):
             depth, j = 0, i + 2
             while j < n:
