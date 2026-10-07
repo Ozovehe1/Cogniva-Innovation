@@ -490,6 +490,13 @@ def solve_binding(sc: Scene):
                       "reaction": P.get("reaction", "join"), "roles": {r: sc.pid(r) for r in ("host", "guest", "site", "product")}})
     S["show"].setdefault(sc.pid("host"), 0.0)
     S["show"].setdefault(sc.pid("guest"), 0.6)
+    if st.get("react") is not None:  # once they have reacted the guests are products: their label goes, the product's comes
+        tre = sc.keys["react"][-1][1] if sc.keys.get("react") else st["react"] + 2
+        for L in S["labels"]:
+            if L["part"] == sc.pid("guest"):
+                L["hide"] = round(tre, 3)
+            if L["part"] == sc.pid("product"):
+                L["show"] = max(L["show"], round(tre, 3))
     if graph:
         t_g = 0.8
         S["graphs"].append({"id": "en", "mode": "function", "box": [1.6, -3.5, 6.9, 1.5], "x": "rc", "y": "E", "x_range": [0, 1], "y_range": [0, 14], "x_numbers": False,
@@ -541,7 +548,7 @@ def solve_differential(sc: Scene):
     sc.readout("wR", r"\omega_{\text{outer}}", "rpm", t_ro)
     sc.readout("wC", r"\omega_{\text{ring}}", "rpm", st.get("split", st.get("drive", t_ro)))
     S["readout_box"] = [-1.9, -3.55, 1.9, -0.95]
-    eq = sc.G.get("equation") or r"\omega_{\text{inner}}+\omega_{\text{outer}}=2\,\omega_{\text{ring}}"
+    eq = r"\omega_{\text{inner}}+\omega_{\text{outer}}=2\,\omega_{\text{ring}}"  # same symbols as the readouts
     S["tex"].append({"id": "eq", "tex": eq, "parts": None, "box": [2.2, -2.9, 6.85, -1.4], "show": round(st.get("eq", st.get("split", sc.D * 0.6)), 3), "size": 40})
 
 

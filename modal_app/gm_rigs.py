@@ -826,8 +826,8 @@ def differential(ctx, rig):
         ibx = Box(*ib)
         turn = rig.get("turn", "turn")
         track = 0.5
-        Rc = min(ibx.h, ibx.w) * 0.68
-        C = np.array([ibx.x0 + 0.75, ibx.y0 + 0.1, 0])  # turning centre (left turn: centre on the left)
+        Rc = min(ibx.h - 0.45, ibx.w) * 0.66
+        C = np.array([ibx.x0 + 0.75, ibx.y0 + 0.55, 0])  # turning centre (left turn: centre on the left)
         cL = ctx.color_of(rig.get("qL"), Q["navy"])
         cR = ctx.color_of(rig.get("qR"), Q["clay"])
         rwheel = float(rig.get("wheel_r", 0.3))
@@ -856,7 +856,7 @@ def differential(ctx, rig):
             return g
         cm = live(car)
         ctx.add(role(rig, "car"), cm, show=sh(ctx, rig, "car", ctx.show_time(turn, 0.0)), how="fade", z=3, moving=True)
-        ctx.anchors[role(rig, "car")] = [C[0] + Rc * 0.7, C[1] + Rc * 0.7 + 0.5, 0]
+        ctx.anchors[role(rig, "car")] = lambda: cm.get_center().tolist()
         ctx.anchors["inner_track"] = [C[0] + (Rc - track / 2) * 0.98, C[1] + 0.2, 0]
         ctx.anchors["outer_track"] = [C[0] + (Rc + track / 2) * 0.98, C[1] + 0.2, 0]
 
