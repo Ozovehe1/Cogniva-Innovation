@@ -473,7 +473,7 @@ def solve_cable(sc: Scene):
     for k, txt in (("depolarize", "depolarisation: Na⁺ in"), ("repolarize", "repolarisation: K⁺ out"), ("propagate", "propagation along the axon")):
         if k in st:
             nxt = sorted(v for v in st.values() if v > st[k])
-            S["annotations"].append({"id": "ph_" + k, "kind": "phase", "text": txt, "show": st[k], "hide": nxt[0] if nxt else None, "box": [-6.6, -0.5, -1.1, -0.05], "size": 24})
+            S["annotations"].append({"id": "ph_" + k, "kind": "phase", "text": txt, "show": st[k], "hide": nxt[0] if nxt else None, "box": [0.6, 3.4, 5.6, 3.9], "size": 26})
 
 
 def solve_binding(sc: Scene):

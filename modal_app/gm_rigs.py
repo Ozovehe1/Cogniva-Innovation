@@ -473,11 +473,11 @@ def cable_signal(ctx, rig):
             f = min(1.0, max(0.0, (v + 70) / 110))
             c = mix(rest_c, hot_c, f)
             if f > 0.05:  # glow of the depolarised node (charge flowing in)
-                for gr_ in (0.5, 0.38, 0.27):
-                    g.add(Circle(radius=(0.12 + gr_ * f) * (1 + aw)).move_to([xk, sy, 0]).set_fill(hot_c, 0.12 * f).set_stroke(width=0))
+                for gr_ in (0.7, 0.5, 0.33):
+                    g.add(Circle(radius=(0.12 + gr_ * f) * (1 + aw)).move_to([xk, sy, 0]).set_fill(hot_c, 0.22 * f).set_stroke(width=0))
             g.add(Circle(radius=0.07 + 0.16 * f).move_to([xk, sy, 0]).set_fill(c, 0.35 + 0.55 * f).set_stroke(c, 2.5))
             if f > 0.25:  # local current spreading inside the next internode (faint)
-                g.add(Line([xk, sy, 0], [xk + seg * 0.9 * f, sy, 0]).set_stroke(hot_c, 6 * f, opacity=0.6))
+                g.add(Line([xk, sy, 0], [xk + seg * 0.95 * f, sy, 0]).set_stroke(hot_c, 10 * f, opacity=0.75))
         # terminal boutons light up when the last node fires
         v = v_at(ms - N * dms)
         f = min(1.0, max(0.0, (v + 70) / 110))
@@ -1358,7 +1358,7 @@ def _network(ctx, it, box):
     steps = _dijkstra(nodes, edges, it.get("source", nodes[0])) if algo == "dijkstra" else []
     if steps:
         ctx.checks.append({"type": "algorithm", "what": "dijkstra", "final_dist": {k: (None if v == math.inf else v) for k, v in steps[-1]["dist"].items()}, "steps": len(steps)})
-    R = float(it.get("node_r", 0.32))
+    R = float(it.get("node_r", 0.36))
     c_done, c_cur, c_edge = Q["green"], Q["amber"], Q["clay"]
     ctx.geom.update({"node:" + k: v for k, v in pos.items()})
 
@@ -1389,16 +1389,16 @@ def _network(ctx, it, box):
             mid = (pos[a] + pos[b]) / 2
             d = pos[b] - pos[a]
             n = np.array([-d[1], d[0], 0]) / (np.linalg.norm(d) + 1e-9)
-            g.add(MathTex(f"{w:g}", font_size=28, color=c if (on_tree or active) else INK).move_to(mid + n * 0.22))
+            g.add(MathTex(f"{w:g}", font_size=38, color=c if (on_tree or active) else INK).move_to(mid + n * 0.28))
         for nid in nodes:
             p = pos[nid]
             isc = cur is not None and frac > 0 and cur["cur"] == nid
             fill = c_cur if isc else (c_done if nid in done else THEME_PANEL())
             g.add(Circle(radius=R).move_to(p).set_fill(fill, 1).set_stroke(INK, 3))
-            g.add(label_text(nid, 26, "#FFFFFF" if (isc or nid in done) else INK).move_to(p))
+            g.add(label_text(nid, 30, "#FFFFFF" if (isc or nid in done) else INK).move_to(p))
             dv = dist.get(nid, math.inf)
             up = 1 if p[1] >= box.cy else -1
-            g.add(MathTex("\\infty" if dv == math.inf else f"{dv:g}", font_size=32, color=c_edge if dv != math.inf else MUTED).move_to(p + up * UP * (R + 0.28)))
+            g.add(MathTex("\\infty" if dv == math.inf else f"{dv:g}", font_size=40, color=c_edge if dv != math.inf else MUTED).move_to(p + up * UP * (R + 0.32)))
         return g
     m = live(draw)
     ctx.add(it["id"], m, show=it.get("show", 0.0), how="create", kind="body", z=3, moving=True)
