@@ -226,8 +226,9 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         const len = lengthReport(steps, Number(next.minutes) || 6)
         const short = len.ratio < LENGTH_MIN_RATIO
         // The opening section is released as soon as it is written (the learner may be waiting to start);
-        // whatever it is short of its target is carried into the next section instead.
-        const maxExpansions = next.position === 0 ? 0 : MAX_EXPANSIONS
+        // whatever it is still short of its target is carried into the next section instead.
+        // A stub opening section (under 60% of its target) still gets one lengthening pass before it is released.
+        const maxExpansions = next.position === 0 ? (len.ratio < 0.6 ? 1 : 0) : MAX_EXPANSIONS
         if (short && expansions < maxExpansions) {
           // Keep the steps and come back to lengthen them (this run if time allows, otherwise the next).
           await db.from('lesson_sections').update({ status: 'drafting', steps, expansions, play_ms: Math.round(len.ms), error: note ?? null }).eq('id', next.id)
