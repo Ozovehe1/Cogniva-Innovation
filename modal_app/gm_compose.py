@@ -159,11 +159,11 @@ QC = ["green", "clay", "navy", "amber", "plum", "teal", "rose", "olive"]
 NEUTRALS = {"ink", "muted", "rule", "steel", "brass", "copper", "rubber", "tissue", "protein", "membrane", "blood", "bone", "water", "wood", "silicon", "leaf", "glass", "plastic", "skin"}
 OBJ_KINDS = {"dot", "point", "line", "arrow", "vector", "arc", "circle", "ellipse", "rect", "polygon", "path", "bezier", "curve", "axes", "plane", "axes3d",
              "graph", "area", "riemann", "tangent", "secant", "surface", "field", "text", "tex", "matrix", "number", "brace", "angle", "array", "group", "trace",
-             "gear", "svg", "cylinder", "prism", "sphere", "cone", "torus"}
+             "gear", "sector", "svg", "cylinder", "prism", "sphere", "cone", "torus"}
 ACTIONS = {"speed", "show", "hide", "set", "morph", "match_tex", "move", "rotate", "scale", "follow", "matrix", "warp", "camera", "indicate", "circle", "link", "color", "drift", "wait"}
 ALIASES = {"square": "rect", "rectangle": "rect", "box": "rect", "label": "text", "math": "tex", "equation": "tex", "latex": "tex", "segment": "line",
            "point": "dot", "parametric": "curve", "function": "graph", "plot": "graph", "particles": "array", "copies": "array", "numberplane": "plane",
-           "triangle": "polygon", "spline": "path", "cog": "gear", "gearwheel": "gear", "image": "svg", "box3d": "prism", "cube": "prism", "vectorfield": "field", "vector_field": "field", "streamlines": "field", "decimal": "number", "readout": "number"}
+           "triangle": "polygon", "spline": "path", "cog": "gear", "wedge": "sector", "pie": "sector", "slice": "sector", "gearwheel": "gear", "image": "svg", "box3d": "prism", "cube": "prism", "vectorfield": "field", "vector_field": "field", "streamlines": "field", "decimal": "number", "readout": "number"}
 DO_ALIASES = {"create": "show", "draw": "show", "write": "show", "fade_in": "show", "fadein": "show", "grow": "show", "fade_out": "hide", "fadeout": "hide",
               "remove": "hide", "animate": "set", "transform": "morph", "replace": "morph", "transform_matching_tex": "match_tex", "shift": "move",
               "move_to": "move", "move_along": "follow", "move_along_path": "follow", "apply_matrix": "matrix", "apply_function": "warp", "highlight": "indicate",

@@ -57,6 +57,8 @@ guides, secondary labels) or "rule" (faint guides). Never use a quantity colour 
 - array {of: {object template, e.g. {"kind":"dot","r":0.06,"q":"w"}}, n, layout: "random"|"grid"|"circle"|"line",
          box: [x0,y0,x1,y1], cols?, points?: [[x,y],...], angles?: [deg per item]}   // particles, molecules, repeated parts
 - group {children: [ids]}        trace {target: dot id}  (draws the path a moving dot leaves)
+- sector {center, r, start (deg), angle (deg), inner?: r for an annular sector}   // pie wedges, swept angles; an array of
+     sectors morphed into an array of sectors at new centres / start angles is how a circle is cut and rearranged
 - gear {center, r (pitch radius), teeth (the REAL count), depth?, angle (deg, may be a tracker expression), hub?: 0.22}
      Meshing gears: centres r1 + r2 apart, teeth proportional to radius, angle2 = -angle1 * teeth1 / teeth2 + half-tooth offset.
 - svg {svg: "<svg viewBox=...>...</svg>" you write from the structure plan, each part a <path id="part_name" d="..."/>,

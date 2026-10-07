@@ -588,6 +588,15 @@ def _build(ctx: _Ctx, o: dict):
         m.set_fill(col, opacity=float(o.get("fill", 0.85)))
         m.set_stroke(col, width=0.3)
         return m.move_to(c)
+    if k == "sector":
+        # a pie wedge / annular sector (pizza slices, angles swept, a cam lobe): center, r, start, angle (deg), inner?
+        from manim import AnnularSector, Sector
+        c = P("center") if "center" in o else ORIGIN
+        r = float(ctx.ev(o.get("r", 1)))
+        st, an = float(ctx.ev(o.get("start", 0))) * DEGREES, float(ctx.ev(o.get("angle", 30))) * DEGREES
+        inner = float(ctx.ev(o.get("inner", 0)))
+        m = AnnularSector(inner_radius=inner, outer_radius=r, start_angle=st, angle=an, arc_center=c) if inner > 0 else Sector(radius=r, start_angle=st, angle=an, arc_center=c)
+        return _style(m, col, {**o, "fill": o.get("fill", 0.35)})
     if k == "gear":
         # involute-ish tooth profile: n teeth on pitch radius r, tooth depth d, rotated by `angle` degrees (may be a tracker expr)
         c = P("center") if "center" in o else ORIGIN
