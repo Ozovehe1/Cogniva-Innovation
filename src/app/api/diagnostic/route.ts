@@ -73,9 +73,10 @@ export async function POST(request: Request) {
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const body = await request.json().catch(() => ({})) as { action?: string; restart?: boolean; pathId?: string; node?: string; item?: number; choice?: number | null; confidence?: string | null }
   const db = createAdminClient()
-  const learner = await loadLearner(db, profile.id)
+  // Independent reads in parallel (every answer waits on them).
+  const [learner, found] = await Promise.all([loadLearner(db, profile.id), diagnosticPath(db, profile.id, body.pathId)])
   if (!learner?.completed_at) return NextResponse.json({ error: 'Finish the intake first.' }, { status: 400 })
-  let path = await diagnosticPath(db, profile.id, body.pathId)
+  let path = found
 
   if (body.action === 'start') {
     // Wake the voice and the render container now: the first lesson is drafted (and voiced) during the check.

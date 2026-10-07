@@ -287,7 +287,7 @@ export function IntakeFlow({
             <p className="mt-5 text-[14px] leading-relaxed text-muted">This is a starting point, not a label. It updates as you learn, and a quick re-check runs if something isn’t sticking.</p>
             <div className="mt-8 flex flex-col gap-2 sm:flex-row">
               {firstLessonId
-                ? <Link href={`/learn/${firstLessonId}`} className={buttonClass('primary', 'lg', 'sm:flex-1')}>Start your first lesson<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
+                ? <Link href={`/learn/${firstLessonId}`} prefetch className={buttonClass('primary', 'lg', 'sm:flex-1')}>Start your first lesson<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
                 : finishing
                   ? <span aria-live="polite" className={buttonClass('primary', 'lg', 'sm:flex-1 pointer-events-none opacity-80')}><Spinner className="h-4 w-4" />Setting up your first lesson…</span>
                   : <Link href="/learn" className={buttonClass('primary', 'lg', 'sm:flex-1')}>See your path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
