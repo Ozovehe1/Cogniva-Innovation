@@ -19,6 +19,9 @@ export async function GET(request: Request) {
     tries.push([`${h} chat`, `${h}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, max_tokens: 20, messages: [{ role: 'user', content: 'Reply with the single word OK.' }] }) }])
     tries.push([`${h} messages`, `${h}/v1/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: 20, messages: [{ role: 'user', content: 'Reply with the single word OK.' }] }) }])
     tries.push([`${h} models`, `${h}/v1/models`, { headers: { Authorization: `Bearer ${key}` } }])
+    const ua = { 'User-Agent': 'claude-cli/2.0.14 (external, cli)', 'x-app': 'cli', 'anthropic-beta': 'claude-code-20250219' }
+    tries.push([`${h} messages+cc-ua`, `${h}/v1/messages`, { method: 'POST', headers: { ...ua, 'Content-Type': 'application/json', 'x-api-key': key, Authorization: `Bearer ${key}`, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model, max_tokens: 20, messages: [{ role: 'user', content: 'Reply with the single word OK.' }] }) }])
+    tries.push([`${h} chat+codex-ua`, `${h}/v1/chat/completions`, { method: 'POST', headers: { 'User-Agent': 'codex_cli_rs/0.46.0', originator: 'codex_cli_rs', 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, max_tokens: 20, messages: [{ role: 'user', content: 'Reply with the single word OK.' }] }) }])
   }
   await Promise.all(tries.map(async ([name, u, init]) => {
     const t0 = Date.now()
