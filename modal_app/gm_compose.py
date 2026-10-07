@@ -131,11 +131,15 @@ Grammar reminder (follow it exactly):
 CRITIC_PROMPT = """You are a strict reviewer of key frames (in time order, left to right, top to bottom) of a 3Blue1Brown-style educational animation drawn on a light board.
 Intended idea: {idea}
 Real objects and how they work (structure plan): {structure}
+Real numbers (check drawn proportions against them, e.g. an area 10x larger must LOOK 10x larger): {params}
 Quantities and their colours: {quantities}
 Planned changes: {changes}
 Planned equations: {equations}
 Scene objects you may reference in ops (id kind region): {ids}
 Score each axis 1-10, harshly and honestly (7 = acceptable, 9 = a viewer instantly recognises the real thing):
+ Be harsh: a reviewer who gives 8 to a picture with a wrong proportion, a part that does not move when the narration says it
+ does, or two bodies drawn as the same plain shape is wrong. Compare consecutive frames: if a state change is narrated but
+ the frames look the same, mechanism and motion are <= 4.
  structure: does each real object look like the real thing (silhouette, the right parts, counts and proportions, parts connected / meshed correctly)? Blobs, plain circles or boxes standing in for a shaped object score <= 4.
  mechanism: are the states and causal transitions shown in the right order and physically right (gears turn at the ratio, molecules bind then change...)?
  layout: nothing overlapping or cut off, labels beside (not on) what they name, the frame used and balanced.
@@ -773,7 +777,7 @@ def critique(sheet: bytes, plan: dict, spec: dict, log: list) -> dict:
         chg = "; ".join(f"{c.get('when', '')}: {c.get('what', '')}" for c in plan.get("changes", []))[:900]
         eqs = "; ".join(str(e.get("tex", "")) for e in plan.get("equations", []))[:400] or "none"
         ids = ", ".join(f"{o['id']}({o['kind']},{o.get('region', '-')})" for o in spec.get("objects", []))[:1500]
-        out = ask_json(CRITIC_PROMPT.format(idea=plan.get("idea", ""), structure=st, quantities=qs, changes=chg, equations=eqs, ids=ids), images=[sheet], temperature=0.2, timeout=60, log=log)
+        out = ask_json(CRITIC_PROMPT.format(idea=plan.get("idea", ""), structure=st, params=json.dumps(plan.get("params") or {})[:500], quantities=qs, changes=chg, equations=eqs, ids=ids), images=[sheet], temperature=0.2, timeout=60, log=log)
         if not isinstance(out, dict):
             raise RuntimeError("critic returned no object")
         sc = out.get("scores") or {}
