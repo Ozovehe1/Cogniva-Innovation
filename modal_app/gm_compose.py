@@ -562,7 +562,7 @@ def apply_ops(spec: dict, ops: list, notes: list[str]) -> int:
                     o["spin"] = float(op.get("rate", 40))
                 else:
                     o["jiggle"] = min(0.12, float(op.get("rate", 0.05)))
-            elif kind == "drop":
+            elif kind == "drop" and o["kind"] in ("text", "tex", "number", "brace"):  # never drop structure; that is a rebuild
                 spec["timeline"] = [a for a in spec["timeline"] if not (a.get("do") == "show" and a.get("targets") == [oid])]
                 for a in spec["timeline"]:
                     if a.get("targets"):
@@ -678,7 +678,7 @@ def scene_code(spec: dict) -> str:
 PEN_TAIL = "\n\nimport sys as _pen_sys\n_pen_sys.path.insert(0, '/root')\ntry:\n    import pen_export  # noqa: F401,E402\nexcept Exception as _pen_err:  # noqa: BLE001\n    print('pen_export unavailable:', _pen_err)\n"
 
 
-def render_spec(spec: dict, workdir: str, quality="-qm") -> dict:
+def render_spec(spec: dict, workdir: str, quality="-qm", timeout: float = 480) -> dict:
     os.makedirs(workdir, exist_ok=True)
     src = os.path.join(workdir, "scene.py")
     with open(src, "w") as f:
@@ -686,7 +686,7 @@ def render_spec(spec: dict, workdir: str, quality="-qm") -> dict:
     env = {**os.environ, "PYTHONPATH": HERE + os.pathsep + os.environ.get("PYTHONPATH", ""), "GM_GATE_PATH": os.path.join(workdir, "gate.json"), "PEN_EXPORT_PATH": os.path.join(workdir, "pen.json")}
     t0 = time.time()
     p = subprocess.run([sys.executable, "-m", "manim", quality, "--format", "mp4", "--media_dir", os.path.join(workdir, "media"), "--disable_caching", "--progress_bar", "none", src, "GeneratedScene"],
-                       cwd=workdir, env=env, capture_output=True, text=True, timeout=480)
+                       cwd=workdir, env=env, capture_output=True, text=True, timeout=max(60, timeout))
     out = {"render_s": round(time.time() - t0, 1), "ok": p.returncode == 0}
     if p.returncode:
         out["error"] = ((p.stdout or "")[-1500:] + "\n" + (p.stderr or "")[-2500:]).strip()
@@ -970,7 +970,15 @@ def compose_and_render(desc: str, narr: dict | None = None, context: str = "", w
     tries: dict[str, int] = {}
     for attempt in range(max_renders):
         t1 = time.time()
-        r = render_spec(spec, os.path.join(workdir, f"r{attempt}"))
+        left = 870 - (time.time() - t0)
+        if attempt and left < 150:
+            log.append("stop: no time left for another render")
+            break
+        try:
+            r = render_spec(spec, os.path.join(workdir, f"r{attempt}"), timeout=min(420, left - 60))
+        except subprocess.TimeoutExpired:
+            log.append(f"render {attempt} timed out")
+            break
         timings[f"render{attempt}_s"] = r["render_s"]
         if not r["ok"]:
             log.append(f"render {attempt} failed: {r['error'][-300:]}")
