@@ -36,7 +36,7 @@ export const SAMPLE_SCRIPT: Step[] = [
     ],
   },
   {
-    type: 'math', id: 'slope', tex: 'm = \\frac{(1+h)^2 - 1}{h} = {{2 + h:2}}', x: 480, y: 210, size: 'md',
+    type: 'math', id: 'slope', tex: 'm = \\frac{(1+h)^2 - 1}{h} = {{2 + h:2}}', x: 468, y: 206, size: 'sm',
     say: 'Call the gap between them $h$. Rise over run simplifies to $2 + h$, so right now the slope is $3$: an average between P and Q.',
     cues: [{ type: 'highlight', target: 'slope', style: 'underline', color: 'clay', at: 'average' }],
   },
