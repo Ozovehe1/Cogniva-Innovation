@@ -532,6 +532,54 @@ export function vetManimCode(raw: string): { code: string; rewrites: string[]; e
   return { code: g.code, rewrites: g.rewrites, error }
 }
 
+/**
+ * Rough runtime of a scene in seconds: every self.play (its run_time, default 1 s)
+ * plus every self.wait (default 1 s). Null when plays sit inside loops or use
+ * computed run_times, where a static sum would be wrong.
+ */
+export function estimateManimRuntime(code: string): number | null {
+  const lines = code.split('\n')
+  let total = 0
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^\s*(for|while)\b/.test(line)) {
+      const indent = line.match(/^\s*/)![0].length
+      for (let k = i + 1; k < lines.length && (lines[k].trim() === '' || lines[k].match(/^\s*/)![0].length > indent); k++) {
+        if (/self\.(play|wait)\s*\(/.test(lines[k])) return null
+      }
+    }
+  }
+  const call = /self\.(play|wait)\s*\(/g
+  let m: RegExpExecArray | null
+  while ((m = call.exec(code))) {
+    // Arguments up to the matching parenthesis.
+    let depth = 1, j = m.index + m[0].length
+    while (j < code.length && depth) { if (code[j] === '(') depth++; else if (code[j] === ')') depth--; j++ }
+    const args = code.slice(m.index + m[0].length, j - 1)
+    if (m[1] === 'wait') {
+      const t = args.trim()
+      if (!t) total += 1
+      else if (/^[\d.]+$/.test(t)) total += Number(t)
+      else return null
+    } else {
+      const rt = args.match(/run_time\s*=\s*([^,)\s]+)/)
+      if (!rt) total += 1
+      else if (/^[\d.]+$/.test(rt[1])) total += Number(rt[1])
+      else return null
+    }
+  }
+  return total
+}
+
+/** Problem with a clip's length against its narration (seconds), or null when it fits or cannot be told. */
+function runtimeProblem(code: string, narration?: ManimNarration): string | null {
+  const target = narration?.ms ? narration.ms / 1000 : null
+  if (!target) return null
+  const est = estimateManimRuntime(code)
+  if (est === null || Math.abs(est - target) <= Math.max(1, target * 0.12)) return null
+  return `The animation's run_times and waits add up to about ${est.toFixed(1)} s, but the narration lasts ${target.toFixed(1)} s. Re-time it so the total is ${target.toFixed(1)} s (within 0.5 s): lengthen or shorten run_time values so each action still starts on its beat; do not pad with one long wait at the end.`
+}
+
 export async function generateManimCode(description: string, context?: ManimContext): Promise<string> {
   const prompt = `Write a Manim animation for a lesson${context?.lessonTitle ? ` titled "${context.lessonTitle}"` : ''}${context?.subject ? ` (${context.subject})` : ''}.
 The tutor describes it as:
@@ -539,9 +587,15 @@ The tutor describes it as:
 ${manimContextBlock(context)}
 ${MANIM_RULES}`
   const first = vetManimCode(await generateText(prompt, { timeoutMs: 60_000 }))
-  if (!first.error) return first.code
-  const second = vetManimCode(await generateText(`${prompt}\n\nYour previous code was rejected before rendering:\n${first.error}\nPrevious code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 60_000 }))
-  if (second.error) throw new Error(second.error)
+  const firstTiming = first.error ? null : runtimeProblem(first.code, context?.narration)
+  if (!first.error && !firstTiming) return first.code
+  const why = first.error ? `Your previous code was rejected before rendering:\n${first.error}` : `Your previous code is valid but mistimed:\n${firstTiming}`
+  const second = vetManimCode(await generateText(`${prompt}\n\n${why}\nPrevious code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 60_000 }))
+  if (second.error) {
+    // A valid but mistimed first draft beats a broken second one.
+    if (!first.error) return first.code
+    throw new Error(second.error)
+  }
   return second.code
 }
 
@@ -549,8 +603,9 @@ ${MANIM_RULES}`
  * Asks Gemini to fix code that failed to render (or failed the static check).
  * `error` is the render log or the static-check message. At most two Gemini passes.
  */
-export async function fixManimCode(code: string, error: string, description: string): Promise<string> {
+export async function fixManimCode(code: string, error: string, description: string, narration?: ManimNarration): Promise<string> {
   const hints = hintsFor(error)
+  const keep = narration?.ms ? `\nThe clip is narrated: keep its timing (total runtime about ${(narration.ms / 1000).toFixed(1)} s, each action on its narration beat).\n${narrationBlock(narration)}\n` : ''
   const prompt = `This Manim Community v0.19 scene failed${/Static check/.test(error) ? ' the pre-render check' : ' to render'}.
 Original request: """${description.slice(0, 1500)}"""
 
@@ -561,7 +616,7 @@ Code:
 ${code.slice(0, 15000)}
 
 Fix the error, and also replace any other call in the code that is not valid Manim Community v0.19 (check every line against the API sheet below; the next render must not fail on a different old-API call). Keep the intent and the visual design.
-${MANIM_RULES}`
+${keep}${MANIM_RULES}`
   const first = vetManimCode(await generateText(prompt, { timeoutMs: 40_000 }))
   if (!first.error) return first.code
   const second = vetManimCode(await generateText(`${prompt}\n\nYour fixed code was rejected before rendering:\n${first.error}\nRejected code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 40_000 }))

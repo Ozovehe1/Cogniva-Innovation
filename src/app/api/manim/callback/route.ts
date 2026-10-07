@@ -1,7 +1,8 @@
 import { NextResponse, after } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { MAX_RENDER_ATTEMPTS, dispatchRender, renderTokenMatches, type ManimJob } from '@/lib/manim'
-import { fixManimCode } from '@/lib/lesson-ai'
+import { fixManimCode, type ManimNarration } from '@/lib/lesson-ai'
+import { ensureNarration } from '@/lib/tts-server'
 
 export const maxDuration = 90
 
@@ -47,7 +48,14 @@ export async function POST(request: Request) {
   // Answer Modal right away; fix and re-dispatch after the response.
   after(async () => {
     try {
-      const code = await fixManimCode(job.code!, error, job.prompt)
+      // A narrated clip keeps its timing through the fix (cached voice: one storage lookup).
+      const text = (job as ManimJob & { narration?: string | null }).narration
+      let narration: ManimNarration | undefined
+      if (text) {
+        const c = (await ensureNarration([text], { cacheOnly: true }).catch(() => null))?.clips[0]
+        narration = c ? { text, ms: c.ms, words: c.words } : { text }
+      }
+      const code = await fixManimCode(job.code!, error, job.prompt, narration)
       await admin.from('manim_jobs').update({ code }).eq('id', jobId)
       await dispatchRender(admin, { id: jobId, code, attempts: job.attempts, prompt: job.prompt })
     } catch (err) {
