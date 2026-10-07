@@ -129,6 +129,12 @@ export function boardStartBefore(steps: Step[], i: number): number {
 const VISUAL = new Set(['draw', 'animate', 'move', 'transform', 'scale', 'color', 'camera', 'highlight', 'manim_clip', 'fade'])
 const TEXT = new Set(['write', 'math'])
 
+export function visualCounts(steps: Step[]): string {
+  const v = steps.filter(st => VISUAL.has(st.type)).length
+  const t = steps.filter(st => TEXT.has(st.type)).length
+  return `${v} visual steps and ${t} text steps (write/math)`
+}
+
 /**
  * Animation, illustration and demonstration are the core of teaching: a section whose
  * content steps are mostly text (write / math) is rejected. Returns null when the

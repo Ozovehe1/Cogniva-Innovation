@@ -235,7 +235,7 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         console.error(`Section ${next.position + 1} failed:`, msg)
         const attempts = (next.attempts ?? 0) + 1
         await db.from('lesson_sections').update({
-          status: attempts >= 2 ? 'failed' : 'pending',
+          status: attempts >= 3 ? 'failed' : 'pending',
           attempts,
           error: msg.slice(0, 300),
         }).eq('id', next.id)

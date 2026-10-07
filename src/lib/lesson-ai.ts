@@ -3,7 +3,7 @@ import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, ty
 import { autoFixLayout, layoutIssues } from './lesson-layout'
 import { MANIM_API_SHEET, describeProblems, guardManimCode, hintsFor, tracebackOf } from './manim-guard'
 import { buildBoard } from '@/components/whiteboard/board-state'
-import { SECTION_MAX_STEPS, visualProblem, withSectionStart } from './lesson-sections'
+import { SECTION_MAX_STEPS, visualCounts, visualProblem, withSectionStart } from './lesson-sections'
 
 /** What the AI tutor knows about the learner (from the intake and diagnostic). Never a learning-style label. */
 export interface StudentProfileLite {
@@ -303,6 +303,7 @@ ${LAYOUT_RULES}
 - The board is EMPTY when this section starts. ${position > 0 ? 'The first step must be {"type":"clear"}. ' : ''}Then write the section title (write, id "title", size lg, x 40, y 30) with a "say" that introduces the section.
 - Only refer to ids created in this section.
 ${SHOW_DONT_TELL}
+- Count before answering: at least ${Math.ceil(min * 0.5)} steps must be draw / animate / move / transform / scale / highlight / fade, and they must outnumber the write + math steps. Evolve an equation with transform (one element changing in place) instead of writing a new math line for every step of working.
 - At least ${min} and at most ${max} steps: this section must fill about ${section.minutes} minutes of teaching, so go step by step with worked examples, not a summary.
 - After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach".
 Return {"steps": [...]} only.`
@@ -312,7 +313,8 @@ Return {"steps": [...]} only.`
   if (problem) {
     const repaired = await generateSteps(`${prompt}
 
-Your previous answer was rejected because it tells more than it shows: ${problem}.
+Your previous answer was rejected because it tells more than it shows: ${problem}. It had ${visualCounts(steps)}.
+Fix it by: turning successive lines of working into transform steps of ONE math element; replacing explanatory write steps with a drawn diagram (draw) plus narration; adding animate / move / highlight steps that demonstrate each idea. Visual steps must clearly outnumber write + math steps.
 Previous answer:
 ${JSON.stringify(steps).slice(0, 12000)}
 

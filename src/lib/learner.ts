@@ -248,7 +248,7 @@ export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 
   const minor = l.age_band === 'under13' || l.age_band === '13to17'
   const lines = [
     `Learner: ${levelLine(l) || 'level unknown'}. ${minor ? 'Teenager or child: friendly, simple sentences, concrete examples.' : 'Adult: direct, respectful, no talking down.'}`,
-    `Their goal: ${path.goal}. This lesson teaches the skill "${node?.title ?? nodeId}": ${node?.summary ?? ''}`,
+    `Their goal: ${path.goal.replace(/\.+$/, '')}. This lesson teaches the skill "${node?.title ?? nodeId}": ${node?.summary ?? ''}`,
     path.known.length ? `They already showed they know: ${titles(path.known)}. Do not re-teach these; a one-line reminder is enough.` : 'The diagnostic found few secure foundations: start from the very basics of this skill.',
     novice || lowEfficacy || anxious
       ? 'Scaffolding: HIGH. Worked example first, every step shown and narrated, then a nearly identical problem for them, then fade the steps. Small steps, frequent "does this make sense?" checks, early easy wins.'

@@ -1,6 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { needsWorker, runDraftWork, selfOrigin } from '@/lib/lesson-drafting'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export const maxDuration = 300
 
@@ -18,6 +19,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     .eq('id', id).eq('owner_student_id', profile.id).maybeSingle()
   const l = data as { id: string; draft_status: string; draft_error: string | null; draft_retry_at: string | null; draft_lock_until: string | null; chapters: unknown[] } | null
   if (!l) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  // A section that failed validation (e.g. too much text, not enough demonstration) gets more tries, bounded.
+  if (l.draft_status === 'partial') {
+    const db = createAdminClient()
+    const { data: retry } = await db.from('lesson_sections').update({ status: 'pending', error: null }).eq('lesson_id', id).eq('status', 'failed').lt('attempts', 5).select('id')
+    if (retry?.length) {
+      await db.from('lessons').update({ draft_status: 'drafting' }).eq('id', id)
+      l.draft_status = 'drafting'
+    }
+  }
   if (needsWorker(l)) {
     const origin = selfOrigin(request)
     after(() => runDraftWork(id, { origin }).then(() => undefined).catch(err => console.error('Draft worker failed:', err)))

@@ -146,6 +146,7 @@ export function reflect(item: IntakeItem, a: Answers): string | null {
     case 'status': return v === 'in_school' ? 'Good, so this can fit around school.' : v === 'finished' ? 'Got it. We’ll pitch things for someone who’s finished school.' : 'A break is a good time to learn something on your own terms.'
     case 'level': return v === 'Other' ? 'Thanks. The short check later will find the right starting point anyway.' : `${label(item.choices, v)}. Your class is only a starting guess; the short check later finds where you really are.`
     case 'system': return null
+    case 'why': return 'Thank you. That reason will shape the examples I use.'
     case 'goal_pick': {
       const g = v as { goal?: string } | undefined
       return g?.goal ? `So the goal is: ${g.goal}.` : null
