@@ -89,11 +89,9 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
       ) : (
         <>
           <figure className="rounded-[14px] border border-accent-line bg-accent-soft p-5 md:p-7">
-            <Eyebrow className="mb-3 text-accent">{firstName}&apos;s profile</Eyebrow>
+            <Eyebrow className="mb-3 text-accent">What GeniusMap told {firstName}</Eyebrow>
             <blockquote className="font-display text-[21px] leading-snug text-ink md:text-[26px]">
-              {intelData.genius_statement
-                .replace(/^You are\b/i, `${firstName} is`)
-                .replace(/^You\b/i, firstName)}
+              &ldquo;{intelData.genius_statement}&rdquo;
             </blockquote>
           </figure>
 

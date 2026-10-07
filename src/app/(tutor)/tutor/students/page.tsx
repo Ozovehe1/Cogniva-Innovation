@@ -14,6 +14,8 @@ export default async function StudentsPage() {
   const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
   if (!profile) redirect('/login')
 
+  const tutorCode = (profile as { tutor_code?: string }).tutor_code ?? ''
+
   const { data: students } = await supabase
     .from('tutor_students')
     .select('*, student:profiles!tutor_students_student_id_fkey(*)')
@@ -38,10 +40,14 @@ export default async function StudentsPage() {
 
       {(!students || students.length === 0) ? (
         <EmptyState icon={<Users className="h-5 w-5" strokeWidth={1.75} />} title="No students connected yet">
-          <p>Share your Tutor ID with students to connect.</p>
-          <code className="mt-4 inline-block max-w-full break-all rounded-[8px] border border-line bg-sunken px-3 py-2 font-mono text-[12px] text-ink-2">
-            {(profile as { id: string }).id}
-          </code>
+          <p>Share your tutor code with students so they can connect.</p>
+          {tutorCode ? (
+            <code className="mt-4 inline-block rounded-[8px] border border-line bg-sunken px-4 py-2 font-mono text-[18px] tracking-[0.2em] text-ink">
+              {tutorCode}
+            </code>
+          ) : (
+            <p className="mt-2 text-[13px]">Your code appears on your dashboard.</p>
+          )}
         </EmptyState>
       ) : (
         <Card padded={false} className="overflow-hidden">
