@@ -2,19 +2,8 @@
 import { useEffect, useState } from 'react'
 import { LinkTutor } from '@/components/link-tutor'
 import type { ProjectAssignment } from '@/types'
-
-const statusConfig = {
-  assigned:       { label: 'Assigned',      color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
-  in_progress:    { label: 'In Progress',   color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
-  pending_review: { label: 'Under Review',  color: '#A78BFA', bg: 'rgba(124,58,237,0.1)' },
-  completed:      { label: 'Completed',     color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
-}
-
-const difficultyConfig = {
-  beginner:     { color: '#22C55E' },
-  intermediate: { color: '#F59E0B' },
-  advanced:     { color: '#EF4444' },
-}
+import { Check, Clock, MessageSquareText } from 'lucide-react'
+import { Avatar, Badge, Card, DifficultyBadge, Eyebrow, PageHeader, ProgressBar, Skeleton, Spinner, StatusBadge, buttonClass, cx, gradeTone, initialsOf } from '@/components/ui'
 
 type AssignmentWithFeedback = ProjectAssignment & { feedback?: string | null }
 
@@ -55,156 +44,162 @@ export default function StudentProjectsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-zinc-600 text-sm pt-8">
-        <span className="w-4 h-4 rounded-full border-2 border-zinc-700 border-t-zinc-400 animate-spin flex-shrink-0" />
-        Loading projects...
+      <div className="max-w-3xl" aria-busy="true" aria-label="Loading projects">
+        <Skeleton className="mb-3 h-3 w-20" />
+        <Skeleton className="mb-8 h-9 w-56" />
+        <div className="space-y-3">
+          {[0, 1, 2].map(i => (
+            <Card key={i}>
+              <Skeleton className="mb-3 h-4 w-2/3" />
+              <Skeleton className="mb-2 h-3 w-full" />
+              <Skeleton className="mb-4 h-3 w-4/5" />
+              <div className="flex gap-2">
+                <Skeleton className="h-6 w-20 rounded-full" />
+                <Skeleton className="h-6 w-24 rounded-full" />
+              </div>
+            </Card>
+          ))}
+        </div>
       </div>
     )
   }
 
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0
+
   return (
-    <div className="max-w-3xl space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-white">My Projects</h1>
-          <p className="text-zinc-500 text-sm mt-0.5">
-            {total === 0 ? 'No projects yet' : `${completed} of ${total} completed`}
-            {pendingReview > 0 && (
-              <span className="ml-2 text-violet-400">{pendingReview} awaiting review</span>
-            )}
-          </p>
-        </div>
-        {total > 0 && (
-          <div className="text-right">
-            <p className="text-2xl font-bold" style={{ color: '#22C55E' }}>
-              {Math.round((completed / total) * 100)}%
-            </p>
-            <p className="text-zinc-600 text-xs">completion rate</p>
-          </div>
-        )}
-      </div>
+    <div className="max-w-3xl">
+      <PageHeader
+        eyebrow="Projects"
+        title="My projects"
+        description={
+          <>
+            {total === 0 ? 'No projects yet.' : <span className="tnum">{completed} of {total} completed.</span>}
+            {pendingReview > 0 && <span className="tnum"> {pendingReview} awaiting review.</span>}
+          </>
+        }
+      />
 
       {total > 0 && (
-        <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-          <div
-            className="h-1 rounded-full transition-all duration-500"
-            style={{ width: `${(completed / total) * 100}%`, background: '#22C55E' }}
-          />
-        </div>
+        <Card className="mb-6">
+          <div className="mb-2.5 flex items-baseline justify-between">
+            <span className="text-[13px] text-muted">Completion</span>
+            <span className="tnum font-display text-[22px] leading-none text-ink">{pct}%</span>
+          </div>
+          <ProgressBar value={completed} max={total} label="Projects completed" />
+        </Card>
       )}
 
       {hasNoTutor ? (
         <div className="space-y-4">
-          <div className="rounded-2xl p-6 text-center" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)' }}>
-            <p className="text-white text-sm font-medium mb-1">No tutor connected yet</p>
-            <p className="text-xs leading-relaxed" style={{ color: '#52525B' }}>
-              Ask your tutor for their short code and enter it below to connect.
+          <Card>
+            <p className="text-[15px] font-semibold text-ink">No tutor connected yet</p>
+            <p className="mt-1 text-sm leading-relaxed text-muted">
+              Ask your tutor for their short code and enter it below. Their projects will appear here.
             </p>
-          </div>
+          </Card>
           <LinkTutor onLinked={() => window.location.reload()} />
         </div>
       ) : total === 0 ? (
-        <div className="rounded-2xl p-6" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)' }}>
-          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#3F3F46' }}>Your Tutor</p>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-semibold text-white flex-shrink-0"
-              style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.2)' }}>
-              {tutorName ? tutorName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'T'}
-            </div>
+        <Card>
+          <Eyebrow className="mb-4">Your tutor</Eyebrow>
+          <div className="mb-4 flex items-center gap-3">
+            <Avatar initials={tutorName ? initialsOf(tutorName) : 'T'} />
             <div>
-              <p className="text-white text-sm font-medium">{tutorName ?? 'Your Tutor'}</p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#22C55E' }} />
-                <span className="text-xs" style={{ color: '#3F3F46' }}>Active</span>
-              </div>
+              <p className="text-[15px] font-medium text-ink">{tutorName ?? 'Your tutor'}</p>
+              <p className="mt-0.5 flex items-center gap-1.5 text-[13px] text-muted">
+                <span className="h-1.5 w-1.5 rounded-full bg-accent" /> Connected
+              </p>
             </div>
           </div>
-          <p className="text-xs leading-relaxed" style={{ color: '#52525B' }}>
-            No projects have been assigned yet. Your tutor will assign projects when ready.
+          <p className="text-sm leading-relaxed text-muted">
+            No projects have been assigned yet. They&apos;ll show up here as soon as your tutor assigns one.
           </p>
-        </div>
+        </Card>
       ) : (
-        <div className="space-y-3">
+        <ul className="space-y-3">
           {assignments.map(a => {
-            const sc = statusConfig[a.status as keyof typeof statusConfig] || statusConfig.assigned
-            const diff = difficultyConfig[(a.project?.difficulty as keyof typeof difficultyConfig) || 'beginner']
             const isActing = acting === a.project_id
             const feedback = (a as AssignmentWithFeedback).feedback
+            const score = (a as AssignmentWithFeedback & { score?: number | null }).score
+            const objectives = (a.project?.objectives as string[] | undefined) ?? []
             return (
-              <div key={a.id} className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                      <h3 className="text-white font-semibold text-sm">{a.project?.title}</h3>
-                      <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0" style={{ background: sc.bg, color: sc.color }}>
-                        {sc.label}
-                      </span>
+              <li key={a.id}>
+                <Card>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <StatusBadge status={a.status} label={a.status === 'completed' ? 'Completed' : undefined} />
+                        <DifficultyBadge difficulty={a.project?.difficulty} />
+                      </div>
+                      <h3 className="text-[17px] font-semibold leading-snug text-ink">{a.project?.title}</h3>
+                      {a.project?.description && (
+                        <p className="mt-1.5 text-sm leading-relaxed text-muted">{a.project.description.slice(0, 120)}...</p>
+                      )}
+                      <p className="tnum mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-muted">
+                        <span>{a.project?.subject}</span>
+                        <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" strokeWidth={1.75} />{a.project?.estimated_hours}h estimated</span>
+                      </p>
                     </div>
-                    <p className="text-zinc-500 text-xs mb-3 leading-relaxed">{a.project?.description?.slice(0, 120)}...</p>
-                    <div className="flex gap-4 text-xs text-zinc-600 flex-wrap">
-                      <span>Subject: <span className="text-zinc-400">{a.project?.subject}</span></span>
-                      <span>Difficulty: <span style={{ color: diff.color }}>{a.project?.difficulty}</span></span>
-                      <span>Est: <span className="text-zinc-400">{a.project?.estimated_hours}h</span></span>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 flex-shrink-0">
-                    {a.status === 'assigned' && (
-                      <button onClick={() => updateStatus(a.project_id, 'start')} disabled={isActing}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50"
-                        style={{ background: 'rgba(59,130,246,0.15)', color: '#60A5FA', border: '1px solid rgba(59,130,246,0.25)' }}>
-                        {isActing ? '...' : 'Start'}
-                      </button>
-                    )}
-                    {a.status === 'in_progress' && (
-                      <button onClick={() => updateStatus(a.project_id, 'submit')} disabled={isActing}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium transition disabled:opacity-50"
-                        style={{ background: 'rgba(124,58,237,0.15)', color: '#A78BFA', border: '1px solid rgba(124,58,237,0.25)' }}>
-                        {isActing ? '...' : 'Submit for Review'}
-                      </button>
-                    )}
-                    {a.status === 'pending_review' && (
-                      <span className="text-xs font-medium px-2 py-1 rounded-lg" style={{ background: 'rgba(124,58,237,0.1)', color: '#A78BFA' }}>
-                        Awaiting tutor
-                      </span>
-                    )}
-                    {a.status === 'completed' && (
-                      <span className="text-xs font-semibold">
-                        {(a as AssignmentWithFeedback & { score?: number | null }).score != null ? (
-                          <span style={{ color: (a as AssignmentWithFeedback & { score?: number | null }).score! >= 8 ? '#22C55E' : (a as AssignmentWithFeedback & { score?: number | null }).score! >= 6 ? '#F59E0B' : '#EF4444' }}>
-                            ✓ {(a as AssignmentWithFeedback & { score?: number | null }).score}/10
-                          </span>
+
+                    <div className="flex flex-shrink-0 sm:justify-end">
+                      {a.status === 'assigned' && (
+                        <button onClick={() => updateStatus(a.project_id, 'start')} disabled={isActing}
+                          className={buttonClass('primary', 'md', 'w-full sm:w-auto')}>
+                          {isActing ? <Spinner /> : null}
+                          {isActing ? 'Starting…' : 'Start project'}
+                        </button>
+                      )}
+                      {a.status === 'in_progress' && (
+                        <button onClick={() => updateStatus(a.project_id, 'submit')} disabled={isActing}
+                          className={buttonClass('primary', 'md', 'w-full sm:w-auto')}>
+                          {isActing ? <Spinner /> : null}
+                          {isActing ? 'Submitting…' : 'Submit for review'}
+                        </button>
+                      )}
+                      {a.status === 'pending_review' && (
+                        <span className="text-[13px] text-muted">Waiting for your tutor</span>
+                      )}
+                      {a.status === 'completed' && (
+                        score != null ? (
+                          <div className="text-left sm:text-right">
+                            <p className={cx('tnum font-display text-[26px] leading-none', gradeTone(score))}>
+                              {score}<span className="text-[15px] text-faint"> / 10</span>
+                            </p>
+                            <p className="mt-1 text-[12px] text-muted">Grade</p>
+                          </div>
                         ) : (
-                          <span className="text-emerald-500">✓ Approved</span>
-                        )}
-                      </span>
-                    )}
+                          <Badge className="border-accent-line bg-accent-soft text-accent"><Check className="h-3.5 w-3.5" strokeWidth={2} />Approved</Badge>
+                        )
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                {/* Tutor feedback after return */}
-                {feedback && a.status === 'in_progress' && (
-                  <div className="mt-4 pt-4 rounded-lg px-3 py-2.5" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderTop: 'none' }}>
-                    <p className="text-xs font-medium mb-1" style={{ color: '#F59E0B' }}>Tutor feedback</p>
-                    <p className="text-xs text-zinc-400 leading-relaxed">{feedback}</p>
-                  </div>
-                )}
+                  {feedback && a.status === 'in_progress' && (
+                    <div className="mt-5 rounded-[10px] border border-amber-line bg-amber-soft px-4 py-3">
+                      <p className="flex items-center gap-1.5 text-[13px] font-semibold text-amber">
+                        <MessageSquareText className="h-3.5 w-3.5" strokeWidth={2} /> Tutor feedback
+                      </p>
+                      <p className="mt-1 text-sm leading-relaxed text-ink-2">{feedback}</p>
+                    </div>
+                  )}
 
-                {a.project?.objectives && (a.project.objectives as string[]).length > 0 && (
-                  <div className="mt-4 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                    <p className="text-zinc-600 text-xs mb-2 uppercase tracking-wider">Objectives</p>
-                    <ul className="space-y-1">
-                      {(a.project.objectives as string[]).map((o, i) => (
-                        <li key={i} className="flex gap-2 text-xs text-zinc-500">
-                          <span style={{ color: '#7C3AED' }}>•</span>{o}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
+                  {objectives.length > 0 && (
+                    <div className="mt-5 border-t border-line pt-4">
+                      <Eyebrow className="mb-2.5">Objectives</Eyebrow>
+                      <ul className="space-y-1.5">
+                        {objectives.map((o, i) => (
+                          <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-ink-2">
+                            <span className="mt-[9px] h-1 w-1 flex-shrink-0 rounded-full bg-accent" />{o}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </Card>
+              </li>
             )
           })}
-        </div>
+        </ul>
       )}
     </div>
   )

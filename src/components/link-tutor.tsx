@@ -1,5 +1,7 @@
 'use client'
 import { useState } from 'react'
+import { Check } from 'lucide-react'
+import { Card, Spinner, buttonClass, inputClass } from './ui'
 
 export function LinkTutor({ onLinked }: { onLinked?: (tutorName: string) => void }) {
   const [tutorId, setTutorId] = useState('')
@@ -28,42 +30,43 @@ export function LinkTutor({ onLinked }: { onLinked?: (tutorName: string) => void
 
   if (linked) {
     return (
-      <div className="flex items-center gap-3 p-4 rounded-xl" style={{ background: 'rgba(5,150,105,0.1)', border: '1px solid rgba(5,150,105,0.2)' }}>
-        <span className="text-emerald-400 text-lg">✓</span>
+      <div role="status" className="flex items-start gap-3 rounded-[14px] border border-accent-line bg-accent-soft p-4">
+        <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent text-white">
+          <Check className="h-4 w-4" strokeWidth={2.25} />
+        </span>
         <div>
-          <p className="text-white text-sm font-medium">Connected to {linked}</p>
-          <p className="text-zinc-500 text-xs mt-0.5">Projects will appear once your tutor assigns them</p>
+          <p className="text-[15px] font-medium text-ink">Connected to {linked}</p>
+          <p className="mt-0.5 text-sm text-muted">Projects will appear once your tutor assigns them.</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="p-5 rounded-2xl space-y-4" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-      <div>
-        <p className="text-white font-semibold text-sm mb-1">Connect to a Tutor</p>
-        <p className="text-zinc-500 text-xs">Ask your tutor for their short code and enter it below</p>
-      </div>
-      <div className="flex gap-2">
+    <Card>
+      <label htmlFor="tutor-code" className="block text-[15px] font-semibold text-ink">Connect to a tutor</label>
+      <p className="mt-1 text-sm text-muted">Enter the short code your tutor gave you.</p>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <input
+          id="tutor-code"
           type="text"
           value={tutorId}
           onChange={e => setTutorId(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
           onKeyDown={e => e.key === 'Enter' && handleLink()}
           placeholder="e.g. JOHNS or XK7M2P"
-          className="flex-1 px-4 py-2.5 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
-          style={{ background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }}
+          autoCapitalize="characters"
+          autoComplete="off"
+          className={`${inputClass} font-mono tracking-[0.12em] sm:flex-1`}
         />
         <button
           onClick={handleLink}
           disabled={!tutorId.trim() || loading}
-          className="px-4 py-2.5 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition flex-shrink-0"
-          style={{ background: '#7C3AED' }}
+          className={buttonClass('primary', 'md', 'h-11 sm:w-auto')}
         >
-          {loading ? '...' : 'Connect'}
+          {loading ? <><Spinner /> Connecting…</> : 'Connect'}
         </button>
       </div>
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-    </div>
+      {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
+    </Card>
   )
 }
