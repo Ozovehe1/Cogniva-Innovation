@@ -81,14 +81,15 @@ function main() {
   const appUrl = process.env.APP_URL || DEFAULT_APP_URL
   // GEMINI_API_KEY: the visual composer (modal_app/gm_compose.py) plans and writes scenes at render time on Modal.
   const gem = (process.env.GEMINI_API_KEY ?? '').trim()
-  const sec = run(py, ['-m', 'modal', 'secret', 'create', 'geniusmap-render', `RENDER_TOKEN=${process.env.RENDER_TOKEN}`, `APP_URL=${appUrl}`, ...(gem ? [`GEMINI_API_KEY=${gem}`] : []), '--force'], { env, quiet: true, timeoutMs: 120_000 })
+  const gem2 = (process.env.GEMINI_API_KEY_2 ?? '').trim()
+  const sec = run(py, ['-m', 'modal', 'secret', 'create', 'geniusmap-render', `RENDER_TOKEN=${process.env.RENDER_TOKEN}`, `APP_URL=${appUrl}`, ...(gem ? [`GEMINI_API_KEY=${gem}`] : []), ...(gem2 ? [`GEMINI_API_KEY_2=${gem2}`] : []), '--force'], { env, quiet: true, timeoutMs: 120_000 })
   if (!sec.ok) {
     let safe = sec.out.split(process.env.RENDER_TOKEN).join('***')
     if (gem) safe = safe.split(gem).join('***')
     warn('modal secret create failed:\n' + safe.slice(-2000))
     return
   }
-  log(`secret geniusmap-render updated (RENDER_TOKEN, APP_URL=${appUrl}${gem ? ', GEMINI_API_KEY' : ''})`)
+  log(`secret geniusmap-render updated (RENDER_TOKEN, APP_URL=${appUrl}${gem ? ', GEMINI_API_KEY' : ''}${gem2 ? ', GEMINI_API_KEY_2' : ''})`)
 
   // Deploy. A first deploy builds the image on Modal and can take several minutes.
   for (const app of APPS.filter(a => c.files.includes(a.file))) {

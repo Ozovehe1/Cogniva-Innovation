@@ -115,7 +115,8 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
   let retryAfter: number | null = null
   let daily = false
   let otherFailures = 0
-  const chain = opts.models ?? GEMINI_MODELS
+  // Each model on each API key is its own free-tier quota: expand to key slots ("model#1" = second key).
+  const chain = expandKeys(opts.models ?? GEMINI_MODELS)
   const now = Date.now()
   const live = chain.filter(m => (skipUntil.get(m) ?? 0) <= now)
   // If everything is marked as skipped, try the whole chain anyway (quota may have reset).
@@ -131,7 +132,8 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
     await new Promise(r => setTimeout(r, Math.min(wait, 30_000)))
   }
   let attempted = 0
-  for (const model of order) {
+  for (const slot of order) {
+    const [model, keyIdx] = splitSlot(slot)
     let timeout = (attempted === 0 ? opts.primaryTimeoutMs : undefined) ?? opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS
     if (opts.deadline) {
       const left = opts.deadline - Date.now()
@@ -139,10 +141,10 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
       timeout = Math.min(timeout, left)
     }
     attempted++
-    takeSlot(model)
+    takeSlot(slot)
     try {
       const thinkingConfig = thinkingFor(model, opts.thinking)
-      const response = await ai.models.generateContent({
+      const response = await clients[keyIdx].models.generateContent({
         model,
         contents: prompt,
         config: {
@@ -153,13 +155,13 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         },
       })
-      lastGeminiModel = model
+      lastGeminiModel = keyIdx ? `${model} (key ${keyIdx + 1})` : model
       opts.onModel?.(model)
       return response.text ?? ''
     } catch (err) {
       lastErr = err
       const msg = err instanceof Error ? err.message : String(err)
-      opts.trace?.push(`${model}: ${msg.slice(0, 160)}`)
+      opts.trace?.push(`${slot}: ${msg.slice(0, 160)}`)
       if (!isRetryable(err)) throw err
       if (isQuotaError(err)) {
         quotaCount++
@@ -167,11 +169,11 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
         if (d !== null) retryAfter = retryAfter === null ? d : Math.min(retryAfter, d)
         const isDaily = /PerDay|per day|daily/i.test(msg)
         if (isDaily) daily = true
-        skipUntil.set(model, Date.now() + (isDaily ? 10 * 60_000 : Math.min(d ?? 30_000, 60_000)))
+        skipUntil.set(slot, Date.now() + (isDaily ? 10 * 60_000 : Math.min(d ?? 30_000, 60_000)))
       } else if (/\b404\b|NOT_FOUND|not found|not supported|unsupported/i.test(msg)) {
-        skipUntil.set(model, Date.now() + 6 * 3600_000)
+        skipUntil.set(slot, Date.now() + 6 * 3600_000)
       } else otherFailures++
-      console.warn(`Gemini ${model} unavailable, trying next model:`, msg.slice(0, 200))
+      console.warn(`Gemini ${slot} unavailable, trying next model:`, msg.slice(0, 200))
     }
   }
   // Every model that exists for this key is out of quota: report it as a quota error.
@@ -190,7 +192,20 @@ export async function generateStructuredJson(prompt: string, opts: Omit<Generate
   return generateJson(prompt, { ...opts, json: true })
 }
 
-export const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
+/** API keys in fallback order: GEMINI_API_KEY, then GEMINI_API_KEY_2, _3 … (each a separate project and free quota). */
+export const GEMINI_KEYS = [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_2, process.env.GEMINI_API_KEY_3, process.env.GEMINI_API_KEY_4]
+  .map(k => (k ?? '').trim()).filter(Boolean)
+const clients = (GEMINI_KEYS.length ? GEMINI_KEYS : ['']).map(apiKey => new GoogleGenAI({ apiKey }))
+export const ai = clients[0]
+function expandKeys(models: readonly string[]) {
+  const out: string[] = []
+  clients.forEach((_, k) => models.forEach(m => out.push(k ? `${m}#${k}` : m)))
+  return out
+}
+function splitSlot(slot: string): [string, number] {
+  const i = slot.indexOf('#')
+  return i < 0 ? [slot, 0] : [slot.slice(0, i), Number(slot.slice(i + 1)) || 0]
+}
 
 export function parseGeminiJson(raw: string) {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()

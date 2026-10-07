@@ -20,7 +20,8 @@ _why: dict[str, str] = {}  # last refusal per model (status + quota id), for the
 def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, temperature=0.4, timeout=60, log=None) -> str:
     import httpx
 
-    key = os.environ.get("GEMINI_API_KEY", "")
+    keys = [k.strip() for k in (os.environ.get(n, "") for n in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")) if k.strip()]
+    key = keys[0] if keys else ""
     if not key and os.environ.get("GM_GEMINI_PROXY"):
         for attempt in range(5):
             r = httpx.post(os.environ["GM_GEMINI_PROXY"].rstrip("/") + "/gemini", headers={"X-Render-Token": os.environ.get("RENDER_TOKEN", "")},
@@ -43,13 +44,15 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
     last = None
     wait_hint = 0.0
     for attempt in range(3):
-        for model in MODELS:
+        for slot in [m if k == 0 else f"{m}#{k}" for k in range(len(keys)) for m in MODELS]:
+            model, _, kidx = slot.partition("#")
+            key = keys[int(kidx or 0)]
             cfg = {"temperature": temperature}
             if json_out:
                 cfg["responseMimeType"] = "application/json"
             if model.startswith("gemini-3"):
                 cfg["thinkingConfig"] = {"thinkingLevel": "low"}
-            if time.time() < _skip.get(model, 0):
+            if time.time() < _skip.get(slot, 0):
                 continue
             try:
                 r = httpx.post(
@@ -57,35 +60,35 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
                     params={"key": key}, json={"contents": [{"role": "user", "parts": parts}], "generationConfig": cfg}, timeout=timeout,
                 )
             except Exception as exc:  # noqa: BLE001
-                last = f"{model}: {exc}"
+                last = f"{slot}: {exc}"
                 continue
             if r.status_code == 200:
                 j = r.json()
                 try:
                     text = "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"] if not p.get("thought"))
                 except Exception:  # noqa: BLE001
-                    last = f"{model}: empty answer"
+                    last = f"{slot}: empty answer"
                     continue
                 if log is not None:
-                    log.append(f"gemini {model} ok")
+                    log.append(f"gemini {slot} ok")
                 return text
-            last = f"{model}: {r.status_code} {r.text[:160]}"
+            last = f"{slot}: {r.status_code} {r.text[:160]}"
             qid = re.findall(r'"quotaId":\s*"([^"]+)"', r.text)
-            _why[model] = f"{r.status_code} {','.join(sorted(set(qid)))[:120]}"
+            _why[slot] = f"{r.status_code} {','.join(sorted(set(qid)))[:120]}"
             if log is not None:
-                log.append(f"gemini {model}: {r.status_code}")
+                log.append(f"gemini {slot}: {r.status_code}")
             if r.status_code == 429:
                 daily = "PerDay" in r.text or "per day" in r.text.lower()
                 m = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', r.text)
                 delay = float(m.group(1)) if m else 20.0
                 # a daily quota is gone for hours; a per-minute one frees up within the hint
-                _skip[model] = time.time() + (600 if daily else delay)
+                _skip[slot] = time.time() + (600 if daily else delay)
                 if not daily:
                     wait_hint = max(wait_hint, min(delay, 45.0))
-        soon = [t for t in (_skip.get(m, 0) for m in MODELS) if t - time.time() < 60]
+        soon = [t for t in _skip.values() if t - time.time() < 60]
         time.sleep(max(3.0, min(45.0, wait_hint or 5.0)) if soon or attempt == 0 else 3.0)
         wait_hint = 0.0
-    raise RuntimeError(f"Gemini unavailable: {last or ''} | " + "; ".join(f"{m}={_why.get(m, '?')} skip {max(0, int(_skip.get(m, 0) - time.time()))}s" for m in MODELS))
+    raise RuntimeError(f"Gemini unavailable: {last or ''} | " + "; ".join(f"{m}={_why.get(m, '?')} skip {max(0, int(_skip.get(m, 0) - time.time()))}s" for m in _why))
 
 
 def parse_json(text: str):
