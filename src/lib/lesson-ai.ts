@@ -61,7 +61,7 @@ export interface GenMeta { ms: number; repaired: boolean; model: string | null; 
 async function generateSteps(
   prompt: string,
   opts: {
-    knownIds?: string[]; knownAxes?: string[]; maxSteps: number; timeoutMs?: number; thinking?: GenerateOptions['thinking']; meta?: GenMeta
+    knownIds?: string[]; knownAxes?: string[]; maxSteps: number; timeoutMs?: number; primaryTimeoutMs?: number; thinking?: GenerateOptions['thinking']; meta?: GenMeta
     /** Steps already on the board (live continuation); used for layout checks. */
     played?: Step[]
     /** Allow one extra model call to fix overlapping layout (drafts only; costs latency). */
@@ -79,7 +79,7 @@ async function generateSteps(
     return autoFixLayout(steps, start, offset)
   }
   meta.trace = []
-  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, thinking: opts.thinking, trace: meta.trace }
+  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace }
   let raw: unknown
   try {
     raw = await generateStructuredJson(prompt, gen)
@@ -204,7 +204,7 @@ ${LAYOUT_RULES}
 - Return 4 to 9 steps; keep it brisk. You may clear part of the board first. New ids must not clash with existing ones unless you clear them first.
 - End with a check (kind "understand", or a short "choice" question) so the student can confirm. Do not add "reteach" to it.
 Return {"steps": [...]} only.`
-  return generateSteps(prompt, { knownIds: ids, knownAxes: axes, maxSteps: 14, timeoutMs: 20_000, thinking: 'minimal', meta: input.meta, played: input.played })
+  return generateSteps(prompt, { knownIds: ids, knownAxes: axes, maxSteps: 14, timeoutMs: 20_000, primaryTimeoutMs: 12_000, thinking: 'minimal', meta: input.meta, played: input.played })
 }
 
 /* ───────────── Manim ───────────── */

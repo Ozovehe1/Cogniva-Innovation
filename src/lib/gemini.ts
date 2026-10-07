@@ -18,6 +18,8 @@ export interface GenerateOptions {
   temperature?: number
   /** 'minimal' trades depth for latency (live tutoring); default 'low'. */
   thinking?: 'minimal' | 'low'
+  /** Timeout for the primary model only; the fallback model gets timeoutMs. Use to cap latency. */
+  primaryTimeoutMs?: number
   /** Collects short notes on models that failed before one succeeded (diagnostics). */
   trace?: string[]
 }
@@ -28,15 +30,16 @@ export let lastGeminiModel: string | null = null
 /** Calls Gemini with the primary model and falls back on overload/quota errors. Returns raw text. */
 export async function generateText(prompt: string, opts: GenerateOptions = {}): Promise<string> {
   let lastErr: unknown
-  for (const model of GEMINI_MODELS) {
+  for (const [i, model] of GEMINI_MODELS.entries()) {
     try {
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
         config: {
-          httpOptions: { timeout: opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS },
+          httpOptions: { timeout: (i === 0 ? opts.primaryTimeoutMs : undefined) ?? opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS },
+          // gemini-3.8-flash rejects MINIMAL, so 'minimal' only lowers the 2.5 budget.
           thinkingConfig: model.startsWith('gemini-3')
-            ? { thinkingLevel: opts.thinking === 'minimal' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW }
+            ? { thinkingLevel: ThinkingLevel.LOW }
             : { thinkingBudget: opts.thinking === 'minimal' ? 0 : 128 },
           ...(opts.json ? { responseMimeType: 'application/json' } : {}),
           ...(opts.systemInstruction ? { systemInstruction: opts.systemInstruction } : {}),
@@ -47,11 +50,7 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
       return response.text ?? ''
     } catch (err) {
       lastErr = err
-      opts.trace?.push(`${model}${opts.thinking === 'minimal' ? '/minimal' : ''}: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`)
-      // Not every model accepts the minimal thinking level: retry the same call at the default level.
-      if (opts.thinking === 'minimal' && /thinking|INVALID_ARGUMENT|\b400\b/i.test(err instanceof Error ? err.message : String(err))) {
-        return generateText(prompt, { ...opts, thinking: 'low' })
-      }
+      opts.trace?.push(`${model}: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`)
       if (!isRetryable(err)) throw err
       console.warn(`Gemini ${model} unavailable, trying next model:`, err instanceof Error ? err.message : err)
     }
