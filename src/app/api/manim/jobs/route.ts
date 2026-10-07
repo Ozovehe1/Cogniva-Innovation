@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
-import { generateManimCode } from '@/lib/lesson-ai'
+import { generateManimCode, type ManimNarration } from '@/lib/lesson-ai'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { dispatchRender, withUrl, type ManimJob } from '@/lib/manim'
+import { ensureNarration } from '@/lib/tts-server'
 
-export const maxDuration = 90
+export const maxDuration = 300
 
 /** GET /api/manim/jobs?lessonId=  — the tutor's own jobs (optionally for one lesson). */
 export async function GET(request: Request) {
@@ -21,7 +22,9 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/manim/jobs  (tutors only)
- * Body: { prompt, lessonId? }. Gemini writes Manim code, a render job is queued on Modal.
+ * Body: { prompt, lessonId?, narration?, sourceText?, styleNotes? }. Gemini writes Manim code, a render job is queued on Modal.
+ * narration: the line spoken over the clip; it is voiced (cached) and its real word timings set the clip's pacing.
+ * sourceText / styleNotes: excerpt of the tutor's material and its conventions, followed by the clip.
  * Student input never reaches this route: only the tutor's own description is used.
  */
 export async function POST(request: Request) {
@@ -42,13 +45,31 @@ export async function POST(request: Request) {
     lessonCtx = { title: (lesson as { title: string }).title, subject: (lesson as { subject: string }).subject }
   }
 
+  const str = (v: unknown, n: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : undefined)
+  const narrationText = str(body.narration, 1200)
+  const sourceText = str(body.sourceText, 6000)
+  const styleNotes = str(body.styleNotes, 2000)
+
   const { data: job, error } = await supabase
-    .from('manim_jobs').insert({ lesson_id: lessonId, requested_by: profile.id, prompt, status: 'queued' }).select('*').single()
+    .from('manim_jobs').insert({ lesson_id: lessonId, requested_by: profile.id, prompt, status: 'queued', narration: narrationText ?? null }).select('*').single()
   if (error || !job) return NextResponse.json({ error: error?.message ?? 'Could not create job' }, { status: 500 })
+
+  // Real word timings for the narration (cached voice); without them the clip is paced by an estimate.
+  let narration: ManimNarration | undefined
+  if (narrationText) {
+    narration = { text: narrationText }
+    try {
+      const r = await ensureNarration([narrationText], { timeoutMs: 60_000 })
+      const c = r.clips[0]
+      if (c) narration = { text: narrationText, ms: c.ms, words: c.words }
+    } catch (err) {
+      console.warn('Clip narration timing unavailable:', err instanceof Error ? err.message : err)
+    }
+  }
 
   let code: string
   try {
-    code = await generateManimCode(prompt, { lessonTitle: lessonCtx.title, subject: lessonCtx.subject })
+    code = await generateManimCode(prompt, { lessonTitle: lessonCtx.title, subject: lessonCtx.subject, sourceText, styleNotes, narration })
   } catch (err) {
     const message = `Could not write the animation code: ${err instanceof Error ? err.message : String(err)}`
     await supabase.from('manim_jobs').update({ status: 'failed', error: message.slice(0, 1000) }).eq('id', (job as ManimJob).id)
