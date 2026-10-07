@@ -181,7 +181,7 @@ export function reflect(item: IntakeItem, a: Answers): string | null {
     case 'why': return 'Thank you. That reason will shape the examples I use.'
     case 'goal_pick': {
       const g = v as { goal?: string } | undefined
-      return g?.goal ? `So the goal is: ${g.goal}.` : null
+      return g?.goal ? `So the goal is: ${g.goal.trim().replace(/[.!?]+$/, '')}.` : null
     }
     case 'last_studied': return v === 'never' ? 'Then we’ll start from the very first idea. No check needed for this one.' : v === 'longer' ? 'Then we’ll start with a quick refresh of the basics underneath it.' : null
     case 'purpose': {
