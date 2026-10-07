@@ -4,23 +4,13 @@ import { motion } from 'framer-motion'
 import { Check, X } from 'lucide-react'
 import type { CheckStep } from '@/lib/lesson-schema'
 import { buttonClass, cx, inputClass } from '@/components/ui'
-import { EASE_SMOOTH, renderTex } from './elements'
+import { EASE_SMOOTH } from './elements'
+import { RichText } from '../rich-text'
 
 export type CheckResponse = 'got_it' | 'again' | 'differently' | 'continue' | 'answer' | 'explain_wrong'
 
-/** Renders inline $...$ math inside question text and options. */
-export function RichText({ text, display = false }: { text: string; display?: boolean }) {
-  const parts = text.split(/(\$[^$]+\$)/g)
-  return (
-    <>
-      {parts.map((p, i) =>
-        p.startsWith('$') && p.endsWith('$') && p.length > 2
-          ? <span key={i} dangerouslySetInnerHTML={{ __html: renderTex(p.slice(1, -1), display) }} />
-          : <React.Fragment key={i}>{p}</React.Fragment>,
-      )}
-    </>
-  )
-}
+/** The shared renderer for AI-written text (inline maths, bare LaTeX, plain fallback). */
+export { RichText }
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '').replace(/[.,;:!]+$/, '')
 

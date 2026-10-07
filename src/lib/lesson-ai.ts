@@ -1,5 +1,6 @@
 import { GeminiQuotaError, generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, type Step } from './lesson-schema'
+import { normalizeLessonMath } from './lesson-math'
 import { autoFixLayout, layoutIssues } from './lesson-layout'
 import { MANIM_API_SHEET, describeProblems, guardManimCode, hintsFor, tracebackOf } from './manim-guard'
 import { buildBoard } from '@/components/whiteboard/board-state'
@@ -92,6 +93,8 @@ export async function generateSteps(
   const start = opts.played ? buildBoard(opts.played, opts.played.length) : undefined
   const offset = opts.played?.length ?? 0
   const done = (steps: Step[]) => {
+    // Maths in narration, notes, maths elements and checks: delimited, repaired, KaTeX-validated.
+    steps = normalizeLessonMath(steps).steps
     meta.ms = Date.now() - t0
     meta.model = answered ?? lastGeminiModel
     // Last resort: clear whatever a new element would be drawn on top of.
@@ -110,22 +113,29 @@ export async function generateSteps(
   }
   let result = validateScript(raw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, knownVars: opts.knownVars, maxSteps: opts.maxSteps })
   if (result.ok) {
-    const issues = opts.layoutRepair ? layoutIssues(result.steps, start, offset) : []
+    const layout = opts.layoutRepair ? layoutIssues(result.steps, start, offset) : []
+    // Maths the deterministic repair could not fix is re-asked once (it would otherwise show as plain text).
+    const mathIssues = normalizeLessonMath(result.steps).issues
+    const issues = [...layout, ...mathIssues.slice(0, 8)]
     if (issues.length === 0) return done(result.steps)
-    // One layout repair pass.
+    // One repair pass (layout and/or maths).
     meta.repaired = true
     try {
       const fixedRaw = await generateStructuredJson(`${prompt}
 
-Your previous answer was valid but elements collide on the board:
+Your previous answer was valid but has these problems${layout.length ? ' (elements collide on the board)' : ''}${mathIssues.length ? ' (maths must be valid KaTeX LaTeX; inline maths in text inside $...$)' : ''}:
 ${issues.map(i => `- ${i}`).join('\n')}
 
 Previous answer:
 ${JSON.stringify(result.steps).slice(0, 14000)}
 
-Return the full corrected JSON object {"steps": [...]} with the same teaching content and no collisions.`, gen)
+Return the full corrected JSON object {"steps": [...]} with the same teaching content and none of these problems.`, gen)
       const fixed = validateScript(fixedRaw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, knownVars: opts.knownVars, maxSteps: opts.maxSteps })
-      if (fixed.ok && layoutIssues(fixed.steps, start, offset).length < issues.length) return done(fixed.steps)
+      if (fixed.ok) {
+        const fl = opts.layoutRepair ? layoutIssues(fixed.steps, start, offset).length : 0
+        const fm = normalizeLessonMath(fixed.steps).issues.length
+        if (fl <= layout.length && fm <= mathIssues.length && fl + fm < issues.length) return done(fixed.steps)
+      }
     } catch (err) {
       if (err instanceof GeminiQuotaError) return done(result.steps)
       console.warn('Layout repair failed:', err instanceof Error ? err.message : err)

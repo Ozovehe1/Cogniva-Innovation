@@ -9,6 +9,7 @@ import { generateStructuredJson } from './gemini'
 import { levelLine, type Answers } from './intake'
 import { cleanGraph, descendants, ancestors, topoOrder, type DiagGraph, type DiagState, type DiagItem } from './diagnostic-core'
 import type { StudentProfileLite } from './lesson-ai'
+import { QUESTION_RULES, checkItem, feedbackFor, rawItems, type RawItem } from './question-quality'
 
 export interface LearnerRow {
   student_id: string
@@ -230,11 +231,63 @@ For each skill give:
 - "summary": one sentence: what someone who has this skill can do
 - "prereqs": ids of skills it directly needs (only skills in this list; foundations have [])
 - "level": "below", "at" or "above" relative to the learner's stated level (the goal and skills beyond their level are "above")
-- "items": exactly 2 multiple-choice questions that test THIS skill only (not its prerequisites), each {"q": string, "options": [4 strings], "answer": index of the correct option, "explain": one short sentence}. Questions are short, unambiguous, answerable in under a minute without a calculator unless trivial, at the skill's own level. Use $...$ for maths (KaTeX). Distractors are common mistakes. Vary the position of the correct answer. No trick questions; no "all of the above".
+- "items": exactly 2 multiple-choice questions that test THIS skill only (not its prerequisites), each {"q": string, "options": [4 strings], "answer": index of the correct option, "explain": one short sentence, "calc": string or null}. Questions are short, unambiguous, answerable in under a minute without a calculator unless trivial, at the skill's own level. Vary the position of the correct answer. No trick questions; no "all of the above".
+${QUESTION_RULES}
 Also "goalNode": the id of the goal skill, "subject": the subject in 1-3 words, "stem": true for maths/science/engineering/computing.
 Neutral, global wording; examples may use Nigerian context. Return JSON {"subject", "stem", "goalNode", "nodes": [...]} only.`
   const raw = await generateStructuredJson(prompt, { timeoutMs: 110_000, primaryTimeoutMs: 80_000, temperature: 0.4 })
+  await gateGraphItems(raw)
   return cleanGraph(raw, l.subject ?? '')
+}
+
+/**
+ * Quality gate on the diagnostic's items, in place on the raw AI graph: maths
+ * normalised and validated, options distinct, numeric answers verified. Failing
+ * items are re-asked once (one call for all of them); items still failing are
+ * dropped unless that would leave a skill with no question.
+ */
+async function gateGraphItems(raw: unknown) {
+  const nodes = (raw && typeof raw === 'object' && Array.isArray((raw as { nodes?: unknown }).nodes) ? (raw as { nodes: Record<string, unknown>[] }).nodes : [])
+    .filter(n => n && typeof n === 'object')
+  const rejected: { node: Record<string, unknown>; raw: RawItem; problems: string[] }[] = []
+  const good = new Map<Record<string, unknown>, ReturnType<typeof checkItem>['item'][]>()
+  const fallback = new Map<Record<string, unknown>, ReturnType<typeof checkItem>['item'][]>()
+  for (const n of nodes) {
+    const ok: ReturnType<typeof checkItem>['item'][] = []
+    const fb: ReturnType<typeof checkItem>['item'][] = []
+    for (const r of rawItems(n.items)) {
+      const c = checkItem(r, { requireCalc: true })
+      if (c.problems.length) { rejected.push({ node: n, raw: r, problems: c.problems }); fb.push(c.item) } else ok.push(c.item)
+    }
+    good.set(n, ok); fallback.set(n, fb)
+  }
+  if (rejected.length) {
+    try {
+      const fix = await generateStructuredJson(`These multiple-choice diagnostic questions failed automatic checks. Write one NEW replacement question for each, testing the same skill at the same level, fixing the problem.
+${feedbackFor(rejected)}
+
+Skills (by number above): ${rejected.map((r, i) => `${i + 1}=${String(r.node.title ?? r.node.id ?? '')}`).join('; ')}
+Each replacement: {"n": the number above, "q": string, "options": [4 strings], "answer": index, "explain": one short sentence, "calc": string or null}.
+${QUESTION_RULES}
+Return JSON {"items": [...]} only.`, { timeoutMs: 60_000, primaryTimeoutMs: 40_000, temperature: 0.3 }) as { items?: unknown[] }
+      const list = Array.isArray(fix?.items) ? fix.items : []
+      for (const x of list) {
+        const n = x && typeof x === 'object' ? Number((x as { n?: unknown }).n) : NaN
+        const target = rejected[n - 1]
+        const [r] = rawItems([x])
+        if (!target || !r) continue
+        const c = checkItem(r, { requireCalc: true })
+        if (!c.problems.length) good.get(target.node)?.push(c.item)
+      }
+    } catch (err) {
+      console.warn('Diagnostic item repair failed:', err instanceof Error ? err.message : err)
+    }
+  }
+  for (const n of nodes) {
+    const ok = good.get(n) ?? []
+    // Never leave a skill without a question: keep its (maths-normalised) originals as a last resort.
+    n.items = (ok.length ? ok : fallback.get(n) ?? []).slice(0, 3)
+  }
 }
 
 /* ───────────── Path: scope, pace, teaching notes ───────────── */
@@ -314,29 +367,36 @@ export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 
   return lines.filter(Boolean).join('\n').slice(0, 3000)
 }
 
-/** Mastery-check items for a topic: 4 fresh multiple-choice questions on this skill. */
+/** Mastery-check items for a topic: 4 fresh multiple-choice questions on this skill, quality-gated. */
 export async function masteryItems(input: { learner: LearnerRow; topicTitle: string; summary: string; goal: string }): Promise<DiagItem[]> {
-  const prompt = `Write a 4-question mastery check for the skill "${input.topicTitle}" (${input.summary}).
+  const prompt = (count: number, avoid: string) => `Write a ${count}-question mastery check for the skill "${input.topicTitle}" (${input.summary}).
 Learner: ${levelLine(input.learner) || 'level unknown'}; goal: ${input.goal}.${input.learner.interests?.length ? ` Set word problems in: ${input.learner.interests.slice(0, 2).join(', ')}.` : ''}
-Each question tests whether they can DO the skill (apply it, not recall a definition), at their level, answerable in about a minute. Use $...$ for maths. 4 options each, distractors are common mistakes, vary the correct position.
-Return JSON {"items": [{"q": string, "options": [4 strings], "answer": index, "explain": one sentence showing the key step}]}.`
-  const raw = await generateStructuredJson(prompt, { timeoutMs: 45_000, primaryTimeoutMs: 30_000, temperature: 0.5 }) as Record<string, unknown>
-  const items = cleanItems(raw?.items)
-  if (items.length < 3) throw new Error('The AI returned too few mastery questions')
-  return items.slice(0, 4)
-}
-
-function cleanItems(raw: unknown): DiagItem[] {
-  const out: DiagItem[] = []
-  for (const it of Array.isArray(raw) ? raw : []) {
-    if (!it || typeof it !== 'object') continue
-    const o = it as Record<string, unknown>
-    if (typeof o.q !== 'string' || !Array.isArray(o.options) || typeof o.answer !== 'number') continue
-    const opts = o.options.filter((s): s is string => typeof s === 'string' && !!s.trim()).map(s => s.slice(0, 200)).slice(0, 5)
-    if (opts.length < 3 || o.answer < 0 || o.answer >= opts.length) continue
-    out.push({ q: o.q.slice(0, 500), options: opts, answer: Math.floor(o.answer), explain: typeof o.explain === 'string' ? o.explain.slice(0, 400) : undefined })
+Each question tests whether they can DO the skill (apply it, not recall a definition), at their level, answerable in about a minute. Every question is physically and mathematically correct and has exactly one right answer. 4 options each; vary the correct position.
+${QUESTION_RULES}${avoid}
+Return JSON {"items": [{"q": string, "options": [4 strings], "answer": index, "explain": one sentence showing the key step, "calc": string or null}]}.`
+  const opts = { timeoutMs: 45_000, primaryTimeoutMs: 30_000, temperature: 0.5 }
+  const first = rawItems((await generateStructuredJson(prompt(4, ''), opts) as Record<string, unknown>)?.items)
+  const good: DiagItem[] = []
+  const rejected: { raw: RawItem; problems: string[] }[] = []
+  for (const r of first) {
+    const c = checkItem(r, { requireCalc: true })
+    if (c.problems.length) rejected.push({ raw: r, problems: c.problems }); else good.push(c.item)
   }
-  return out.slice(0, 5)
+  if (good.length < 4) {
+    // One re-ask for the missing questions, with what was wrong.
+    const need = 4 - good.length
+    const avoid = rejected.length ? `\nEarlier questions were rejected by automatic checks; do not repeat these mistakes:\n${feedbackFor(rejected)}` : ''
+    try {
+      for (const r of rawItems((await generateStructuredJson(prompt(need, avoid), opts) as Record<string, unknown>)?.items)) {
+        const c = checkItem(r, { requireCalc: true })
+        if (!c.problems.length && good.length < 4) good.push(c.item)
+      }
+    } catch (err) {
+      if (good.length < 3) throw err
+    }
+  }
+  if (good.length < 3) throw new Error('The AI could not write mastery questions that pass the checks')
+  return good.slice(0, 4)
 }
 
 export { descendants }

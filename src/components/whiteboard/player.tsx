@@ -881,7 +881,7 @@ export function WhiteboardPlayer({
                     )}>
                       {done ? <Check className="h-3.5 w-3.5" strokeWidth={2.25} /> : k + 1}
                     </span>
-                    <span className={cx('min-w-0 flex-1 truncate text-[15px]', current ? 'font-medium text-ink' : open ? 'text-ink-2' : 'text-faint')}>{c.title}</span>
+                    <span className={cx('min-w-0 flex-1 truncate text-[15px]', current ? 'font-medium text-ink' : open ? 'text-ink-2' : 'text-faint')}><RichText text={c.title} /></span>
                     {!open && <Lock className="h-3.5 w-3.5 flex-shrink-0 text-faint" strokeWidth={1.75} aria-label="Not reached yet" />}
                     {c.ms ? <span className="tnum flex-shrink-0 text-[12px] text-muted">{formatDuration(c.ms)}</span> : null}
                   </button>

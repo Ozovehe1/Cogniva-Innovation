@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { ArrowRight, BookOpen, Check, Lock, Plus } from 'lucide-react'
+import { RichText } from '@/components/rich-text'
 import { getSessionProfile } from '@/lib/auth'
 import { loadPathView, openingLines, formatDue } from '@/lib/path-view'
 import { VoiceWarm } from '@/components/voice-warm'
@@ -57,7 +58,7 @@ export default async function LearnPage() {
                           </Badge>
                           {t.due_on && t.status !== 'mastered' && <span className="tnum text-[12px] text-faint">by {formatDue(t.due_on)}</span>}
                         </div>
-                        <h3 className="mt-2 font-display text-[21px] leading-snug text-ink">{t.title}</h3>
+                        <h3 className="mt-2 font-display text-[21px] leading-snug text-ink"><RichText text={t.title} /></h3>
                         {t.summary && <p className="mt-1 text-sm leading-relaxed text-muted">{t.summary}</p>}
                         {t.status !== 'locked' && (
                           <div className="mt-4 flex flex-wrap items-center gap-3">

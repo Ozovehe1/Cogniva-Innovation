@@ -52,6 +52,15 @@
 * { box-sizing: border-box; }
 
 html { -webkit-text-size-adjust: 100%; }
+/* Phones: anything scrolled into view (route changes, anchors) lands below the sticky top bar. */
+@media (max-width: 767px) { html { scroll-padding-top: calc(64px + env(safe-area-inset-top)); } }
+
+/* Shared rich text (rich-text.tsx): long words and maths never push past a phone's width. */
+.rt { overflow-wrap: anywhere; }
+.rt-math .katex { font-size: 1.04em; white-space: normal; }
+.rt-math .katex .base { margin-right: 0.08em; }
+.rt-display { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 0.15em 0; }
+.rt-plain { font-variant-numeric: tabular-nums; }
 
 body {
   background: var(--color-canvas);

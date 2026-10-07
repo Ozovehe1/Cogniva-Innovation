@@ -2,6 +2,8 @@
 import React, { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import katex from 'katex'
+import { repairTex, texToPlain, validateTex } from '@/lib/math-text'
+import { RichText } from '../rich-text'
 import { BOARD_H, type Num, type Shape, type Vars } from '@/lib/lesson-schema'
 import {
   INK_HEX,
@@ -53,18 +55,23 @@ export function texTimes(tex: string): string {
 }
 
 export function renderTex(tex: string, display = false): string {
-  tex = texTimes(tex)
+  // Repaired and validated first; maths KaTeX still cannot parse is shown as plain Unicode, never as raw LaTeX.
+  const fixed = repairTex(texTimes(tex))
+  if (!validateTex(fixed)) return escapeHtml(texToPlain(fixed))
   try {
-    return katex.renderToString(display ? `\\displaystyle ${tex}` : tex, { throwOnError: false, displayMode: false, output: 'html', strict: 'ignore' })
+    return katex.renderToString(display ? `\\displaystyle ${fixed}` : fixed, { throwOnError: false, displayMode: false, output: 'html', strict: 'ignore' })
   } catch {
-    return tex
+    return escapeHtml(texToPlain(fixed))
   }
 }
+
+function escapeHtml(s: string) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!) }
 
 function Content({ kind, content }: { kind: TextEl['kind']; content: string }) {
   const html = useMemo(() => (kind === 'math' ? renderTex(content, true) : null), [kind, content])
   if (html !== null) return <span className="wb-math" dangerouslySetInnerHTML={{ __html: html }} />
-  return <>{content}</>
+  // Notes may carry inline maths ($...$ or bare LaTeX): the shared renderer.
+  return <RichText text={content} />
 }
 
 /** Text in the handwriting font when it can be drawn with it, otherwise the regular rendering. */

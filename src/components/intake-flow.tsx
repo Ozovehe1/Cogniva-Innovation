@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { fill, isMinor, reflect, visibleItems, type Answer, type Answers, type IntakeItem } from '@/lib/intake'
 import { detectDistress } from '@/lib/safety'
-import { RichText } from './whiteboard/check-card'
+import { RichText } from './rich-text'
 import { SafetyPause } from './safety-pause'
 import { Alert, Spinner, buttonClass, cx, inputClass, textareaClass } from './ui'
 
@@ -271,17 +271,17 @@ export function IntakeFlow({
         {phase === 'result' && diag && (
           <section>
             <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">Your starting point</p>
-            <h1 className="mt-3 font-display text-[30px] leading-[1.12] text-ink sm:text-[38px]">{diag.goal}</h1>
+            <h1 className="mt-3 font-display text-[30px] leading-[1.12] text-ink sm:text-[38px]"><RichText text={diag.goal} /></h1>
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
               <div className="rounded-[14px] border border-line bg-surface p-5">
                 <h2 className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">What you know now</h2>
                 {diag.known?.length ? (
-                  <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{diag.known.map(k => <li key={k} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} />{k}</li>)}</ul>
+                  <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{diag.known.map(k => <li key={k} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
                 ) : <p className="mt-3 text-[15px] leading-relaxed text-muted">We’ll build the foundations together, from the first step.</p>}
               </div>
               <div className="rounded-[14px] border border-accent-line bg-accent-soft p-5">
                 <h2 className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">What’s next</h2>
-                <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{(diag.next ?? []).map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} />{k}</li>)}</ul>
+                <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{(diag.next ?? []).map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
               </div>
             </div>
             <p className="mt-5 text-[14px] leading-relaxed text-muted">This is a starting point, not a label. It updates as you learn, and a quick re-check runs if something isn’t sticking.</p>
@@ -507,7 +507,7 @@ function DiagQuestion({ view, busy, error, onAnswer }: { view: DiagView; busy: b
   return (
     <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease }} className="flex flex-1 flex-col">
       <div className="mb-5 flex items-center justify-between text-[13px] text-muted">
-        <span className="truncate pr-3">{it.topic}</span>
+        <span className="min-w-0 truncate pr-3"><RichText text={it.topic} /></span>
         <span className="tnum flex-shrink-0">Question {it.number}</span>
       </div>
       <h1 className="font-display text-[24px] leading-[1.25] text-ink sm:text-[28px]"><RichText text={it.q} /></h1>

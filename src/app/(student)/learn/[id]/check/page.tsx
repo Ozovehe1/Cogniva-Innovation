@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import { getSessionProfile } from '@/lib/auth'
 import { Eyebrow } from '@/components/ui'
 import { MasteryCheck } from '@/components/mastery-check'
+import { RichText } from '@/components/rich-text'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Mastery check · GeniusMap' }
@@ -23,7 +24,7 @@ export default async function CheckPage({ params, searchParams }: { params: Prom
         <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />Back to the lesson
       </Link>
       <Eyebrow className="mb-2">{recheck ? 'Checking the basics' : 'Mastery check'}</Eyebrow>
-      <h1 className="font-display text-[28px] leading-[1.1] text-ink md:text-[34px]">{topic.title}</h1>
+      <h1 className="font-display text-[28px] leading-[1.1] text-ink md:text-[34px]"><RichText text={topic.title} /></h1>
       <MasteryCheck topicId={topic.id} lessonId={id} mastered={topic.status === 'mastered'} recheck={recheck === '1'} />
     </div>
   )

@@ -5,6 +5,8 @@ import { GeminiQuotaError } from '@/lib/gemini'
 import { learnerForPath, loadLearner, masteryItems, type PathRow, type TopicRow } from '@/lib/learner'
 import { masterTopic, prefetchNextLesson, recheckItems, reopenPrerequisite } from '@/lib/path'
 import { selfOrigin } from '@/lib/lesson-drafting'
+import { displayItem, storedItemProblems } from '@/lib/question-quality'
+import { normalizeMathText } from '@/lib/math-text'
 
 export const maxDuration = 120
 
@@ -12,11 +14,13 @@ export const maxDuration = 120
 const PASS = 0.75
 
 function publicQuiz(t: TopicRow, path: PathRow) {
-  const items = (t.mastery.items ?? []).map((it, i) => ({ i, q: it.q, options: it.options }))
+  // Stored questions are normalised on read too (older ones may hold bare LaTeX).
+  const items = (t.mastery.items ?? []).map(displayItem).map((it, i) => ({ i, q: it.q, options: it.options }))
   const recheck = (t.mastery.recheck ?? []).map((r, i) => {
     const n = path.graph.nodes.find(x => x.id === r.node)
-    const it = n?.items[r.item]
-    return it ? { i, topic: n!.title, q: it.q, options: it.options } : null
+    const raw = n?.items[r.item]
+    const it = raw ? displayItem(raw) : null
+    return it ? { i, topic: normalizeMathText(n!.title), q: it.q, options: it.options } : null
   }).filter(Boolean)
   return { topicId: t.id, title: t.title, status: t.status, attempts: t.mastery_attempts, wrongStreak: t.wrong_streak, items, recheck }
 }
@@ -58,7 +62,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const answers = Array.isArray(body.answers) ? body.answers.map(a => (typeof a === 'number' ? a : null)) : []
 
   if (body.action === 'start') {
-    if (!topic.mastery.items?.length) {
+    // A stored, unanswered check written before the quality gate is rewritten when its options are too close to tell apart.
+    const stale = (topic.mastery.items ?? []).some(it => storedItemProblems(it).length > 0)
+    if (!topic.mastery.items?.length || stale) {
       const learner = await loadLearner(db, profile.id)
       if (!learner) return NextResponse.json({ error: 'Not found' }, { status: 404 })
       try {
@@ -76,7 +82,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (body.action === 'submit') {
     const items = topic.mastery.items ?? []
     if (!items.length) return NextResponse.json({ error: 'Start the check first' }, { status: 400 })
-    const results = items.map((it, i) => ({ correct: answers[i] === it.answer, answer: it.options[it.answer], explain: it.explain ?? null }))
+    const results = items.map(displayItem).map((it, i) => ({ correct: answers[i] === it.answer, answer: it.options[it.answer], explain: it.explain ?? null }))
     const score = results.filter(x => x.correct).length / items.length
     if (score >= PASS) {
       const { unlocked } = await masterTopic(db, path, topic, score)
@@ -108,7 +114,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!rc.length) return NextResponse.json({ error: 'No re-check in progress' }, { status: 400 })
     const missed: string[] = []
     const results = rc.map((x, i) => {
-      const it = path.graph.nodes.find(n => n.id === x.node)?.items[x.item]
+      const found = path.graph.nodes.find(n => n.id === x.node)?.items[x.item]
+      const it = found ? displayItem(found) : undefined
       const correct = !!it && answers[i] === it.answer
       if (!correct) missed.push(x.node)
       return { correct, answer: it ? it.options[it.answer] : null, explain: it?.explain ?? null }

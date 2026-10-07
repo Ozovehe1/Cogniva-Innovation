@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { ArrowRight, Check, Circle, Lock, Plus, RotateCcw } from 'lucide-react'
+import { RichText } from '@/components/rich-text'
 import { getSessionProfile } from '@/lib/auth'
 import { loadPathView, openingLines, PURPOSE_LABEL, formatDue } from '@/lib/path-view'
 import { learnerForPath } from '@/lib/learner'
@@ -86,7 +87,7 @@ export default async function Dashboard() {
       {next && (
         <section className="mb-6 rounded-[14px] border border-accent-line bg-accent-soft p-5 md:p-6">
           <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{next.status === 'review' ? 'Back to basics' : 'Up next'}</p>
-          <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink">{next.title}</h2>
+          <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink"><RichText text={next.title} /></h2>
           {next.summary && <p className="mt-1.5 text-[15px] leading-relaxed text-ink-2">{next.summary}</p>}
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {next.lesson_id ? (
@@ -117,7 +118,7 @@ export default async function Dashboard() {
                         <span className={cx('flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border', t.status === 'mastered' ? 'border-accent bg-accent text-white' : t.status === 'locked' ? 'border-line text-faint' : 'border-accent text-accent')}>
                           {t.status === 'mastered' ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : t.status === 'locked' ? <Lock className="h-3 w-3" strokeWidth={2} /> : t.status === 'review' ? <RotateCcw className="h-3 w-3" strokeWidth={2} /> : <Circle className="h-2.5 w-2.5 fill-current" />}
                         </span>
-                        <span className={cx('min-w-0 flex-1 text-[15px] leading-snug', open ? 'text-ink' : 'text-muted')}>{t.title}</span>
+                        <span className={cx('min-w-0 flex-1 text-[15px] leading-snug', open ? 'text-ink' : 'text-muted')}><RichText text={t.title} /></span>
                         <span className="tnum flex-shrink-0 text-[12px] text-muted">{state}</span>
                       </>
                     )
@@ -139,7 +140,7 @@ export default async function Dashboard() {
           <section>
             <SectionTitle>What you know now</SectionTitle>
             <Card>
-              {knownNow.length ? <ul className="space-y-2 text-[15px] text-ink">{knownNow.map(k => <li key={k} className="flex gap-2"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} />{title(k)}</li>)}</ul>
+              {knownNow.length ? <ul className="space-y-2 text-[15px] text-ink">{knownNow.map(k => <li key={k} className="flex gap-2"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={title(k)} /></li>)}</ul>
                 : <p className="text-[15px] text-muted">We’re building this from the first step.</p>}
             </Card>
           </section>

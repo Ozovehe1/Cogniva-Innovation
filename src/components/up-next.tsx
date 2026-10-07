@@ -1,5 +1,6 @@
 'use client'
 import React, { useEffect, useState } from 'react'
+import { RichText } from './rich-text'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
@@ -45,7 +46,7 @@ export function UpNextCard({ href, eyebrow = 'Up next', title, note, seconds = 6
       <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:p-5">
         <div className="min-w-0 flex-1">
           <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{eyebrow}</p>
-          <p className="mt-0.5 font-display text-[20px] leading-snug text-ink">{title}</p>
+          <p className="mt-0.5 font-display text-[20px] leading-snug text-ink"><RichText text={title} /></p>
           {note && <p className="mt-0.5 text-[14px] text-ink-2">{note}</p>}
           {!cancelled && <p className="tnum mt-1 text-[13px] text-muted">Starting in {left} s</p>}
         </div>

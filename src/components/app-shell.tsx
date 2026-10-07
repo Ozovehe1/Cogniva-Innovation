@@ -52,6 +52,25 @@ export function AppShell({
   const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => { setMenuOpen(false) }, [pathname])
+  // A forward navigation can leave the new page's heading under the sticky top bar (the router only
+  // scrolls when the page top is outside the viewport, and the bar covers its first 56 px). Bring it out.
+  const popped = React.useRef(false)
+  useEffect(() => {
+    const onPop = () => { popped.current = true }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  useEffect(() => {
+    // Back/forward keeps the restored scroll position.
+    if (popped.current) { popped.current = false; return }
+    const id = requestAnimationFrame(() => {
+      const bar = document.querySelector<HTMLElement>('[data-app-topbar]')
+      const main = document.getElementById('main')
+      if (!bar || !main || getComputedStyle(bar).display === 'none') return
+      if (window.scrollY > 0 && main.getBoundingClientRect().top < bar.getBoundingClientRect().bottom - 1) window.scrollTo({ top: 0 })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [pathname])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -118,7 +137,7 @@ export function AppShell({
       {/* ── Content ── */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <header className="pt-safe sticky top-0 z-30 flex-shrink-0 border-b border-line bg-canvas/95 backdrop-blur-sm md:hidden">
+        <header data-app-topbar className="pt-safe sticky top-0 z-30 flex-shrink-0 border-b border-line bg-canvas/95 backdrop-blur-sm md:hidden">
           <div className="flex h-14 items-center justify-between px-4">
             <Logo href={homeHref} />
             <button

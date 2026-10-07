@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { UpNextCard } from './up-next'
 import { ArrowRight, Check, X } from 'lucide-react'
-import { RichText } from './whiteboard/check-card'
+import { RichText } from './rich-text'
 import { Alert, Spinner, buttonClass, cx } from './ui'
 
 interface Q { i: number; q: string; options: string[]; topic?: string }
@@ -66,14 +66,14 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
         <ol className="mt-6 space-y-6">
           {list.map((q, qi) => (
             <li key={qi}>
-              {q.topic && <p className="mb-1 text-[12px] font-medium uppercase tracking-[0.06em] text-muted">{q.topic}</p>}
+              {q.topic && <p className="mb-1 text-[12px] font-medium uppercase tracking-[0.06em] text-muted"><RichText text={q.topic} /></p>}
               <p className="text-[17px] leading-snug text-ink"><span className="tnum mr-2 text-faint">{qi + 1}.</span><RichText text={q.q} /></p>
               <div className="mt-3 grid gap-2">
                 {q.options.map((o, oi) => (
                   <button key={oi} type="button" onClick={() => setAnswers(a => a.map((x, k) => (k === qi ? oi : x)))}
                     className={cx('flex min-h-11 items-center gap-3 rounded-[12px] border bg-surface px-4 py-2.5 text-left text-[15px] text-ink', answers[qi] === oi ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-line-strong')}>
                     <span className={cx('flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border text-[12px]', answers[qi] === oi ? 'border-accent bg-accent text-white' : 'border-line-strong text-muted')}>{String.fromCharCode(65 + oi)}</span>
-                    <RichText text={o} />
+                    <span className="min-w-0"><RichText text={o} /></span>
                   </button>
                 ))}
               </div>
@@ -94,7 +94,7 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
         <>
         <div className="rounded-[14px] border border-accent-line bg-accent-soft p-5">
           <h2 className="font-display text-[24px] text-ink">Mastered.</h2>
-          <p className="mt-1 text-[15px] text-ink-2">{Math.round((r.score ?? 0) * 4)} of 4. {r.next ? `Next up: ${r.next.title}.` : 'That was the last topic on your path.'}</p>
+          <p className="mt-1 text-[15px] text-ink-2">{Math.round((r.score ?? 0) * 4)} of 4. {r.next ? <>Next up: <RichText text={r.next.title} />.</> : 'That was the last topic on your path.'}</p>
         </div>
         {r.next?.lesson_id && <UpNextCard href={`/learn/${r.next.lesson_id}?autoplay=1`} title={r.next.title} note="Next lesson on your path" />}
         </>

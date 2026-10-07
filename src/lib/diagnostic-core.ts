@@ -14,6 +14,7 @@
  *
  * Pure functions: safe on the server and in the browser. Answers live server-side only.
  */
+import { normalizeMathText } from './math-text'
 
 export interface DiagItem { q: string; options: string[]; answer: number; explain?: string }
 export interface DiagNode {
@@ -226,5 +227,6 @@ export function publicItem(g: DiagGraph, st: DiagState) {
   const n = g.nodes.find(x => x.id === st.current!.node)
   const it = n?.items[st.current.item]
   if (!n || !it) return null
-  return { node: n.id, topic: n.title, item: st.current.item, q: it.q, options: it.options, number: st.asked.length + 1 }
+  // Normalised on read: older stored items may hold bare or broken LaTeX.
+  return { node: n.id, topic: normalizeMathText(n.title), item: st.current.item, q: normalizeMathText(it.q), options: it.options.map(o => normalizeMathText(o)), number: st.asked.length + 1 }
 }

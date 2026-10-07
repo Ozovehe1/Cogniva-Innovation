@@ -7,6 +7,7 @@ import { prefetchNextLesson } from '@/lib/path'
 import { ArrowLeft } from 'lucide-react'
 import { getSessionProfile } from '@/lib/auth'
 import { validateScript } from '@/lib/lesson-schema'
+import { RichText } from '@/components/rich-text'
 import { LESSON_MAX_STEPS, estimateMs, formatDuration, normalizeChapters } from '@/lib/lesson-sections'
 import { Eyebrow } from '@/components/ui'
 import { LessonSession } from '@/components/lesson-session'
@@ -89,7 +90,7 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
         Your lessons
       </Link>
       <Eyebrow className="mb-2">{l.subject}</Eyebrow>
-      <h1 className="font-display text-[28px] leading-[1.1] text-ink md:text-[36px]">{l.title}</h1>
+      <h1 className="font-display text-[28px] leading-[1.1] text-ink md:text-[36px]"><RichText text={l.title} /></h1>
       <p className="tnum mb-5 mt-2 text-[13px] text-muted md:mb-6">
         {steps.length ? <>About {formatDuration(totalMs)}{chapters.length > 1 ? ` · ${chapters.length} sections` : ''}</> : own ? 'Written for you by your AI tutor' : null}
       </p>
