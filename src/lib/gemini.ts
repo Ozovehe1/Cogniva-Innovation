@@ -1,4 +1,6 @@
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI, ThinkingLevel } from '@google/genai'
+
+const GEMINI_MODEL = 'gemini-3.8-flash'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 
@@ -31,10 +33,10 @@ Intelligence type keys: linguistic, logicalMathematical, spatial, musical, bodil
 Return ONLY valid JSON, no markdown, no explanation.`
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: GEMINI_MODEL,
     contents: prompt,
     config: {
-      thinkingConfig: { thinkingBudget: 128 },
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
     },
   })
 
@@ -58,10 +60,10 @@ Return JSON with these keys:
 Return ONLY valid JSON, no markdown.`
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: GEMINI_MODEL,
     contents: prompt,
     config: {
-      thinkingConfig: { thinkingBudget: 128 },
+      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
     },
   })
 
