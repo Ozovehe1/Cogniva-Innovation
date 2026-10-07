@@ -2,9 +2,9 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
+import { ArrowLeft, ArrowRight, GraduationCap, Mail, Presentation } from 'lucide-react'
+import { Alert, Spinner, buttonClass, cx, inputClass, labelClass } from '@/components/ui'
 
-const inputClass = "w-full px-4 py-3 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition"
-const inputStyle = { background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }
 
 export default function SignupPage() {
   const [role, setRole] = useState<'student' | 'tutor' | null>(null)
@@ -61,16 +61,17 @@ export default function SignupPage() {
 
   if (confirmEmail) {
     return (
-      <div className="text-center">
-        <div className="w-14 h-14 rounded-2xl mx-auto mb-6 flex items-center justify-center text-2xl" style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.2)' }}>
-          ✉️
+      <div>
+        <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-full border border-accent-line bg-accent-soft text-accent">
+          <Mail className="h-5 w-5" strokeWidth={1.75} />
         </div>
-        <h1 className="text-2xl font-bold text-white mb-2">Check your email</h1>
-        <p className="text-zinc-500 text-sm mb-2">We sent a confirmation link to</p>
-        <p className="text-violet-400 font-medium text-sm mb-6">{email}</p>
-        <p className="text-zinc-600 text-xs">Click the link in the email to activate your account, then sign in.</p>
-        <Link href="/login" className="mt-8 inline-block text-sm text-violet-400 hover:text-violet-300 transition">
-          Go to Sign In →
+        <h1 className="font-display text-[34px] leading-tight text-ink">Check your email</h1>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted">
+          We sent a confirmation link to <span className="font-medium text-ink">{email}</span>. Open it to
+          activate your account, then sign in.
+        </p>
+        <Link href="/login" className={buttonClass('primary', 'lg', 'mt-8 w-full')}>
+          Go to sign in
         </Link>
       </div>
     )
@@ -80,43 +81,43 @@ export default function SignupPage() {
     return (
       <div>
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white mb-1">Join GeniusMap</h1>
-          <p className="text-zinc-500 text-sm">First, tell us how you&apos;ll use GeniusMap</p>
+          <p className="mb-2 text-[13px] font-medium text-muted">Step 1 of 2</p>
+          <h1 className="font-display text-[34px] leading-tight text-ink">Create your account</h1>
+          <p className="mt-2 text-[15px] text-muted">How will you use GeniusMap?</p>
         </div>
-        <div className="space-y-3 mb-6">
+        <div role="radiogroup" aria-label="Account type" className="mb-6 space-y-3">
           {([
-            { value: 'student', emoji: '🎓', title: "I'm a Student", desc: 'Discover my intelligence type and get a personalised learning path' },
-            { value: 'tutor', emoji: '👨‍🏫', title: "I'm a Tutor", desc: 'Guide students, view their genius profiles, and assign custom projects' },
-          ] as const).map(({ value, emoji, title, desc }) => (
-            <button key={value} onClick={() => setRole(value)} type="button"
-              className="w-full text-left p-4 rounded-xl transition"
-              style={{
-                background: role === value ? 'rgba(124,58,237,0.15)' : '#18181B',
-                border: `1px solid ${role === value ? 'rgba(124,58,237,0.5)' : 'rgba(255,255,255,0.08)'}`,
-              }}>
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">{emoji}</span>
-                <div>
-                  <p className={`font-semibold text-sm ${role === value ? 'text-violet-300' : 'text-white'}`}>{title}</p>
-                  <p className="text-xs text-zinc-500 mt-0.5">{desc}</p>
-                </div>
-                <div className="ml-auto">
-                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${role === value ? 'border-violet-500 bg-violet-500' : 'border-zinc-600'}`}>
-                    {role === value && <div className="w-2 h-2 rounded-full bg-white" />}
-                  </div>
-                </div>
-              </div>
-            </button>
-          ))}
+            { value: 'student', Icon: GraduationCap, title: 'I’m a student', desc: 'Take the assessment, see your profile and work on projects from your tutor.' },
+            { value: 'tutor', Icon: Presentation, title: 'I’m a tutor', desc: 'Connect with students, view their profiles, and create and grade projects.' },
+          ] as const).map(({ value, Icon, title, desc }) => {
+            const on = role === value
+            return (
+              <button key={value} onClick={() => setRole(value)} type="button" role="radio" aria-checked={on}
+                className={cx(
+                  'flex w-full items-start gap-4 rounded-[12px] border bg-surface p-4 text-left transition-colors duration-150',
+                  on ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-line-strong',
+                )}>
+                <span className={cx('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border', on ? 'border-accent-line bg-accent-soft text-accent' : 'border-line bg-sunken text-ink-2')}>
+                  <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] font-semibold text-ink">{title}</span>
+                  <span className="mt-1 block text-sm leading-relaxed text-muted">{desc}</span>
+                </span>
+                <span className={cx('mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2', on ? 'border-accent' : 'border-line-strong')}>
+                  {on && <span className="h-2.5 w-2.5 rounded-full bg-accent" />}
+                </span>
+              </button>
+            )
+          })}
         </div>
-        <button onClick={() => role && setStep('details')} disabled={!role} type="button"
-          className="w-full py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-40"
-          style={{ background: '#7C3AED' }}>
-          Continue →
+        <button onClick={() => role && setStep('details')} disabled={!role} type="button" className={buttonClass('primary', 'lg', 'w-full')}>
+          Continue
+          <ArrowRight className="h-4 w-4" strokeWidth={2} />
         </button>
-        <p className="text-center mt-4 text-sm text-zinc-500">
+        <p className="mt-8 border-t border-line pt-6 text-center text-sm text-muted">
           Already have an account?{' '}
-          <Link href="/login" className="text-violet-400 hover:text-violet-300 font-medium">Sign in</Link>
+          <Link href="/login" className="font-medium text-accent underline-offset-4 hover:underline">Sign in</Link>
         </p>
       </div>
     )
@@ -125,46 +126,37 @@ export default function SignupPage() {
   return (
     <div>
       <div className="mb-8">
-        <button onClick={() => setStep('role')} className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300 text-sm mb-4 transition" type="button">
-          ← Back
+        <button onClick={() => setStep('role')} type="button" className={buttonClass('ghost', 'sm', '-ml-3 mb-4')}>
+          <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
+          Back
         </button>
-        <h1 className="text-2xl font-bold text-white mb-1">Create your account</h1>
-        <p className="text-zinc-500 text-sm">
-          Joining as a <span className="text-violet-400 font-medium capitalize">{role}</span>
+        <p className="mb-2 text-[13px] font-medium text-muted">Step 2 of 2</p>
+        <h1 className="font-display text-[34px] leading-tight text-ink">Your details</h1>
+        <p className="mt-2 text-[15px] text-muted">
+          Joining as a <span className="font-medium capitalize text-ink">{role}</span>.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-5">
         <div>
-          <label className="block text-xs font-medium text-zinc-400 mb-1.5">Full Name</label>
-          <input name="fullName" type="text" required
-            className={inputClass} style={inputStyle} placeholder="Your full name" />
+          <label htmlFor="fullName" className={labelClass}>Full name</label>
+          <input id="fullName" name="fullName" type="text" required autoComplete="name"
+            className={inputClass} placeholder="Your full name" />
         </div>
         <div>
-          <label className="block text-xs font-medium text-zinc-400 mb-1.5">Email</label>
-          <input name="email" type="email" required
-            className={inputClass} style={inputStyle} placeholder="you@example.com"
+          <label htmlFor="email" className={labelClass}>Email</label>
+          <input id="email" name="email" type="email" required autoComplete="email" inputMode="email"
+            className={inputClass} placeholder="you@example.com"
             onChange={e => setEmail(e.target.value)} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-zinc-400 mb-1.5">Password</label>
-          <input name="password" type="password" required minLength={6}
-            className={inputClass} style={inputStyle} placeholder="Min. 6 characters" />
+          <label htmlFor="password" className={labelClass}>Password</label>
+          <input id="password" name="password" type="password" required minLength={6} autoComplete="new-password"
+            className={inputClass} placeholder="At least 6 characters" />
         </div>
-        {error && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
-            <span>⚠</span> {error}
-          </div>
-        )}
-        <button type="submit" disabled={pending}
-          className="w-full py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50"
-          style={{ background: '#7C3AED' }}>
-          {pending ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="w-4 h-4 rounded-full border-2 border-violet-300 border-t-white animate-spin" />
-              Creating account...
-            </span>
-          ) : 'Create Account'}
+        {error && <Alert tone="danger">{error}</Alert>}
+        <button type="submit" disabled={pending} className={buttonClass('primary', 'lg', 'w-full')}>
+          {pending ? (<><Spinner /> Creating account…</>) : 'Create account'}
         </button>
       </form>
     </div>
