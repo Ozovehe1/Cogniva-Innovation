@@ -25,7 +25,7 @@ import { EXTRA_PREFIX, HOOK_SECONDS, MAX_BEATS, MAX_EXTRA_BEATS, draftBeat, extr
 import { flattenSections, type Chapter } from './lesson-sections'
 import type { Step } from './lesson-schema'
 import { lengthReport } from './lesson-timing'
-import { pregenerateNarration } from './tts-server'
+import { pregenerateNarration, warmTts } from './tts-server'
 import { attachReadyClips, queueLessonClip } from './lesson-clip'
 
 const LOCK_MS = 295_000
@@ -223,7 +223,9 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
 
       if (lesson.draft_status === 'outlining') {
         // The plan and the opening beat are written at the same time, so playback can start
-        // as soon as the opening beat exists.
+        // as soon as the opening beat exists. The voice container (scales to zero, ~20-40 s cold
+        // start) is woken now so it is up by the time the opening lines need voicing.
+        warmTts()
         const hook = hookPlan(lite)
         const hookMeta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
         let planModel: string | null = null

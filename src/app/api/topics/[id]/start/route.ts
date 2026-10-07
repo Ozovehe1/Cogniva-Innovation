@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { loadLearner, type PathRow, type TopicRow } from '@/lib/learner'
 import { createTopicLesson } from '@/lib/path'
 import { runDraftWork, selfOrigin } from '@/lib/lesson-drafting'
+import { warmTts } from '@/lib/tts-server'
 
 export const maxDuration = 300
 
@@ -21,6 +22,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (topic.status === 'ready') await createAdminClient().from('path_topics').update({ status: 'learning' }).eq('id', topic.id)
     return NextResponse.json({ lessonId: topic.lesson_id })
   }
+  // Wake the narration voice now: the learner is about to open this lesson.
+  warmTts()
   if (topic.status === 'locked') return NextResponse.json({ error: 'Finish the topics before this one first.' }, { status: 400 })
   const { data: p } = await db.from('learning_paths').select('*').eq('id', topic.path_id).single()
   const learner = await loadLearner(db, profile.id)
