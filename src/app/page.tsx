@@ -1,22 +1,42 @@
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
-import { Logo, ScoreBars, buttonClass } from '@/components/ui'
+import { ScoreBars, buttonClass } from '@/components/ui'
+import { LessonIllustration, SiteFooter, SiteHeader, demoAvailable } from '@/components/site-chrome'
+
+const lessonFeatures = [
+  {
+    title: 'Written out, step by step',
+    desc: 'Each lesson plays on a whiteboard. Ideas are written one line at a time and equations change in place, so you can follow how one step becomes the next.',
+  },
+  {
+    title: 'Diagrams that move',
+    desc: 'Graphs, shapes and points are drawn as they are explained. Where a still drawing is not enough, tutors can add a short rendered animation.',
+  },
+  {
+    title: 'Spoken, with a transcript',
+    desc: 'The explanation is read aloud using your device’s voice, and every line is kept in a transcript you can scroll back through. Turn the voice off at any time.',
+  },
+  {
+    title: 'Checks that re-explain',
+    desc: 'Short questions stop the lesson to see whether an idea landed. If it did not, the tutor explains it again in a different way rather than repeating itself.',
+  },
+]
 
 const steps = [
   {
     n: '01',
-    title: 'Answer 24 short statements',
-    desc: 'Each one describes an everyday behaviour. You say how much it sounds like you, from “not me” to “exactly me”. There are no right answers.',
+    title: 'Map how you like to learn',
+    desc: 'Answer 24 short statements about everyday behaviour. You get a profile across Howard Gardner’s eight intelligences: a picture of your learning preferences, not a verdict on ability.',
   },
   {
     n: '02',
-    title: 'Read your profile',
-    desc: 'You get a score for each of the eight intelligences, a plain-language summary of how you tend to learn, study suggestions and career directions to explore.',
+    title: 'Learn with Live Tutor',
+    desc: 'Work through lessons your tutors have written and approved, on the whiteboard, at your own pace. Pause, replay any step, and ask for another explanation when you need one.',
   },
   {
     n: '03',
-    title: 'Work on matched projects',
-    desc: 'Connect with your tutor using their code. They see your profile, assign projects that fit it, and review your work. Approved projects move you up through the levels.',
+    title: 'Put it to work in projects',
+    desc: 'Connect with your tutor using their code. They see your profile, set projects that suit how you work, and review what you submit. Approved projects move you up through the levels.',
   },
 ]
 
@@ -43,89 +63,102 @@ const exampleScores = {
 export default function HomePage() {
   return (
     <div className="min-h-dvh bg-canvas text-ink">
-      {/* Nav */}
-      <header className="pt-safe sticky top-0 z-40 border-b border-line/80 bg-canvas/90 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between px-5 md:px-8">
-          <Logo />
-          <nav className="flex items-center gap-1 sm:gap-2" aria-label="Account">
-            <Link href="/login" className={buttonClass('ghost', 'md')}>Sign in</Link>
-            <Link href="/signup" className={buttonClass('primary', 'md')}>Get started</Link>
-          </nav>
-        </div>
-      </header>
+      <SiteHeader />
 
       <main>
         {/* Hero */}
-        <section className="mx-auto grid max-w-[1120px] gap-12 px-5 pb-16 pt-12 md:px-8 md:pb-24 md:pt-20 lg:grid-cols-[1.15fr_1fr] lg:items-center lg:gap-16">
+        <section className="mx-auto grid max-w-[1120px] gap-12 px-5 pb-16 pt-12 md:px-8 md:pb-24 md:pt-20 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:gap-16">
           <div>
-            <p className="mb-5 text-[13px] font-medium uppercase tracking-[0.08em] text-accent">For students and tutors</p>
+            <p className="mb-5 text-[13px] font-medium uppercase tracking-[0.08em] text-accent">Live Tutor · For students and tutors</p>
             <h1 className="font-display text-[44px] leading-[1.04] text-ink sm:text-[56px] md:text-[68px]">
               Learn the way your mind <em className="italic text-accent">already</em> works.
             </h1>
             <p className="mt-6 max-w-[34rem] text-[17px] leading-relaxed text-ink-2 md:text-lg">
-              GeniusMap helps you understand where your strengths lie across Howard Gardner&apos;s eight
-              intelligences, then gives your tutor what they need to set work that fits you.
+              GeniusMap teaches on a live whiteboard. Each idea is written out step by step, drawn as it is
+              explained and read aloud, with quick checks that explain it another way when it hasn&apos;t
+              landed. Tutors write and approve every lesson.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link href="/signup" className={buttonClass('primary', 'lg')}>
-                Take the assessment
+                Get started
                 <ArrowRight className="h-4 w-4" strokeWidth={2} />
               </Link>
-              <Link href="/login" className={buttonClass('secondary', 'lg')}>I already have an account</Link>
+              {demoAvailable ? (
+                <Link href="/learn/demo" className={buttonClass('secondary', 'lg')}>Watch a sample lesson</Link>
+              ) : (
+                <Link href="/login" className={buttonClass('secondary', 'lg')}>I already have an account</Link>
+              )}
             </div>
-            <p className="mt-5 text-sm text-muted">Free to use. Takes a few minutes.</p>
+            <p className="mt-5 text-sm text-muted">Free to use. Works on your phone.</p>
           </div>
 
-          {/* Example profile */}
-          <figure className="relative">
-            <div className="rounded-[18px] border border-line bg-surface p-6 shadow-[var(--shadow-raised)] md:p-8">
-              <div className="mb-6 flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Strongest area</p>
-                  <p className="mt-1.5 font-display text-[28px] leading-tight">Spatial</p>
-                </div>
-                <span className="rounded-full border border-line bg-sunken px-2.5 py-1 text-[12px] text-muted">Example</span>
-              </div>
-              <ScoreBars scores={exampleScores} compact />
-              <div className="mt-6 border-t border-line pt-5">
-                <p className="font-display text-[17px] italic leading-snug text-ink-2">
-                  “You understand things best when you can see how the parts fit together.”
-                </p>
-              </div>
-            </div>
-            <figcaption className="mt-3 text-center text-[13px] text-faint">An illustrative profile, not real student data.</figcaption>
+          <figure>
+            <LessonIllustration />
+            <figcaption className="mt-3 text-center text-[13px] text-faint">An illustration of a lesson in progress.</figcaption>
           </figure>
         </section>
 
-        {/* How it works */}
+        {/* Live Tutor */}
         <section className="border-y border-line bg-surface">
           <div className="mx-auto max-w-[1120px] px-5 py-16 md:px-8 md:py-24">
             <div className="max-w-2xl">
-              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">How it works</p>
-              <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">Three steps, from self-knowledge to real work.</h2>
+              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">Live Tutor</p>
+              <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">A lesson you can watch, hear and question.</h2>
+              <p className="mt-5 text-[15px] leading-relaxed text-ink-2">
+                Live Tutor is built for understanding rather than memorising. It works for any subject a tutor can
+                explain at a board, from calculus to chemistry, and it is not tied to any one exam or curriculum.
+              </p>
             </div>
-            <ol className="mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
-              {steps.map(({ n, title, desc }) => (
-                <li key={n} className="border-t border-ink pt-5">
-                  <p className="tnum font-display text-[15px] text-accent">{n}</p>
-                  <h3 className="mt-3 text-lg font-semibold">{title}</h3>
+            <ul className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2">
+              {lessonFeatures.map(({ title, desc }) => (
+                <li key={title} className="border-t border-ink pt-5">
+                  <h3 className="text-lg font-semibold">{title}</h3>
                   <p className="mt-2 text-[15px] leading-relaxed text-muted">{desc}</p>
                 </li>
               ))}
-            </ol>
+            </ul>
           </div>
+        </section>
+
+        {/* How it works */}
+        <section className="mx-auto max-w-[1120px] px-5 py-16 md:px-8 md:py-24">
+          <div className="max-w-2xl">
+            <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">How it works</p>
+            <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">From how you think, to what you understand, to what you make.</h2>
+          </div>
+          <ol className="mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
+            {steps.map(({ n, title, desc }) => (
+              <li key={n} className="border-t border-ink pt-5">
+                <p className="tnum font-display text-[15px] text-accent">{n}</p>
+                <h3 className="mt-3 text-lg font-semibold">{title}</h3>
+                <p className="mt-2 text-[15px] leading-relaxed text-muted">{desc}</p>
+              </li>
+            ))}
+          </ol>
         </section>
 
         {/* The eight intelligences */}
         <section className="mx-auto max-w-[1120px] px-5 py-16 md:px-8 md:py-24">
           <div className="grid gap-10 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
             <div>
-              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">The framework</p>
-              <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">Eight ways of being smart.</h2>
+              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">Your profile</p>
+              <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">A lens on how you learn, not a label.</h2>
               <p className="mt-5 text-[15px] leading-relaxed text-ink-2">
-                The model comes from Howard Gardner&apos;s <em>Frames of Mind</em> (1983). We use it as a lens for
-                reflection and conversation with your tutor, not as a test of ability or a fixed label.
+                The model comes from Howard Gardner&apos;s <em>Frames of Mind</em> (1983). We treat your profile as a
+                set of learning preferences, not a diagnosis or a measure of ability. When you ask Live Tutor for
+                another explanation, it leans on your profile to choose the angle, and your tutor uses it when
+                choosing which projects to set you.
               </p>
+              <div className="mt-8 rounded-[14px] border border-line bg-surface p-5">
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Strongest preference</p>
+                    <p className="mt-1 font-display text-[24px] leading-tight">Spatial</p>
+                  </div>
+                  <span className="rounded-full border border-line bg-sunken px-2.5 py-1 text-[12px] text-muted">Example</span>
+                </div>
+                <ScoreBars scores={exampleScores} compact />
+              </div>
             </div>
             <dl className="grid grid-cols-1 border-t border-line sm:grid-cols-2">
               {intelligences.map(({ label, desc }) => (
@@ -144,8 +177,10 @@ export default function HomePage() {
             <div>
               <h2 className="font-display text-[30px] leading-tight md:text-[40px]">Teaching a group?</h2>
               <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-white/80">
-                Sign up as a tutor to get a short code your students use to connect. You&apos;ll see each
-                student&apos;s profile, create and assign projects, and grade submitted work from one place.
+                Set out your objectives and get a drafted lesson to edit, preview it on the whiteboard, and
+                approve it before any student sees it. Describe an animation and review the
+                rendered clip before it goes in. Your students connect with a short code, and you see their
+                profiles, assign projects and grade work from one place.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row md:justify-end">
@@ -161,12 +196,7 @@ export default function HomePage() {
         </section>
       </main>
 
-      <footer className="border-t border-line">
-        <div className="pb-safe mx-auto flex max-w-[1120px] flex-col gap-4 px-5 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between md:px-8">
-          <Logo />
-          <p>© {new Date().getFullYear()} GeniusMap</p>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

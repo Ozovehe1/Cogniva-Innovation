@@ -25,7 +25,11 @@ export interface Frame { x: number; y: number; w: number; h: number }
 interface StepBase {
   /** Optional element id so later steps can highlight, transform or clear it. */
   id?: string
-  /** Spoken-style caption shown under the board while this step plays. */
+  /**
+   * Narration for this step: spoken aloud by the tutor's voice and added to the
+   * lesson transcript. Plain spoken English; inline math may be written as
+   * $...$ (rendered with KaTeX in the transcript, read out in words).
+   */
   say?: string
 }
 
@@ -570,4 +574,6 @@ Return a JSON object {"steps": Step[]}. Each Step is one of:
 - {"type":"manim_clip","url","caption"?} — only reuse URLs you were given; never invent one.
 Colors: ink (default), accent (deep green, for the key idea), clay (warm red, for contrast/mistakes), navy, amber, muted.
 Sizes: sm 22, md 30, lg 40, xl 54 units tall. Roughly 0.5 x size units per character of width.
-Ids: letters, digits, - or _, start with a letter, unique on the board.`
+Ids: letters, digits, - or _, start with a letter, unique on the board.
+"say" is the tutor's narration: it is spoken aloud and written into the transcript. Write it as natural speech, one or two sentences, saying what the student should notice; do not just read the board out. Inline math in "say" goes in $...$ (e.g. "the slope is $f'(1) = 2$"); it is read out in words. A write or math step without "say" is read out as written.
+Phones: the diagram (drawings plus text that touches them) is zoomed to the screen width and all other text reflows below it in reading order (top-to-bottom, then left-to-right). So text on a drawing must be a short label (under 24 characters), and notes should each make sense on their own line.`

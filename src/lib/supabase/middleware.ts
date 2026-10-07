@@ -25,6 +25,7 @@ export async function updateSession(request: NextRequest) {
     path === '/' ||
     path.startsWith('/login') ||
     path.startsWith('/signup') ||
+    path === '/about' ||
     path === '/learn/demo' ||
     // Called by the Modal render service; authenticated with X-Render-Token instead of a session.
     path === '/api/manim/callback'

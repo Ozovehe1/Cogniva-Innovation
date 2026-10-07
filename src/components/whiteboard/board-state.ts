@@ -261,3 +261,109 @@ export function isBlocking(step: Step | undefined): step is CheckStep {
 }
 
 export const BOARD = { W: BOARD_W, H: BOARD_H }
+
+/* ───────────── Text size estimates ───────────── */
+
+// Average glyph width as a fraction of font size, measured on the board (Newsreader / Inter).
+const CHAR_W = { serif: 0.44, sans: 0.5 }
+
+export function visibleTexLength(tex: string) {
+  // A fraction is as wide as its wider part.
+  let t = tex
+  for (let i = 0; i < 6; i++) {
+    const next = t.replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, (_, a: string, b: string) => (a.length >= b.length ? a : b))
+    if (next === t) break
+    t = next
+  }
+  return t
+    .replace(/\\(text|mathrm|mathbf|operatorname)\{([^}]*)\}/g, '$2')
+    .replace(/\\(frac|dfrac|tfrac)/g, '')
+    .replace(/\\(left|right|displaystyle|quad|qquad|,|;|!)/g, ' ')
+    .replace(/\\[a-zA-Z]+/g, 'x')
+    .replace(/[{}^_]/g, '')
+    .replace(/\s+/g, '').length
+}
+
+/** Rough box of a text or math element in board units. */
+export function estimateTextBox(el: TextEl): Box {
+  const size = SIZE_PX[el.size]
+  let w: number
+  let h: number
+  if (el.kind === 'math') {
+    const fs = size * 0.86 * 1.21
+    w = visibleTexLength(el.content) * fs * 0.5
+    const tall = /\\(frac|dfrac|sum|int|lim|begin)/.test(el.content)
+    const rows = (el.content.match(/\\\\/g)?.length ?? 0) + 1
+    h = fs * (tall ? 2.1 : 1.25) * (/\\begin/.test(el.content) ? rows : 1)
+  } else {
+    const natural = el.content.length * size * CHAR_W[el.font]
+    const max = el.maxWidth ?? Infinity
+    w = Math.min(natural, max)
+    const lines = Math.max(1, Math.ceil(natural / Math.min(max, BOARD_W)))
+    h = lines * size * 1.18
+  }
+  const x = el.align === 'center' ? el.x - w / 2 : el.align === 'right' ? el.x - w : el.x
+  return { x, y: el.y, w, h }
+}
+
+
+
+/* ───────────── Compact (phone) layout ───────────── */
+
+/** Longest text that still counts as a diagram label on a phone; longer text reflows below the diagram. */
+export const LABEL_MAX_CHARS = 24
+/** How close (board units) text must sit to a drawing to count as its label. */
+export const LABEL_GAP = 16
+
+function visibleLength(el: TextEl) {
+  return el.kind === 'math' ? visibleTexLength(el.content) : el.content.length
+}
+
+function near(a: Box, b: Box, gap: number) {
+  return a.x < b.x + b.w + gap && a.x + a.w > b.x - gap && a.y < b.y + b.h + gap && a.y + a.h > b.y - gap
+}
+
+export interface CompactLayout {
+  /** Region of the board holding the drawings and their labels, or null when nothing is drawn. */
+  region: Box | null
+  /** Text/math ids (element keys) drawn inside the diagram as labels. */
+  labels: Set<string>
+  /** Text/math elements shown as reflowed notes under the diagram, in reading order. */
+  notes: TextEl[]
+}
+
+/**
+ * On narrow screens the 800x500 board is too small to read. The diagram
+ * (shapes plus short labels that touch them) is cropped and zoomed to the
+ * screen width, and every other text or math element reflows below it as a
+ * readable note, top-to-bottom then left-to-right. lesson-layout's lint uses
+ * the same rule so authored scripts read well both ways.
+ */
+export function compactPartition(board: BoardState): CompactLayout {
+  const shapes: Box[] = []
+  for (const el of board.els) {
+    if (el.kind !== 'shape') continue
+    const b = shapeBox(el)
+    if (b) shapes.push(b)
+  }
+  const labels = new Set<string>()
+  const notes: TextEl[] = []
+  const labelBoxes: Box[] = []
+  for (const el of board.els) {
+    if (el.kind !== 'text' && el.kind !== 'math') continue
+    const box = estimateTextBox(el)
+    if (shapes.length && visibleLength(el) <= LABEL_MAX_CHARS && shapes.some(s => near(box, s, LABEL_GAP))) {
+      labels.add(el.key)
+      labelBoxes.push(box)
+    } else notes.push(el)
+  }
+  notes.sort((a, b) => (Math.abs(a.y - b.y) < 18 ? a.x - b.x : a.y - b.y))
+  if (!shapes.length) return { region: null, labels, notes }
+  const all = [...shapes, ...labelBoxes]
+  const pad = 30 // room for tick numbers, axis names and point labels
+  const x0 = Math.max(0, Math.min(...all.map(b => b.x)) - pad)
+  const y0 = Math.max(0, Math.min(...all.map(b => b.y)) - pad)
+  const x1 = Math.min(BOARD_W, Math.max(...all.map(b => b.x + b.w)) + pad)
+  const y1 = Math.min(BOARD_H, Math.max(...all.map(b => b.y + b.h)) + pad)
+  return { region: { x: x0, y: y0, w: Math.max(80, x1 - x0), h: Math.max(60, y1 - y0) }, labels, notes }
+}

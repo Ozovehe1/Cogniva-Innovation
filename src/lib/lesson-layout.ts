@@ -6,49 +6,9 @@
  * over something still on the board.
  */
 import { BOARD_H, BOARD_W, type Step } from './lesson-schema'
-import { SIZE_PX, applyStep, emptyBoard, shapeBox, type BoardEl, type BoardState, type Box, type TextEl } from '@/components/whiteboard/board-state'
+import { LABEL_MAX_CHARS, applyStep, visibleTexLength, emptyBoard, estimateTextBox, shapeBox, type BoardEl, type BoardState, type Box } from '@/components/whiteboard/board-state'
 
-// Average glyph width as a fraction of font size, measured on the board (Newsreader / Inter).
-const CHAR_W = { serif: 0.44, sans: 0.5 }
-
-function visibleTexLength(tex: string) {
-  // A fraction is as wide as its wider part.
-  let t = tex
-  for (let i = 0; i < 6; i++) {
-    const next = t.replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, (_, a: string, b: string) => (a.length >= b.length ? a : b))
-    if (next === t) break
-    t = next
-  }
-  return t
-    .replace(/\\(text|mathrm|mathbf|operatorname)\{([^}]*)\}/g, '$2')
-    .replace(/\\(frac|dfrac|tfrac)/g, '')
-    .replace(/\\(left|right|displaystyle|quad|qquad|,|;|!)/g, ' ')
-    .replace(/\\[a-zA-Z]+/g, 'x')
-    .replace(/[{}^_]/g, '')
-    .replace(/\s+/g, '').length
-}
-
-/** Rough box of a text or math element in board units. */
-export function estimateTextBox(el: TextEl): Box {
-  const size = SIZE_PX[el.size]
-  let w: number
-  let h: number
-  if (el.kind === 'math') {
-    const fs = size * 0.86 * 1.21
-    w = visibleTexLength(el.content) * fs * 0.5
-    const tall = /\\(frac|dfrac|sum|int|lim|begin)/.test(el.content)
-    const rows = (el.content.match(/\\\\/g)?.length ?? 0) + 1
-    h = fs * (tall ? 2.1 : 1.25) * (/\\begin/.test(el.content) ? rows : 1)
-  } else {
-    const natural = el.content.length * size * CHAR_W[el.font]
-    const max = el.maxWidth ?? Infinity
-    w = Math.min(natural, max)
-    const lines = Math.max(1, Math.ceil(natural / Math.min(max, BOARD_W)))
-    h = lines * size * 1.18
-  }
-  const x = el.align === 'center' ? el.x - w / 2 : el.align === 'right' ? el.x - w : el.x
-  return { x, y: el.y, w, h }
-}
+export { estimateTextBox }
 
 export function elementBox(el: BoardEl): Box | null {
   if (el.kind === 'text' || el.kind === 'math') return estimateTextBox(el)
@@ -114,8 +74,42 @@ function collisions(steps: Step[], start: BoardState = emptyBoard(), offset = 0)
   return out
 }
 
+/**
+ * Phone-layout problems: on narrow screens text touching a drawing is zoomed
+ * with the diagram as a label, everything else reflows below it (see
+ * compactPartition). Long text sitting on a drawing would be pulled out of the
+ * diagram on phones, so flag it.
+ */
+function compactIssues(steps: Step[], start: BoardState = emptyBoard(), offset = 0): string[] {
+  let board = start
+  const out: string[] = []
+  steps.forEach((step, i) => {
+    const index = offset + i
+    board = applyStep(board, step, index)
+    if (step.type !== 'write' && step.type !== 'math') return
+    const el = board.els.find(e => e.born === index && (e.kind === 'text' || e.kind === 'math'))
+    if (!el || (el.kind !== 'text' && el.kind !== 'math')) return
+    const len = el.kind === 'math' ? visibleTexLength(el.content) : el.content.length
+    if (len <= LABEL_MAX_CHARS) return
+    const box = estimateTextBox(el)
+    const onShape = board.els.some(o => {
+      if (o.kind !== 'shape') return false
+      const k = o.step.shape.kind
+      if (k !== 'axes' && k !== 'function') return false
+      const b = shapeBox(o)
+      return !!b && box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y
+    })
+    if (onShape) out.push(`steps[${i}] ${describe(el)} is long text inside a graph. Labels on a drawing must be under ${LABEL_MAX_CHARS} characters; move longer text to the notes column.`)
+  })
+  return out
+}
+
 /** Human-readable layout problems for a repair prompt. */
 export function layoutIssues(steps: Step[], start?: BoardState, offset = 0): string[] {
+  return [...collisionIssues(steps, start, offset), ...compactIssues(steps, start, offset)].slice(0, 15)
+}
+
+function collisionIssues(steps: Step[], start?: BoardState, offset = 0): string[] {
   return collisions(steps, start, offset).slice(0, 15).map(c => {
     const parts: string[] = []
     if (c.others.length) parts.push(`overlaps ${c.others.map(describe).join(', ')} which is still on the board`)

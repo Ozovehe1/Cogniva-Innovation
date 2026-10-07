@@ -1,5 +1,5 @@
 'use client'
-import React, { useLayoutEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useLayoutEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import katex from 'katex'
 import { compileExpr } from '@/lib/lesson-schema'
@@ -20,6 +20,21 @@ import {
 
 /** Smooth, slightly front-loaded ease used for strokes (close to 3Blue1Brown's "smooth"). */
 export const EASE_SMOOTH: [number, number, number, number] = [0.45, 0.05, 0.25, 1]
+
+/**
+ * Screen pixels per board unit. Labels drawn inside the board use it to keep a
+ * minimum on-screen size when the board is scaled down on a phone.
+ */
+export const BoardScale = createContext(1)
+
+/** A board-unit font size that renders at least `minPx` screen pixels. */
+export function useMinUnits(units: number, minPx: number) {
+  const s = useContext(BoardScale)
+  return Math.max(units, minPx / (s || 1))
+}
+
+/** On-screen sizes (px) of reflowed notes under the diagram on a phone. */
+export const FLOW_PX: Record<TextEl['size'], number> = { sm: 17, md: 19, lg: 23, xl: 27 }
 
 export function renderTex(tex: string, display = false): string {
   try {
@@ -42,14 +57,23 @@ export function TextElement({
   animate,
   reduced,
   registerRef,
+  flow,
+  mark,
 }: {
   el: TextEl
   /** 'enter' when this element was just created, 'morph' when it was just transformed. */
   animate: 'enter' | 'morph' | null
   reduced: boolean
   registerRef: (id: string, node: HTMLElement | null) => void
+  /** Render as a reflowed note (phone layout) instead of at board coordinates. */
+  flow?: boolean
+  /** Highlight drawn around a reflowed note. */
+  mark?: { style: 'box' | 'underline'; color: TextEl['color']; fresh: boolean } | null
 }) {
-  const fontPx = SIZE_PX[el.size] * (el.kind === 'math' ? 0.86 : 1)
+  const boardPx = SIZE_PX[el.size] * (el.kind === 'math' ? 0.86 : 1)
+  const labelPx = useMinUnits(boardPx, 15)
+  if (flow) return <FlowText el={el} animate={animate} reduced={reduced} registerRef={registerRef} mark={mark ?? null} />
+  const fontPx = labelPx
   const translateX = el.align === 'center' ? '-50%' : el.align === 'right' ? '-100%' : '0%'
   const enterMs = animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
   const style: React.CSSProperties = {
@@ -115,6 +139,69 @@ export function TextElement({
             <Content kind={el.kind} content={el.content} />
           </motion.div>
         )}
+      </div>
+    </motion.div>
+  )
+}
+
+/** A board text/math element shown as a readable note in normal document flow (phone layout). */
+function FlowText({
+  el,
+  animate,
+  reduced,
+  registerRef,
+  mark,
+}: {
+  el: TextEl
+  animate: 'enter' | 'morph' | null
+  reduced: boolean
+  registerRef: (id: string, node: HTMLElement | null) => void
+  mark: { style: 'box' | 'underline'; color: TextEl['color']; fresh: boolean } | null
+}) {
+  const px = FLOW_PX[el.size] * (el.kind === 'math' ? 1.08 : 1)
+  const cls = el.font === 'sans' && el.kind === 'text' ? 'font-sans tracking-[-0.01em]' : 'font-display'
+  const color = INK_HEX[el.color]
+  const markColor = mark ? INK_HEX[mark.color] : undefined
+  const enterMs = animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
+  const morphing = animate === 'morph'
+  return (
+    <motion.div
+      layout={reduced ? false : 'position'}
+      initial={animate === 'enter' ? { opacity: 0, y: reduced ? 0 : 6 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.2 } }}
+      transition={{ duration: reduced ? 0.01 : 0.35, ease: EASE_SMOOTH }}
+      className={el.align === 'center' ? 'text-center' : el.align === 'right' ? 'text-right' : 'text-left'}
+    >
+      <div
+        ref={node => { if (el.id) registerRef(el.id, node) }}
+        className={`wb-flow relative inline-block max-w-full leading-[1.3] ${cls}`}
+        style={{
+          fontSize: px,
+          color,
+          whiteSpace: 'pre-line',
+          overflowWrap: 'anywhere',
+          padding: mark?.style === 'box' ? '2px 8px' : undefined,
+          margin: mark?.style === 'box' ? '-2px -8px' : undefined,
+          borderRadius: 8,
+          boxShadow: mark?.style === 'box' ? `inset 0 0 0 2px ${markColor}` : undefined,
+          background: mark?.style === 'box' ? `${markColor}17` : undefined,
+          textDecoration: mark?.style === 'underline' ? 'underline' : undefined,
+          textDecorationColor: markColor,
+          textDecorationThickness: mark?.style === 'underline' ? 3 : undefined,
+          textUnderlineOffset: mark?.style === 'underline' ? 6 : undefined,
+          transition: 'box-shadow 300ms, background-color 300ms',
+        }}
+      >
+        <motion.div
+          key={morphing ? `m-${el.content}` : 'c'}
+          initial={morphing ? { opacity: 0, y: reduced ? 0 : 6 } : animate === 'enter' && !reduced ? { clipPath: 'inset(-20% 100% -20% -2%)' } : false}
+          animate={{ opacity: 1, y: 0, clipPath: 'inset(-20% -2% -20% -2%)' }}
+          transition={{ duration: morphing ? (reduced ? 0.15 : 0.6) : enterMs / 1000, ease: morphing ? EASE_SMOOTH : 'linear' }}
+          className={el.kind === 'math' ? 'max-w-full overflow-x-auto overflow-y-hidden py-1' : undefined}
+        >
+          <Content kind={el.kind} content={el.content} />
+        </motion.div>
       </div>
     </motion.div>
   )
@@ -239,6 +326,9 @@ function FadeIn({ children, animate, delay = 0, reduced }: { children: React.Rea
 
 export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: boolean; reduced: boolean }) {
   const { step } = el
+  const tickPx = useMinUnits(14, 11.5)
+  const axisLabelPx = useMinUnits(20, 15)
+  const pointLabelPx = useMinUnits(22, 15)
   const shape: Shape = step.shape
   const color = INK_HEX[step.color ?? 'ink']
   const width = step.width ?? (shape.kind === 'axes' ? 1.6 : 2.6)
@@ -313,7 +403,7 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
               x={x + (shape.labelPos === 'nw' || shape.labelPos === 'sw' ? -12 : 12)}
               y={y + (shape.labelPos === 'se' || shape.labelPos === 'sw' ? 26 : -12)}
               textAnchor={shape.labelPos === 'nw' || shape.labelPos === 'sw' ? 'end' : 'start'}
-              fontSize={22} fill={color} fontStyle="italic" style={{ fontFamily: 'var(--font-serif)' }}>
+              fontSize={pointLabelPx} fill={color} fontStyle="italic" style={{ fontFamily: 'var(--font-serif)' }}>
               {shape.label}
             </text>
           )}
@@ -342,7 +432,7 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
               return (
                 <g key={`x${v}`}>
                   <line x1={tx} y1={ty - 4} x2={tx} y2={ty + 4} stroke={axisColor} strokeWidth={1.2} />
-                  <text x={tx} y={ty + 20} fontSize={14} textAnchor="middle" fill={INK_HEX.muted} style={{ fontFamily: 'var(--font-sans)' }}>{v}</text>
+                  <text x={tx} y={ty + 6 + tickPx} fontSize={tickPx} textAnchor="middle" fill={INK_HEX.muted} style={{ fontFamily: 'var(--font-sans)' }}>{v}</text>
                 </g>
               )
             })}
@@ -351,17 +441,17 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
               return (
                 <g key={`y${v}`}>
                   <line x1={tx - 4} y1={ty} x2={tx + 4} y2={ty} stroke={axisColor} strokeWidth={1.2} />
-                  <text x={tx - 9} y={ty + 5} fontSize={14} textAnchor="end" fill={INK_HEX.muted} style={{ fontFamily: 'var(--font-sans)' }}>{v}</text>
+                  <text x={tx - 9} y={ty + tickPx * 0.36} fontSize={tickPx} textAnchor="end" fill={INK_HEX.muted} style={{ fontFamily: 'var(--font-sans)' }}>{v}</text>
                 </g>
               )
             })}
             {shape.xLabel && (
-              <text x={xb[0] - 2} y={xb[1] + 24} fontSize={20} textAnchor="end" fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
+              <text x={xb[0] - 2} y={xb[1] + 4 + axisLabelPx} fontSize={axisLabelPx} textAnchor="end" fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
                 {shape.xLabel}
               </text>
             )}
             {shape.yLabel && (
-              <text x={yb[0] + 12} y={yb[1] + 8} fontSize={20} fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
+              <text x={yb[0] + 12} y={yb[1] + axisLabelPx * 0.4} fontSize={axisLabelPx} fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
                 {shape.yLabel}
               </text>
             )}
