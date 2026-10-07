@@ -850,6 +850,20 @@ def det_fix(sp: dict, errs: list[str], notes: list[str]) -> bool:
         if len(sp["timeline"]) < before:
             notes.append(f"dropped links into {m.group(2)}")
             return True
+    m = re.search(r"tex (\S+?):? term '(.+?)' (?:must appear|not found)", e)
+    if m:
+        oid, term = m.group(1).rstrip(":"), m.group(2).replace("\\\\", "\\")
+        for o in sp["objects"]:
+            if o["id"] == oid and isinstance(o.get("terms"), dict):
+                key = next((k for k in o["terms"] if k == term or k.replace("\\", "") == term.replace("\\", "")), None)
+                if key is None and o["terms"]:
+                    key = next(iter(o["terms"]))
+                if key is not None:
+                    o["terms"].pop(key)
+                    o["tex"] = o["tex"].replace("{{" + key + "}}", "{" + key + "}")
+                    notes.append(f"{oid}: term {key} not isolated; uncoloured")
+                    sp["timeline"] = [a for a in sp["timeline"] if not (a.get("do") == "link" and a.get("eq") == oid and a.get("term") == key)]
+                    return True
     m = re.search(r"refers to unknown object '([^']+)'", e)
     if m:
         bad = m.group(1)
@@ -909,7 +923,7 @@ def prepare(raw: dict, narr: dict | None, media_dir: str, log: list, plan: dict 
         spec = norm(raw2)
         errs = check(spec, True)
         for _ in range(3):  # last resort: drop the one object that still fails (with every reference to it), keep the rest
-            m = re.search(r"object (\S+) \(", " ".join(errs))
+            m = re.search(r"(?:object|tex|matrix) (\S+?)(?: \(|:)", " ".join(errs))
             if not errs or not m or m.group(1) not in {o["id"] for o in spec["objects"]}:
                 break
             bad = m.group(1)
