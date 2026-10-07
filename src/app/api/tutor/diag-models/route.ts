@@ -18,9 +18,11 @@ export async function GET(request: Request) {
     for await (const m of pager) { if (m.name && /flash/i.test(m.name)) listed.push(m.name.replace(/^models\//, '')) }
   } catch (e) { listed.push(`list failed: ${(e as Error).message.slice(0, 200)}`) }
   const probe = url.searchParams.get('probe') !== '0'
+  if (url.searchParams.get('list') === '0') listed.length = 0
   const results: Record<string, string> = {}
   if (probe) {
-    const names = [...new Set([...GEMINI_MODELS, ...EXTRA])]
+    const asked = (url.searchParams.get('models') ?? '').split(',').map(m => m.trim()).filter(m => /^gemini-[\w.-]+$/.test(m))
+    const names = asked.length ? asked : [...new Set([...GEMINI_MODELS, ...EXTRA])]
     await Promise.all(names.map(async model => {
       const t0 = Date.now()
       try {
