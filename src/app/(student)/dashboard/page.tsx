@@ -43,12 +43,10 @@ export default async function Dashboard() {
   }
 
   const title = (id: string) => path.graph.nodes.find(n => n.id === id)?.title ?? id
-  const mastered = topics.filter(t => t.status === 'mastered').length
   const nextLessonDone = next?.lesson_id ? !!progress.get(next.lesson_id)?.completed_at : false
   const nextStarted = next?.lesson_id ? (progress.get(next.lesson_id)?.step_index ?? 0) > 0 : false
   const knownNow = [...new Set([...(path.known ?? []), ...topics.filter(t => t.status === 'mastered').map(t => t.node_id)])]
   const upNext = topics.filter(t => t.status === 'ready' || t.status === 'review' || t.status === 'learning').map(t => t.title)
-  const goalLearner = learnerForPath(learner, path)
   // Fetch the up-next lesson's opening lines into the voice cache now, so Start speaks at once.
   const lines = next?.lesson_id && !nextLessonDone ? await openingLines(supabase, next.lesson_id) : []
 
@@ -66,22 +64,34 @@ export default async function Dashboard() {
         </section>
       )}
 
-      {/* Goal and plan */}
-      <Card className="mb-6">
-        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">{paths.length > 1 ? 'Your most recent goal' : 'Your goal'}</p>
-        <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink md:text-[28px]">{path.goal}</h2>
-        <dl className="mt-4 grid grid-cols-2 gap-y-3 text-[14px] sm:grid-cols-4">
-          <div><dt className="text-muted">For</dt><dd className="mt-0.5 font-medium text-ink">{PURPOSE_LABEL[goalLearner.purpose ?? ''] ?? '—'}</dd></div>
-          <div><dt className="text-muted">Deadline</dt><dd className="tnum mt-0.5 font-medium text-ink">{goalLearner.deadline ? formatDue(goalLearner.deadline) : 'None'}</dd></div>
-          <div><dt className="text-muted">Lessons</dt><dd className="tnum mt-0.5 font-medium text-ink">About {path.plan.lessonMinutes} min</dd></div>
-          <div><dt className="text-muted">Rhythm</dt><dd className="tnum mt-0.5 font-medium text-ink">{path.plan.sessionsPerWeek}× a week</dd></div>
-        </dl>
-        {path.plan.note && <p className="mt-4 border-t border-line pt-3 text-[14px] leading-relaxed text-muted">{path.plan.note}</p>}
-        <div className="mt-4">
-          <div className="mb-2 flex items-center justify-between text-[13px]"><span className="text-muted">Path</span><span className="tnum font-medium text-ink">{mastered} of {topics.length} topics</span></div>
-          <ProgressBar value={mastered} max={Math.max(1, topics.length)} label="Path progress" />
-        </div>
-      </Card>
+      {/* Goals and plans: every goal, most recently active first */}
+      <section className="mb-6 space-y-4">
+        {paths.length > 1 && <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Your goals · {paths.length}</p>}
+        {paths.map((entry, i) => {
+          const gl = learnerForPath(learner, entry.path)
+          const total = entry.topics.length
+          return (
+            <Card key={entry.path.id}>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">{paths.length > 1 ? (i === 0 ? 'Most recent goal' : `Goal ${i + 1}`) : 'Your goal'}</p>
+                {entry.mastered === total && total > 0 && <span className="text-[12px] font-medium text-accent">Complete</span>}
+              </div>
+              <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink md:text-[28px]"><RichText text={entry.path.goal} /></h2>
+              <dl className="mt-4 grid grid-cols-2 gap-y-3 text-[14px] sm:grid-cols-4">
+                <div><dt className="text-muted">For</dt><dd className="mt-0.5 font-medium text-ink">{PURPOSE_LABEL[gl.purpose ?? ''] ?? '—'}</dd></div>
+                <div><dt className="text-muted">Deadline</dt><dd className="tnum mt-0.5 font-medium text-ink">{gl.deadline ? formatDue(gl.deadline) : 'None'}</dd></div>
+                <div><dt className="text-muted">Lessons</dt><dd className="tnum mt-0.5 font-medium text-ink">About {entry.path.plan.lessonMinutes} min</dd></div>
+                <div><dt className="text-muted">Rhythm</dt><dd className="tnum mt-0.5 font-medium text-ink">{entry.path.plan.sessionsPerWeek}× a week</dd></div>
+              </dl>
+              {i === 0 && entry.path.plan.note && <p className="mt-4 border-t border-line pt-3 text-[14px] leading-relaxed text-muted">{entry.path.plan.note}</p>}
+              <div className="mt-4">
+                <div className="mb-2 flex items-center justify-between text-[13px]"><span className="text-muted">Path</span><span className="tnum font-medium text-ink">{entry.mastered} of {total} topics</span></div>
+                <ProgressBar value={entry.mastered} max={Math.max(1, total)} label={`Progress for ${entry.path.goal}`} />
+              </div>
+            </Card>
+          )
+        })}
+      </section>
 
       {/* Next step */}
       {next && (
