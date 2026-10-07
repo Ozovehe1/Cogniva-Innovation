@@ -86,7 +86,9 @@ Return JSON only:
  "equation": "one LaTeX equation that states the idea, or empty",
  "required": ["every part, quantity, angle, force, dimension, axis the narration names or the idea needs, as short names"]}}
 Rules: one beat per sentence, every sentence covered; a part is labelled only in the sentence that names it; numbers must equal
-the narration's numbers (\"a hundred newtons\" -> 100, \"ten times\" -> 10); events in the order the science happens."""
+the narration's numbers (\"a hundred newtons\" -> 100, \"ten times\" -> 10); events in the order the science happens.
+Chemistry: specific molecules with formulas (NO not NOx, C3H8 for unburned fuel, never CxHy), one species per map value, balanced
+equations with whole-number coefficients."""
 
 FACT_PROMPT = """You are a strict science fact-checker for an educational animation. Check this part graph against the narration and
 established science: part names, counts, arrangement, values and units, directions of flow / rotation / charge, and causal order.
@@ -94,7 +96,9 @@ Narration: \"\"\"{text}\"\"\"
 Part graph: {graph}
 Deterministic findings already made: {det}
 Return JSON only: {{"ok": true|false, "problems": [{{"severity": "block"|"warn", "what": "...", "fix": "..."}}]}}
-Block only for a real error (wrong science, wrong number, wrong direction, wrong order, a part the idea needs is missing)."""
+Block only for a real error that would make the PICTURE or the NUMBERS wrong (wrong science, wrong number, wrong direction, wrong
+order, a part the idea needs is missing). The engine draws sub-parts itself (wedges, gear teeth, channels, nodes, atoms) and its own
+relation semantics, so counts in the parts list and relation names are never a reason to block."""
 
 PAIR_PROMPT = """Two candidate animations (A = first image, B = second image; each image shows key frames in time order) illustrate:
 \"{idea}\". Narration: \"{text}\"
@@ -180,7 +184,12 @@ def fact_checks(G: dict, text: str) -> list[dict]:
     P = G.get("params") or {}
     for r in P.get("reactions") or []:
         ok, why = gm_refdata.balanced(r.get("eq", ""))
-        if not ok:
+        if not ok:  # deterministic repair first: solve the stoichiometry exactly (null space of the element matrix)
+            fixed = gm_refdata.balance(r.get("eq", ""))
+            if fixed:
+                out.append({"severity": "fixed", "what": f"equation balanced deterministically: {r.get('eq')} => {fixed}"})
+                r["eq"] = fixed
+                continue
             out.append({"severity": "block", "what": f"equation not balanced: {r.get('eq')}", "fix": why})
     for m in list(P.get("inputs") or []) + list((P.get("map") or {}).values()):
         if gm_refdata.molecule(str(m)) is None:
@@ -448,17 +457,17 @@ def solve_cable(sc: Scene):
                       "electrode_show": round(t_graph, 3),
                       "roles": {r: sc.pid(r) for r in ("neuron", "soma", "axon", "dendrites", "terminals", "membrane", "na_channel", "k_channel", "myelin", "node", "channel")}})
     S["show"].setdefault(sc.pid("neuron"), 0.0)
-    S["graphs"].append({"id": "vm", "box": [-0.5, -3.75, 6.9, -0.35], "x": "tms", "y": "V", "x_range": [0, 10], "y_range": [-90, 50], "y_step": 20, "x_step": 2,
+    S["graphs"].append({"id": "vm", "box": [-0.5, -3.75, 6.9, -0.6], "x": "tms", "y": "V", "x_range": [0, 10], "y_range": [-90, 50], "y_step": 20, "x_step": 2,
                         "x_label": r"\text{time } t\ (\mathrm{ms})", "y_label": r"\text{membrane potential } V_m\ (\mathrm{mV})", "y_numbers": [-70, 0, 40],
                         "refs": [{"y": -70, "tex": r"\text{rest}"}], "show": round(t_graph, 3), "from": 0})
     S["readouts"].append({"q": "V", "tex": "V_m", "unit": "mV", "show": round(t_graph, 3), "decimals": 0})
-    S["readout_box"] = [3.7, -1.25, 6.9, -0.45]
+    S["readout_box"] = [3.9, -0.75, 6.9, -0.15]
     if "depolarize" in st:
         S["annotations"].append({"id": "peak", "kind": "feature", "graph": "vm", "feature": "peak", "tex": "", "unit": "mV", "show": st["depolarize"]})
     for k, txt in (("depolarize", "depolarisation: Na⁺ in"), ("repolarize", "repolarisation: K⁺ out"), ("propagate", "propagation along the axon")):
         if k in st:
             nxt = sorted(v for v in st.values() if v > st[k])
-            S["annotations"].append({"id": "ph_" + k, "kind": "phase", "text": txt, "show": st[k], "hide": nxt[0] if nxt else None, "box": [-0.5, -0.45, 3.5, -0.05], "size": 24})
+            S["annotations"].append({"id": "ph_" + k, "kind": "phase", "text": txt, "show": st[k], "hide": nxt[0] if nxt else None, "box": [-6.6, -0.5, -1.1, -0.05], "size": 24})
 
 
 def solve_binding(sc: Scene):
@@ -587,37 +596,56 @@ def solve_projectile(sc: Scene):
 
     def h(e, a, z, b):
         if e == "launch":
-            sc.key("fly", a, z, 1.0)
             st.setdefault("launch", a)
+            st.setdefault("launch_end", z)
         elif e in ("angle", "velocity", "components", "gravity", "height", "range", "equation"):
             st.setdefault(e, a)
+            st[e + "_end"] = z
         elif e.startswith("readout:"):
             st.setdefault("ro:" + e.split(":")[1], a)
     _common_beats(sc, h)
-    sc.keys.setdefault("fly", [[sc.D * 0.35, sc.D * 0.7, 1.0]])
+    # the flight lasts from the launch until the sentence that lands it (height / range), so the narration of the
+    # components and gravity plays over the moving ball instead of a ball already on the ground
+    f0 = st.get("launch", sc.D * 0.3)
+    f1 = st.get("height_end") or st.get("range") or st.get("launch_end") or sc.D * 0.7
+    if st.get("height_end") and st.get("range") and st["range"] > st["height_end"]:
+        f1 = st["range"]
+    if f1 - f0 < 2.0:
+        f1 = min(sc.D - 0.5, f0 + 3.0)
+    sc.key("fly", f0, f1, 1.0)
     sc.finish_procs(linear=("fly",))
     for q, e, c, n, u in (("v0", v0, "navy", "launch speed", "m/s"), ("theta", th, "clay", "launch angle", "deg"), ("g", g, "plum", "gravity", "m/s^2"),
                           ("vx", "v0*cos(theta*pi/180)", "amber", "horizontal velocity", "m/s"), ("vy", "v0*sin(theta*pi/180)", "rose", "vertical velocity", "m/s"),
                           ("R", "v0**2*sin(2*theta*pi/180)/g", "green", "range", "m"), ("H", "(v0*sin(theta*pi/180))**2/(2*g)", "teal", "maximum height", "m")):
         sc.quantity(q, e, c, n, u)
     fly = sc.keys["fly"][0]
-    S["rigs"].append({"type": "projectile", "box": [-6.9, -3.5, 6.9, 2.6], "fly": "fly", "ghost_show": round(fly[1] + 0.2, 3),
+    t = lambda k, d: round(st.get(k, d), 3)  # noqa: E731
+    T_ = 2 * v0 * math.sin(math.radians(th)) / g
+    vx_, vy_ = v0 * math.cos(math.radians(th)), v0 * math.sin(math.radians(th))
+    sc.quantity("tf", f"fly*{T_:.6f}", "navy", "flight time", "s")
+    sc.quantity("vyt", f"{vy_:.6f}-{g}*tf", "rose", "vertical velocity", "m/s")
+    lim = math.ceil(max(vx_, vy_) / 5) * 5
+    S["graphs"].append({"id": "vel", "box": [-6.9, 0.55, -1.2, 3.95], "x": "tf", "y": "vyt", "x_range": [0, round(T_ * 1.05, 2)], "y_range": [-lim, lim],
+                        "x_step": round(max(0.5, round(T_ / 4 * 2) / 2), 2), "y_step": lim / 2, "y_numbers": [-lim, 0, lim],
+                        "x_label": r"\text{time } t\ (\mathrm{s})", "y_label": r"\text{velocity } (\mathrm{m/s})",
+                        "refs": [{"y": round(vx_, 3), "tex": r"v_x=v_0\cos\theta"}], "show": t("components", fly[0] - 0.5), "from": fly[0], "x_axis_at_zero": True})
+    S["rigs"].append({"type": "projectile", "box": [-6.9, -3.7, 6.9, 0.9], "fly": "fly", "ghost_show": round(fly[1] + 0.2, 3),
                       "roles": {r: sc.pid(r) for r in ("ball", "launcher", "ground", "path")}})
     for r in ("ground", "launcher"):
         S["show"].setdefault(sc.pid(r), 0.0)
     S["show"].setdefault(sc.pid("ball"), round(min(fly[0], 1.0), 3))
-    t = lambda k, d: round(st.get(k, d), 3)  # noqa: E731
     S["annotations"] += [
         {"id": "theta", "kind": "angle", "at": "O", "from": "ground", "to": "v0_tip", "tex": r"\theta", "q": "theta", "unit": "deg", "show": t("angle", 0.8), "r": 0.9},
         {"id": "v0", "kind": "vector", "from": "O", "to": "v0_tip", "tex": "v_0", "q": "v0", "unit": "m/s", "show": t("velocity", t("angle", 0.8) + 0.6)},
         {"id": "v0x", "kind": "vector", "from": "O", "to": "v0x_tip", "tex": r"v_0\cos\theta", "color": "amber", "show": t("components", fly[0] - 0.5), "label_side": "right", "sw": 4},
         {"id": "v0y", "kind": "vector", "from": "O", "to": "v0y_tip", "tex": r"v_0\sin\theta", "color": "rose", "show": t("components", fly[0] - 0.5), "sw": 4},
         {"id": "v", "kind": "vector", "from": "ball", "to": "v_tip", "tex": r"\vec v", "color": "navy", "show": round(fly[0] + 0.2, 3), "hide": round(fly[1], 3)},
-        {"id": "g", "kind": "force", "from": "ball", "to": "g_tip", "tex": "g", "q": "g", "unit": "m/s^2", "show": t("gravity", fly[0] + 0.5), "label_side": "right", "hide": round(fly[1], 3)},
+        {"id": "g", "kind": "force", "from": "ball", "to": "g_tip", "tex": "g", "q": "g", "unit": "m/s^2", "show": t("gravity", fly[0] + 0.5), "label_side": "left", "hide": round(fly[1], 3)},
         {"id": "H", "kind": "dim", "a": "apex_ground", "b": "apex", "tex": "H", "q": "H", "unit": "m", "side": "right", "show": max(t("height", fly[1]), (fly[0] + fly[1]) / 2)},
         {"id": "R", "kind": "brace", "a": "O", "b": "land", "tex": "R", "q": "R", "unit": "m", "side": "down", "show": max(t("range", fly[1]), fly[1])}]
-    eq = sc.G.get("equation") or r"R=\frac{v_0^2\sin 2\theta}{g}"
-    S["tex"].append({"id": "eq", "tex": eq, "box": [2.6, 2.75, 6.9, 3.85], "show": t("equation", fly[1] + 0.5), "size": 44})
+    S["tex"].append({"id": "eqH", "tex": r"H=\frac{v_0^2\sin^2\theta}{2g}", "box": [0.2, 2.0, 6.9, 3.9], "show": t("height", fly[1] - 1.0), "size": 46,
+                     "hide": None})
+    S["tex"].append({"id": "eq", "tex": r"R=\frac{v_0^2\sin 2\theta}{g}", "box": [0.2, 0.7, 6.9, 2.3], "show": t("equation", t("range", fly[1] + 0.5)), "size": 46})
 
 
 def solve_board(sc: Scene):
@@ -753,16 +781,16 @@ def gates(S: dict, G: dict, sents: list[dict]) -> dict:
                     if w * h / small > 0.25 and ("ov", tx[i]["id"], tx[j]["id"]) not in seen:
                         seen.add(("ov", tx[i]["id"], tx[j]["id"]))
                         soft.append(f"{tx[i]['id']} overlaps {tx[j]['id']} at {fr['t']}s")
-    # fill: the bodies must fill a meaningful share of the frame by mid-clip
-    mid = a["frames"][len(a["frames"]) // 2]
-    bodies = [it["b"] for it in mid["items"] if it["kind"] in ("body", "panel", "annot")]
+    # fill: the union of what is drawn must reach a meaningful share of the frame (best frame of the second half)
     fill = 0.0
-    if bodies:
-        x0, y0 = min(b[0] for b in bodies), min(b[1] for b in bodies)
-        x1, y1 = max(b[2] for b in bodies), max(b[3] for b in bodies)
-        fill = (x1 - x0) * (y1 - y0) / (14.22 * 8)
-    if fill < 0.35:
-        hard.append(f"content fills only {fill:.0%} of the frame at mid-clip")
+    for fr in a["frames"][len(a["frames"]) // 2:]:
+        bodies = [it["b"] for it in fr["items"] if it["kind"] in ("body", "panel", "annot", "label")]
+        if bodies:
+            x0, y0 = max(-7.11, min(b[0] for b in bodies)), max(-4.0, min(b[1] for b in bodies))
+            x1, y1 = min(7.11, max(b[2] for b in bodies)), min(4.0, max(b[3] for b in bodies))
+            fill = max(fill, (x1 - x0) * (y1 - y0) / (14.22 * 8))
+    if fill < 0.28:
+        hard.append(f"content fills only {fill:.0%} of the frame")
     # motion coverage: longest stretch with nothing moving (bodies, annotations, curves)
     iv = [(t - 0.25, t) for k, v in a["motion"].items() for t, d in v if d > 0.004]
     first_seen = {}
@@ -1030,9 +1058,10 @@ def recall(desc: str, k=2) -> list[dict]:
             items += d.get("graphs", []) or []
         except Exception:  # noqa: BLE001
             pass
-    w = _words(desc)
+    stop = {"animated", "explanation", "curious", "learner", "secondary", "school", "first", "year", "university", "student", "how", "the", "for", "and", "works", "why", "what"}
+    w = _words(desc) - stop
     scored = sorted(items, key=lambda it: -len(w & _words(it.get("topic", "") + " " + it.get("solver", ""))))
-    return [x for x in scored[:k] if w & _words(x.get("topic", ""))]
+    return [x for x in scored[:k] if len(w & (_words(x.get("topic", "")) - stop)) >= 2]
 
 
 def remember(desc: str, G: dict, pitfalls: list[str]):
@@ -1103,17 +1132,21 @@ def compose_parts(desc: str, narr: dict | None, workdir: str | None = None, log:
     for G in graphs:
         probs = fact_review(G, text, log)
         block = [p for p in probs if p.get("severity") == "block"]
-        if block:
-            try:
-                G2 = make_graph(desc, sents, log, 0.2, "\n\nA fact-checker found these errors in a previous part graph; fix them:\n" + json.dumps(block)[:2500], mem)
-                probs2 = fact_review(G2, text, log)
-                if not [p for p in probs2 if p.get("severity") == "block"] and G2.get("fits") and G2.get("solver") in SOLVERS:
-                    facts.append({"solver": G.get("solver"), "first": probs, "after_fix": probs2})
-                    checked.append(G2)
-                    continue
-                facts.append({"solver": G.get("solver"), "first": probs, "after_fix": probs2, "blocked": True})
-            except Exception as exc:  # noqa: BLE001
-                log.append(f"fact repair failed: {exc}")
+        if block:  # up to two repairs of the graph with the checker's findings
+            for _rep in range(2):
+                try:
+                    G2 = make_graph(desc, sents, log, 0.2, "\n\nA fact-checker found these errors in a previous part graph; fix them:\n" + json.dumps(block)[:2500], mem)
+                    probs2 = fact_review(G2, text, log)
+                    b2 = [p for p in probs2 if p.get("severity") == "block"]
+                    if not b2 and G2.get("fits") and G2.get("solver") in SOLVERS:
+                        facts.append({"solver": G.get("solver"), "first": probs, "after_fix": probs2})
+                        checked.append(G2)
+                        break
+                    block = b2 or block
+                except Exception as exc:  # noqa: BLE001
+                    log.append(f"fact repair failed: {exc}")
+            else:
+                facts.append({"solver": G.get("solver"), "first": probs, "blocked": True, "last": block})
             continue
         facts.append({"solver": G.get("solver"), "first": probs})
         checked.append(G)

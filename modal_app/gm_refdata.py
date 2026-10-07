@@ -124,3 +124,43 @@ def balanced(eq: str) -> tuple[bool, str]:
     if a == b:
         return True, ""
     return False, f"left {a} != right {b}"
+
+
+def balance(eq: str) -> str | None:
+    """Smallest whole-number coefficients that balance 'NO + CO -> N2 + CO2' (species with explicit formulas).
+    Returns the balanced equation string, or None when the species cannot balance (or carry variables like CxHy)."""
+    import sympy as sp
+    s = eq.replace("→", "->")
+    if "->" not in s:
+        return None
+    L, R = s.split("->", 1)
+
+    def species(t):
+        out = []
+        for term in t.split("+"):
+            m = re.match(r"^\s*\d*\s*([A-Za-z0-9()]+)\s*$", term)
+            if not m:
+                return None
+            out.append(m.group(1))
+        return out
+    ls, rs = species(L), species(R)
+    if not ls or not rs or any(re.search(r"[a-z]", f.replace("Cl", "").replace("Na", "").replace("Mg", "").replace("Ca", "").replace("Fe", "").replace("Pt", "").replace("Rh", "").replace("Cu", "").replace("Zn", "").replace("Br", "")) for f in ls + rs):
+        return None
+    els = sorted({e for f in ls + rs for e in formula_counts(f)})
+    M = sp.Matrix([[formula_counts(f).get(e, 0) for f in ls] + [-formula_counts(f).get(e, 0) for f in rs] for e in els])
+    ns = M.nullspace()
+    if len(ns) != 1:
+        return None
+    v = ns[0]
+    den = sp.ilcm(*[x.q for x in v])
+    v = [int(x * den) for x in v]
+    if any(x <= 0 for x in v):
+        v = [-x for x in v]
+    if any(x <= 0 for x in v):
+        return None
+    g = 0
+    for x in v:
+        g = math.gcd(g, x)
+    v = [x // g for x in v]
+    fmt = lambda c, f: (f"{c}{f}" if c > 1 else f)  # noqa: E731
+    return " + ".join(fmt(c, f) for c, f in zip(v[: len(ls)], ls)) + " -> " + " + ".join(fmt(c, f) for c, f in zip(v[len(ls):], rs))

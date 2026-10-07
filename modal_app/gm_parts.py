@@ -24,7 +24,7 @@ from manim import (
     DOWN, LEFT, ORIGIN, RIGHT, UP, PI, TAU, Arc, ArcBetweenPoints, Arrow, Axes, Circle, Circumscribe, Create,
     CubicBezier, DashedLine, DecimalNumber, Dot, Ellipse, FadeIn, FadeOut, Line, ManimColor, MathTex,
     MovingCameraScene, Polygon, Rectangle, RoundedRectangle, Text, VGroup, VMobject, ValueTracker, Write,
-    interpolate_color, linear, smooth, config, AnnularSector, Sector, Annulus, Square,
+    interpolate_color, linear, smooth, config, AnnularSector, Sector, Annulus, Square, Succession,
 )
 
 BG = "#FDFCF9"
@@ -321,7 +321,8 @@ class Ctx:
         self.qcolor: dict[str, str] = {}
         self.zones: list = []
         self.graphs: dict = {}
-        self.geom: dict = {}  # named live points / vectors of the solved geometry (annotations attach here)  # reserved areas (where live content will move) that labels must avoid
+        self.geom: dict = {}
+        self.static_obstacles: list = []  # named live points / vectors of the solved geometry (annotations attach here)  # reserved areas (where live content will move) that labels must avoid
 
     def st(self):
         return self.W(self.T.get_value())
@@ -593,6 +594,13 @@ def assemble(S: dict, T: ValueTracker):
         gm_rigs.build(ctx, rig)
     # panels: readouts, graphs, equations
     gm_rigs.panels(ctx)
+    ctx.static_obstacles = []  # leaf boxes of the drawn bodies at t=0: annotation text keeps off them
+    for e in ctx.els:
+        if e["kind"] in ("body", "panel"):
+            for x in [x for x in e["mob"].get_family() if len(x.points) and not x.submobjects][:400]:
+                b = bbox(x)
+                if b and (b[2] - b[0]) * (b[3] - b[1]) > 0.0005:
+                    ctx.static_obstacles.append(b)
     gm_rigs.annotations(ctx)
     obstacles = []
     for e in ctx.els:
@@ -667,7 +675,13 @@ class PartScene(MovingCameraScene):
                         pen["covered"].append(e["id"]) if annot else None
             for t, pid in focus:
                 if abs(t - a) < 1e-3:
-                    anims.append(Circumscribe(ctx.bodies[pid], color=Q["amber"], buff=0.12, stroke_width=4, fade_out=True))
+                    lab = next((e for e in ctx.els if e["kind"] == "label" and e["part"] == pid and id(e) in shown), None)
+                    if lab is not None:
+                        tx = lab["mob"][-1]
+                        ul = Line(tx.get_corner(DOWN + LEFT) + DOWN * 0.06, tx.get_corner(DOWN + RIGHT) + DOWN * 0.06).set_stroke(Q["amber"], 4)
+                        anims.append(Succession(Create(ul, run_time=0.6), FadeOut(ul, run_time=0.4)))
+                    else:
+                        anims.append(Circumscribe(ctx.bodies[pid], color=Q["amber"], buff=0.08, stroke_width=2.5, fade_out=True))
             dur = b - a
             self.play(T.animate.set_value(b), *anims, run_time=dur, rate_func=linear)
         gate = os.environ.get("GM_GATE_PATH")

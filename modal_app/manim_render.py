@@ -285,11 +285,11 @@ def compose(job_id: str, description: str, narration: dict | None, context: str,
     report["wall_s"] = round(time.time() - t0, 1)
     if r.get("gate") and r.get("engine") == "grammar":
         report["gate"] = {"duration": r["gate"].get("duration"), "checks": r["gate"].get("checks")}
-    _put(report_upload_url, json.dumps(report, default=str).encode(), "application/json")
+    _put(report_upload_url, json.dumps(report, default=lambda o: float(o) if hasattr(o, "__float__") else str(o)).encode(), "application/json")
     if not r.get("ok"):
         if callback:
             _callback(job_id, "failed", (r.get("error") or "composition failed") + "\n" + "\n".join(log[-8:]), {"composed": True})
-        return report
+        return json.loads(json.dumps(report, default=lambda o: float(o) if hasattr(o, "__float__") else str(o)))
     with open(r["video"], "rb") as f:
         video = f.read()
     if not _put(upload_url, video, "video/mp4"):
@@ -301,6 +301,7 @@ def compose(job_id: str, description: str, narration: dict | None, context: str,
         with open(r["pen"], "rb") as f:
             _put(paths_upload_url, f.read(), "application/json")
     report["bytes"] = len(video)
+    report = json.loads(json.dumps(report, default=lambda o: float(o) if hasattr(o, "__float__") else str(o)))  # numpy-free for the web container
     if callback:
         code = r.get("code") or gm_compose.scene_code(r["spec"])
         _callback(job_id, "done", None, {"composed": True, "code": code, "issues": r.get("issues"), "timings": r.get("timings")})

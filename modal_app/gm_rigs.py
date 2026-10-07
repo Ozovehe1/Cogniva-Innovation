@@ -275,9 +275,9 @@ def graph(ctx, g):
     box = Box(*g["box"])
     xr, yr = g["x_range"], g["y_range"]
     ax = Axes(x_range=[xr[0], xr[1], g.get("x_step", (xr[1] - xr[0]) / 4)], y_range=[yr[0], yr[1], g.get("y_step", (yr[1] - yr[0]) / 4)],
-              x_length=box.w - 0.7, y_length=box.h - 0.6, tips=False,
+              x_length=box.w - 1.0, y_length=box.h - 1.3, tips=False,
               axis_config={"color": MUTED, "stroke_width": 2, "include_ticks": True, "tick_size": 0.04, "include_numbers": False})
-    ax.move_to(box.c + np.array([0.25, 0.15, 0]))
+    ax.move_to(box.c + np.array([0.35, 0.05, 0]))
     parts = VGroup(ax)
     if yr[0] < 0 < yr[1] and not g.get("x_axis_at_zero"):
         ax.x_axis.set_opacity(0)
@@ -285,18 +285,19 @@ def graph(ctx, g):
         for xv in np.arange(xr[0], xr[1] + 1e-9, g.get("x_step", (xr[1] - xr[0]) / 4)):
             parts.add(Line(ax.c2p(xv, yr[0]), ax.c2p(xv, yr[0]) + DOWN * 0.07).set_stroke(MUTED, 2))
             if g.get("x_numbers", True):
-                parts.add(MathTex(f"{xv:g}", font_size=18, color=MUTED).next_to(ax.c2p(xv, yr[0]), DOWN, buff=0.1))
+                parts.add(MathTex(f"{xv:g}", font_size=24, color=MUTED).next_to(ax.c2p(xv, yr[0]), DOWN, buff=0.1))
     if g.get("y_numbers"):
         for v in g["y_numbers"]:
-            parts.add(MathTex(str(v), font_size=20, color=MUTED).next_to(ax.c2p(xr[0], v), LEFT, buff=0.08))
+            parts.add(MathTex(f"{v:g}", font_size=24, color=MUTED).next_to(ax.c2p(xr[0], v), LEFT, buff=0.08))
     if g.get("x_label"):
-        parts.add(MathTex(g["x_label"], font_size=26, color=MUTED).next_to(ax.c2p(xr[1], yr[0]), UP + LEFT * 0.2, buff=0.12))
+        # x label centred under the axis, below the tick numbers (protected: never dropped)
+        parts.add(MathTex(g["x_label"], font_size=28, color=MUTED).next_to(ax.c2p((xr[0] + xr[1]) / 2, yr[0]), DOWN, buff=0.42))
     if g.get("y_label"):
-        parts.add(MathTex(g["y_label"], font_size=26, color=ctx.color_of(g["y"], MUTED)).next_to(ax.y_axis.get_end(), RIGHT, buff=0.1))
+        parts.add(MathTex(g["y_label"], font_size=28, color=ctx.color_of(g["y"], MUTED)).next_to(ax.y_axis.get_end(), UP, buff=0.12).align_to(ax.y_axis, LEFT).shift(LEFT * 0.35))
     for ref in g.get("refs") or []:  # horizontal reference lines (e.g. rest potential)
         parts.add(DashedLine(ax.c2p(xr[0], ref["y"]), ax.c2p(xr[1], ref["y"])).set_stroke(RULE, 2))
         if ref.get("tex"):
-            parts.add(MathTex(ref["tex"], font_size=20, color=MUTED).next_to(ax.c2p(xr[1], ref["y"]), UP, buff=0.04).shift(LEFT * 0.3))
+            parts.add(MathTex(ref["tex"], font_size=24, color=MUTED).next_to(ax.c2p(xr[1], ref["y"]), UP, buff=0.05).shift(LEFT * 0.6))
     ctx.add("graph:" + g["id"], parts, show=g.get("show", 0.0), how="create", kind="panel", part="graph:" + g["id"], z=8)
     c = ctx.color_of(g["y"], INK)
     W = ctx.W
@@ -379,14 +380,22 @@ def cable_signal(ctx, rig):
     dms = float(rig.get("delay_ms", 2.5))
     tissue = col(rig.get("color", "neuron"))
     rs = min(0.75, 0.16 * box.h)
-    sx, sy = box.x0 + rs * 3.4, box.cy
+    for _fit in range(12):  # the whole cell (dendritic tree included) must fit its region: shrink until it does
+        rng = np.random.default_rng(int(rig.get("seed", 7)))
+        sx, sy = box.x0 + 0.15, box.cy
+        segs = []
+        for k in range(6):
+            a = PI * (0.62 + 0.76 * k / 5) + rng.uniform(-0.1, 0.1)
+            _branches(rs * 0.8 * math.cos(a), rs * 0.8 * math.sin(a), a, rs * 1.05, 10, 4, rng, segs)
+        xs_ = [p[0] for sgm in segs for p in (sgm[0], sgm[2])]
+        ys_ = [p[1] for sgm in segs for p in (sgm[0], sgm[2])]
+        sx = box.x0 + 0.12 - min(xs_)
+        if max(ys_) - min(ys_) < box.h - 0.25 or rs < 0.25:
+            break
+        rs *= 0.92
+    segs = [((p0[0] + sx, p0[1] + sy), (pm[0] + sx, pm[1] + sy), (p1[0] + sx, p1[1] + sy), w) for p0, pm, p1, w in segs]
     ax0, ax1 = sx + rs * 0.9, box.x1 - 0.75
     aw = max(0.14, 0.3 * rs)  # axon diameter
-    # dendrites (procedural tree, tapered strokes)
-    segs = []
-    for k in range(6):
-        a = PI * (0.62 + 0.76 * k / 5) + rng.uniform(-0.1, 0.1)
-        _branches(sx + rs * 0.8 * math.cos(a), sy + rs * 0.8 * math.sin(a), a, rs * 1.05, 10, 4, rng, segs)
     den = VGroup()
     for p0, pm, p1, w in segs:
         c = VMobject().set_points_smoothly([np.array([*p0, 0]), np.array([*pm, 0]), np.array([*p1, 0])])
@@ -463,6 +472,9 @@ def cable_signal(ctx, rig):
             v = v_at(ms - k * dms)
             f = min(1.0, max(0.0, (v + 70) / 110))
             c = mix(rest_c, hot_c, f)
+            if f > 0.05:  # glow of the depolarised node (charge flowing in)
+                for gr_ in (0.5, 0.38, 0.27):
+                    g.add(Circle(radius=(0.12 + gr_ * f) * (1 + aw)).move_to([xk, sy, 0]).set_fill(hot_c, 0.12 * f).set_stroke(width=0))
             g.add(Circle(radius=0.07 + 0.16 * f).move_to([xk, sy, 0]).set_fill(c, 0.35 + 0.55 * f).set_stroke(c, 2.5))
             if f > 0.25:  # local current spreading inside the next internode (faint)
                 g.add(Line([xk, sy, 0], [xk + seg * 0.9 * f, sy, 0]).set_stroke(hot_c, 6 * f, opacity=0.6))
@@ -487,7 +499,7 @@ def cable_signal(ctx, rig):
         gna = trace[:, 5] / trace[:, 5].max()
         kk = trace[:, 6]
         gk = (kk - kk.min()) / (kk.max() - kk.min())
-        frame = RoundedRectangle(width=ibox.w, height=ibox.h, corner_radius=0.12).move_to(ibox.c).set_fill("#FFFFFF", 0.6).set_stroke(RULE, 2)
+        frame = RoundedRectangle(width=ibox.w, height=ibox.h, corner_radius=0.12).move_to(ibox.c).set_fill(THEME_PANEL(), THEME_PANEL_OP()).set_stroke(RULE, 2)
         my = ibox.cy
         lip = VGroup()
         thick = 0.42
@@ -971,7 +983,7 @@ def flow_reactor(ctx, rig):
     if ib:
         ibx = Box(*ib)
         wall_y = ibx.y0 + ibx.h * 0.22
-        fr = RoundedRectangle(width=ibx.w, height=ibx.h, corner_radius=0.12).move_to(ibx.c).set_fill("#FFFFFF", 0.65).set_stroke(RULE, 2)
+        fr = RoundedRectangle(width=ibx.w, height=ibx.h, corner_radius=0.12).move_to(ibx.c).set_fill(THEME_PANEL(), THEME_PANEL_OP()).set_stroke(RULE, 2)
         wall = shaded_rect(ibx.x0 + 0.05, ibx.y0 + 0.05, ibx.x1 - 0.05, wall_y - 0.12, cer, sw=1.5, vertical=True)
         wash = shaded_rect(ibx.x0 + 0.05, wall_y - 0.12, ibx.x1 - 0.05, wall_y, "#D9D2C3", sw=1.2, vertical=True)
         rx = rig.get("reactions") or []
@@ -1120,11 +1132,26 @@ def _vector(ctx, a):
             from manim import DashedVMobject
             ar = VGroup(DashedLine(P, Qp - (Qp - P) / np.linalg.norm(Qp - P) * 0.2).set_stroke(c, 3), ar.get_tip() if hasattr(ar, "get_tip") else VGroup())
         d = (Qp - P) / np.linalg.norm(Qp - P)
-        n = np.array([-d[1], d[0], 0]) * (1 if a.get("label_side", "left") == "left" else -1)
-        m.move_to(Qp + d * (0.15 + m.width * 0.3) + n * (0.15 + m.height * 0.5))
+        pref = 1 if a.get("label_side", "left") == "left" else -1
+        best = None
+        for sgn in (pref, -pref):
+            for along in (0.3, 0.0, -0.4):
+                n = np.array([-d[1], d[0], 0]) * sgn
+                c = Qp + d * (0.15 + m.width * along) + n * (0.15 + m.height * 0.5 + m.width * 0.2 * abs(n[1]) * 0)
+                bb = [c[0] - m.width / 2, c[1] - m.height / 2, c[0] + m.width / 2, c[1] + m.height / 2]
+                sc_ = sum(_ovl(bb, o) for o in ctx.static_obstacles) + (0.0 if sgn == pref else 0.02) + abs(along - 0.3) * 0.01
+                if best is None or sc_ < best[0]:
+                    best = (sc_, c)
+        m.move_to(best[1])
         keep_in_frame(m)
         return VGroup(ar, m)
     ctx.add("annot:" + a["id"], live(f), show=a.get("show", 0.0), kind="annot", how="create", part="annot:" + a["id"], z=13, hide=a.get("hide"), moving=True)
+
+
+def _ovl(a, b):
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    return max(0.0, w) * max(0.0, h)
 
 
 def _point(ctx, a):
@@ -1190,7 +1217,8 @@ def projectile(ctx, rig):
     R = v0 * v0 * math.sin(2 * th) / g
     H = (v0 * math.sin(th)) ** 2 / (2 * g)
     # one scale for x and y (true shape of the parabola)
-    k = min((bx.w - 2.4) / R, (bx.h - 1.6) / max(H, 1e-6))
+    vs0 = float(rig.get("vec_scale", 2.4 / v0))
+    k = min((bx.w - 2.4 - (vs0 * v0 * math.cos(th) + 0.9)) / R, (bx.h - 1.6) / max(H, 1e-6))
     O = np.array([bx.x0 + 1.5, bx.y0 + 0.75, 0])
     fly = rig.get("fly", "fly")
 
@@ -1200,6 +1228,15 @@ def projectile(ctx, rig):
     def pos(t):
         return O + k * np.array([v0 * math.cos(th) * t, v0 * math.sin(th) * t - g * t * t / 2, 0])
     vs = float(rig.get("vec_scale", 2.4 / v0))  # arrow length per m/s (same for every velocity arrow)
+    # every velocity arrow (launch, and along the flight) must stay inside the frame with room for its label
+    for tq in np.linspace(0, T, 41):
+        p_ = O + k * np.array([v0 * math.cos(th) * tq, v0 * math.sin(th) * tq - g * tq * tq / 2, 0])
+        v_ = np.array([v0 * math.cos(th), v0 * math.sin(th) - g * tq, 0])
+        for lim_ in range(30):
+            tip = p_ + vs * v_
+            if -FW / 2 + 0.7 < tip[0] < FW / 2 - 0.7 and -FH / 2 + 0.5 < tip[1] < FH / 2 - 0.5:
+                break
+            vs *= 0.92
     ctx.geom.update({
         "O": O, "ground": O + RIGHT * 1.5, "ball": lambda: pos(tt()),
         "v0_tip": O + vs * v0 * np.array([math.cos(th), math.sin(th), 0]),
@@ -1551,6 +1588,11 @@ def _freeform(ctx, it, box):
     m.set_stroke(OUTLINE_C() if it.get("closed", True) else INK, 3)
     ctx.add(it["id"], m, show=it.get("show", 0.0), how="create", kind="body", z=2)
     ctx.anchors[it["id"]] = pts[0]
+
+
+def THEME_PANEL_OP():
+    import gm_parts
+    return gm_parts.THEME.get("panel_op", 0.6)
 
 
 def THEME_PANEL():
