@@ -98,22 +98,21 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
           </figure>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <Card padded={false} className="lg:col-span-2">
+            <Card padded={false} className="lg:col-span-3">
               <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                <div className="border-b border-line p-5 md:border-b-0 md:border-r md:p-6">
+                <div className="border-b border-line p-5 md:border-b-0 md:border-r md:p-8">
                   <h2 className="mb-2 text-[15px] font-semibold text-ink">Intelligence profile</h2>
-                  <div className="mx-auto max-w-[300px]">
+                  <div className="mx-auto max-w-[340px]">
                     <RadarChart scores={intelData.intelligence_scores} />
                   </div>
                 </div>
-                <div className="p-5 md:p-6">
+                <div className="p-5 md:p-8">
                   <ScoreBars scores={intelData.intelligence_scores} highlight={intelData.dominant_intelligence} compact />
                 </div>
               </div>
             </Card>
 
-            <div className="space-y-6">
-              <Card>
+            <Card>
                 <h3 className="text-[15px] font-semibold text-ink">Progress</h3>
                 <div className="mb-2 mt-4 flex items-baseline justify-between">
                   <span className="font-display text-[24px] leading-none text-ink">{level}</span>
@@ -141,7 +140,7 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
               </Card>
 
               {intelData.study_tips && intelData.study_tips.length > 0 && (
-                <Card>
+                <Card className="lg:col-span-2">
                   <h3 className="mb-3 text-[15px] font-semibold text-ink">Study tips</h3>
                   <ol className="space-y-2.5">
                     {intelData.study_tips.slice(0, 3).map((tip, i) => (
@@ -153,14 +152,13 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
                   </ol>
                 </Card>
               )}
-            </div>
           </div>
         </>
       )}
 
       {/* Assigned projects */}
       <section>
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-[15px] font-semibold text-ink">
             Assigned projects <span className="tnum font-normal text-muted">({assignmentList.length})</span>
           </h2>
