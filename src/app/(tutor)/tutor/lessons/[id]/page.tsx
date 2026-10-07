@@ -82,7 +82,7 @@ export default function TutorLessonEditor({ params }: { params: Promise<{ id: st
         <ArrowLeft className="h-4 w-4" strokeWidth={1.75} /> All lessons
       </Link>
 
-      <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <div className="mb-2 flex items-center gap-3">
             <Eyebrow>{lesson.subject}</Eyebrow>
@@ -119,7 +119,7 @@ export default function TutorLessonEditor({ params }: { params: Promise<{ id: st
           <Card className="flex aspect-[16/10] flex-col items-center justify-center gap-3 text-center">
             <Spinner className="h-5 w-5 text-accent" />
             <p className="text-[15px] text-ink-2">Writing a new draft…</p>
-            <p className="text-[13px] text-muted">This usually takes 20 to 60 seconds.</p>
+            <p className="text-[13px] text-muted">This usually takes one to three minutes.</p>
           </Card>
         ) : steps.length === 0 ? (
           <Card className="flex aspect-[16/10] items-center justify-center text-center text-[15px] text-muted">

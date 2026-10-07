@@ -164,7 +164,7 @@ export function buildBoard(steps: Step[], count: number): BoardState {
 /* ───────────── Timing ───────────── */
 
 const SHAPE_MS: Record<string, number> = {
-  line: 700, arrow: 800, circle: 900, rect: 900, polyline: 1000, point: 380, axes: 1200, function: 1600,
+  line: 700, arrow: 800, circle: 900, rect: 900, polyline: 1000, polygon: 1000, arc: 800, sector: 900, point: 380, axes: 1200, function: 1600,
 }
 
 /** How long a step's own animation runs, in ms. */
@@ -215,7 +215,14 @@ export function shapeBox(el: ShapeEl): Box | null {
   switch (shape.kind) {
     case 'line':
     case 'arrow': pts.push(toBoard(el.axes, shape.from), toBoard(el.axes, shape.to)); break
-    case 'polyline': shape.points.forEach(p => pts.push(toBoard(el.axes, p))); break
+    case 'polyline':
+    case 'polygon': shape.points.forEach(p => pts.push(toBoard(el.axes, p))); break
+    case 'arc':
+    case 'sector': {
+      const [cx, cy] = toBoard(el.axes, shape.center)
+      const r = shape.r * xScale(el.axes)
+      pts.push([cx - r, cy - r], [cx + r, cy + r]); break
+    }
     case 'point': { const [x, y] = toBoard(el.axes, shape.at); pts.push([x - 6, y - 6], [x + 6, y + 6]); break }
     case 'rect': pts.push(toBoard(el.axes, [shape.x, shape.y]), toBoard(el.axes, [shape.x + shape.w, shape.y + shape.h])); break
     case 'circle': {

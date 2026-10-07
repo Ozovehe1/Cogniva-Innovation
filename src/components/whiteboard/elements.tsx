@@ -56,7 +56,7 @@ export function TextElement({
     fontSize: fontPx,
     color: INK_HEX[el.color],
     maxWidth: el.maxWidth,
-    whiteSpace: el.maxWidth ? 'normal' : 'nowrap',
+    whiteSpace: el.maxWidth ? 'pre-line' : 'pre',
   }
   const cls = el.font === 'sans' && el.kind === 'text' ? 'font-sans tracking-[-0.01em]' : 'font-display'
 
@@ -247,6 +247,8 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
   const maskId = `wb-mask-${el.key.replace(/[^\w-]/g, '_')}`
   const P = (p: [number, number]) => toBoard(el.axes, p)
   const base = { color, width, dashed: step.dashed, animate, reduced, maskId }
+  // 8-digit hex: the stroke colour at ~12% opacity.
+  const fillTint = step.fill ? `${color}1F` : 'none'
 
   switch (shape.kind) {
     case 'line':
@@ -262,17 +264,35 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
     }
     case 'polyline':
       return <Stroke {...base} d={pathFromPoints(shape.points.map(P))} duration={dur} clipId={clipId} />
+    case 'polygon': {
+      const pts = shape.points.map(P)
+      return <Stroke {...base} d={`${pathFromPoints(pts)} Z`} duration={dur} clipId={clipId} fill={fillTint} />
+    }
+    case 'arc':
+    case 'sector': {
+      const [cx, cy] = P(shape.center)
+      const r = shape.r * xScale(el.axes)
+      let a0 = shape.from, a1 = shape.to
+      if (a1 < a0) [a0, a1] = [a1, a0]
+      const sweep = Math.min(359.99, a1 - a0)
+      const pt = (deg: number) => [cx + r * Math.cos((deg * Math.PI) / 180), cy - r * Math.sin((deg * Math.PI) / 180)] as const
+      const [sx, sy] = pt(a0), [ex, ey] = pt(a0 + sweep)
+      const large = sweep > 180 ? 1 : 0
+      const arc = `M${sx.toFixed(2)} ${sy.toFixed(2)} A${r} ${r} 0 ${large} 0 ${ex.toFixed(2)} ${ey.toFixed(2)}`
+      const d = shape.kind === 'sector' ? `M${cx} ${cy} L${sx.toFixed(2)} ${sy.toFixed(2)} A${r} ${r} 0 ${large} 0 ${ex.toFixed(2)} ${ey.toFixed(2)} Z` : arc
+      return <Stroke {...base} d={d} duration={dur} clipId={clipId} fill={shape.kind === 'sector' ? fillTint : 'none'} />
+    }
     case 'rect': {
       const [x, y] = P([shape.x, shape.y])
       const [x2, y2] = P([shape.x + shape.w, shape.y + shape.h])
       const pts: [number, number][] = [[x, y], [x2, y], [x2, y2], [x, y2], [x, y]]
-      return <Stroke {...base} d={pathFromPoints(pts)} duration={dur} clipId={clipId} />
+      return <Stroke {...base} d={pathFromPoints(pts)} duration={dur} clipId={clipId} fill={fillTint} />
     }
     case 'circle': {
       const [cx, cy] = P(shape.center)
       const r = shape.r * xScale(el.axes)
       const d = `M${cx + r} ${cy} A${r} ${r} 0 1 1 ${cx - r} ${cy} A${r} ${r} 0 1 1 ${cx + r} ${cy}`
-      return <Stroke {...base} d={d} duration={dur} clipId={clipId} />
+      return <Stroke {...base} d={d} duration={dur} clipId={clipId} fill={fillTint} />
     }
     case 'point': {
       const [x, y] = P(shape.at)

@@ -59,6 +59,12 @@ export type Shape =
   | { kind: 'circle'; center: Pt; r: number }
   | { kind: 'rect'; x: number; y: number; w: number; h: number }
   | { kind: 'polyline'; points: Pt[] }
+  /** Closed polygon. */
+  | { kind: 'polygon'; points: Pt[] }
+  /** Arc of a circle; angles in degrees, counter-clockwise from the +x direction. */
+  | { kind: 'arc'; center: Pt; r: number; from: number; to: number }
+  /** Pie wedge (sector); angles as for arc. */
+  | { kind: 'sector'; center: Pt; r: number; from: number; to: number }
   | { kind: 'point'; at: Pt; label?: string; labelPos?: 'ne' | 'nw' | 'se' | 'sw' }
   | {
       kind: 'axes'
@@ -85,6 +91,8 @@ export interface DrawStep extends StepBase {
   color?: Ink
   width?: number
   dashed?: boolean
+  /** Fill closed shapes (circle, rect, polygon, sector) with a light tint of the colour. */
+  fill?: boolean
   /** Id of an axes shape whose graph coordinates this shape uses. Required for `function`. */
   on?: string
 }
@@ -163,6 +171,8 @@ export interface ValidationResult {
   ok: boolean
   steps: Step[]
   errors: string[]
+  /** Number of top-level steps in the input. */
+  total: number
 }
 
 type Obj = Record<string, unknown>
@@ -212,8 +222,16 @@ function validateShape(s: unknown, errs: string[], at: string) {
       reqNum(s, 'w', errs, at, 0); reqNum(s, 'h', errs, at, 0)
       break
     case 'polyline':
+    case 'polygon':
       if (!Array.isArray(s.points) || s.points.length < 2 || s.points.length > 400 || !s.points.every(isPt))
         errs.push(`${at}.points must be 2..400 [x,y] pairs`)
+      break
+    case 'arc':
+    case 'sector':
+      if (!isPt(s.center)) errs.push(`${at}.center must be [x,y]`)
+      reqNum(s, 'r', errs, at, 0, 2000)
+      reqNum(s, 'from', errs, at, -1440, 1440)
+      reqNum(s, 'to', errs, at, -1440, 1440)
       break
     case 'point':
       if (!isPt(s.at)) errs.push(`${at}.at must be [x,y]`)
@@ -239,7 +257,7 @@ function validateShape(s: unknown, errs: string[], at: string) {
       if (s.domain !== undefined && !isRange(s.domain)) errs.push(`${at}.domain must be [min,max] with min<max`)
       break
     default:
-      errs.push(`${at}.kind must be one of line|arrow|circle|rect|polyline|point|axes|function`)
+      errs.push(`${at}.kind must be one of line|arrow|circle|rect|polyline|polygon|arc|sector|point|axes|function`)
   }
 }
 
@@ -269,6 +287,7 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<
       optEnum(s, 'color', INKS, errs, at)
       optNum(s, 'width', errs, at, 0.5, 12)
       if (s.dashed !== undefined && typeof s.dashed !== 'boolean') errs.push(`${at}.dashed must be boolean`)
+      if (s.fill !== undefined && typeof s.fill !== 'boolean') errs.push(`${at}.fill must be boolean`)
       if (s.on !== undefined) {
         if (!isStr(s.on)) errs.push(`${at}.on must be an axes id`)
         else if (!ctx.axes.has(s.on)) errs.push(`${at}.on refers to unknown axes "${s.on}"`)
@@ -343,14 +362,60 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<
   return ok
 }
 
+const INK_ALIASES: Record<string, Ink> = {
+  black: 'ink', dark: 'ink', default: 'ink', green: 'accent', primary: 'accent', red: 'clay', orange: 'clay',
+  blue: 'navy', yellow: 'amber', gold: 'amber', gray: 'muted', grey: 'muted',
+}
+const SIZE_ALIASES: Record<string, TextSize> = { small: 'sm', medium: 'md', large: 'lg', xlarge: 'xl', 'x-large': 'xl', s: 'sm', m: 'md', l: 'lg' }
+
+/**
+ * Coerces common near-misses from the model before strict validation: colour and
+ * size aliases, unknown colours to ink, numeric strings, `wedge` -> sector, and
+ * `shape` fields put directly on a draw step.
+ */
+export function normalizeScript(input: unknown): unknown {
+  const arr = isObj(input) && Array.isArray(input.steps) ? input.steps : input
+  if (!Array.isArray(arr)) return input
+  const fixStep = (raw: unknown): unknown => {
+    if (!isObj(raw)) return raw
+    const s: Obj = { ...raw }
+    if (isStr(s.color)) {
+      const c = s.color.toLowerCase()
+      s.color = (INKS as readonly string[]).includes(c) ? c : INK_ALIASES[c] ?? 'ink'
+    }
+    if (isStr(s.size)) {
+      const z = s.size.toLowerCase()
+      s.size = (SIZES as readonly string[]).includes(z) ? z : SIZE_ALIASES[z] ?? 'md'
+    }
+    for (const k of ['x', 'y', 'ms', 'maxWidth', 'width']) {
+      if (isStr(s[k]) && s[k] !== '' && Number.isFinite(Number(s[k]))) s[k] = Number(s[k])
+    }
+    if (s.type === 'draw' && !isObj(s.shape) && isStr(s.kind)) {
+      const { type, id, say, color, width, dashed, fill, on, ...shape } = s
+      return fixStep({ type, id, say, color, width, dashed, fill, on, shape })
+    }
+    if (s.type === 'draw' && isObj(s.shape)) {
+      const sh: Obj = { ...s.shape }
+      if (sh.kind === 'wedge' || sh.kind === 'pie') sh.kind = 'sector'
+      if (sh.kind === 'triangle' || sh.kind === 'path') sh.kind = Array.isArray(sh.points) ? (sh.kind === 'triangle' ? 'polygon' : 'polyline') : sh.kind
+      if (sh.kind === 'dot') sh.kind = 'point'
+      if ((sh.kind === 'arc' || sh.kind === 'sector') && sh.from === undefined && isNum(sh.startAngle)) { sh.from = sh.startAngle; sh.to = sh.endAngle }
+      s.shape = sh
+    }
+    if (s.type === 'check' && Array.isArray(s.reteach)) s.reteach = s.reteach.map(fixStep)
+    return s
+  }
+  return arr.map(fixStep)
+}
+
 /**
  * Validate a script. `knownIds` lets a continuation (AI next steps) refer to
  * elements already on the board.
  */
 export function validateScript(input: unknown, opts: { knownIds?: Iterable<string>; knownAxes?: Iterable<string>; maxSteps?: number } = {}): ValidationResult {
   const errors: string[] = []
-  const arr = isObj(input) && Array.isArray(input.steps) ? input.steps : input
-  if (!Array.isArray(arr)) return { ok: false, steps: [], errors: ['script must be an array of steps (or {"steps": [...]})'] }
+  const arr = normalizeScript(input)
+  if (!Array.isArray(arr)) return { ok: false, steps: [], errors: ['script must be an array of steps (or {"steps": [...]})'], total: 0 }
   const max = opts.maxSteps ?? 200
   if (arr.length === 0) errors.push('script has no steps')
   if (arr.length > max) errors.push(`script has more than ${max} steps`)
@@ -359,7 +424,7 @@ export function validateScript(input: unknown, opts: { knownIds?: Iterable<strin
   arr.slice(0, max).forEach((raw, i) => {
     if (validateStep(raw, errors, `steps[${i}]`, ctx)) steps.push(raw as Step)
   })
-  return { ok: errors.length === 0, steps, errors }
+  return { ok: errors.length === 0, steps, errors, total: arr.length }
 }
 
 /** The ids and axes that exist on the board after playing `steps`. */
@@ -495,8 +560,8 @@ export const SCRIPT_SCHEMA_PROMPT = `Board: ${BOARD_W} wide x ${BOARD_H} tall un
 Return a JSON object {"steps": Step[]}. Each Step is one of:
 - {"type":"write","id"?,"text","x","y","size"?:"sm|md|lg|xl","color"?,"font"?:"serif|sans","align"?:"left|center|right","maxWidth"?,"say"?}
 - {"type":"math","id"?,"tex" (KaTeX LaTeX, no $ delimiters),"x","y","size"?,"color"?,"align"?,"say"?}
-- {"type":"draw","id"?,"shape",...,"color"?,"width"? (0.5..12, default 2.5),"dashed"?,"on"? (axes id: shape coordinates are then GRAPH units),"say"?}
-  shape is one of {"kind":"line","from":[x,y],"to":[x,y]} | {"kind":"arrow","from","to"} | {"kind":"circle","center":[x,y],"r"} | {"kind":"rect","x","y","w","h"} | {"kind":"polyline","points":[[x,y],...]} | {"kind":"point","at":[x,y],"label"?,"labelPos"?:"ne|nw|se|sw"} | {"kind":"axes","frame":{"x","y","w","h"},"xRange":[min,max],"yRange":[min,max],"xLabel"?,"yLabel"?,"xStep"?,"yStep"?} (axes MUST have an id) | {"kind":"function","expr":"x^2 - 1","domain"?:[a,b]} (function MUST set "on" to an axes id; expr uses x, + - * / ^, sin cos tan exp ln log sqrt abs pi e).
+- {"type":"draw","id"?,"shape",...,"color"?,"width"? (0.5..12, default 2.5),"dashed"?,"fill"? (light tint inside circle/rect/polygon/sector),"on"? (axes id: shape coordinates are then GRAPH units),"say"?}
+  shape is one of {"kind":"line","from":[x,y],"to":[x,y]} | {"kind":"arrow","from","to"} | {"kind":"circle","center":[x,y],"r"} | {"kind":"rect","x","y","w","h"} | {"kind":"polyline","points":[[x,y],...]} | {"kind":"polygon","points":[[x,y],...]} (closed) | {"kind":"arc"|"sector","center":[x,y],"r","from","to"} (degrees, counter-clockwise from +x; sector = pie wedge) | {"kind":"point","at":[x,y],"label"?,"labelPos"?:"ne|nw|se|sw"} | {"kind":"axes","frame":{"x","y","w","h"},"xRange":[min,max],"yRange":[min,max],"xLabel"?,"yLabel"?,"xStep"?,"yStep"?} (axes MUST have an id) | {"kind":"function","expr":"x^2 - 1","domain"?:[a,b]} (function MUST set "on" to an axes id; expr uses x, + - * / ^, sin cos tan exp ln log sqrt abs pi e).
 - {"type":"highlight","target": id of an element on the board,"style"?:"box|underline","color"?,"say"?}
 - {"type":"transform","target": id of a write/math element,"tex"? or "text"? (new content),"x"?,"y"? (new position),"color"?,"say"?}  — morphs the element, e.g. one equation into the next.
 - {"type":"clear","targets"?: [ids]} — omit targets to wipe the board.

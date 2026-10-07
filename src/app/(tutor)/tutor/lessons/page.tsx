@@ -105,7 +105,7 @@ export default function TutorLessonsPage() {
               <button type="submit" className={buttonClass('primary', 'md', 'w-full')} disabled={creating}>
                 {creating ? <><Spinner /> Drafting the lesson…</> : 'Create and draft'}
               </button>
-              {creating && <p className="text-[13px] leading-relaxed text-muted">The tutor is writing the whiteboard script. This usually takes 20 to 60 seconds.</p>}
+              {creating && <p className="text-[13px] leading-relaxed text-muted">The tutor is writing the whiteboard script. This usually takes one to three minutes.</p>}
             </form>
           </Card>
         </section>

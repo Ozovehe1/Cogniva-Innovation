@@ -129,8 +129,8 @@ Return the corrected JSON object {"steps": [...]} only.`
     console.warn('Lesson repair failed:', err instanceof Error ? err.message : err)
   }
   if (result.ok) return done(result.steps)
-  // Keep the valid steps if most of the answer survived; otherwise fail.
-  if (result.steps.length >= 3) {
+  // Keep the valid steps only if nearly all of the answer survived; otherwise fail rather than ship a broken lesson.
+  if (result.steps.length >= 3 && result.total - result.steps.length <= Math.max(1, Math.floor(result.total * 0.15))) {
     console.warn('Using partially valid steps; dropped errors:', result.errors.slice(0, 5))
     meta.dropped = result.errors.length
     return done(result.steps)
