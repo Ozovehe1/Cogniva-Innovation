@@ -476,11 +476,11 @@ export function WhiteboardPlayer({
       return
     }
     let wait: number
-    if (cursor === 0) wait = 250
+    if (cursor === 0) wait = 40
     else if (animIdx === cursor - 1) {
       if (doneId !== playId) return
       wait = slow ? 900 : 40
-    } else wait = slow ? 900 : 300
+    } else wait = slow ? 900 : 40
     const t = setTimeout(() => goTo(cursor, true), wait)
     return () => clearTimeout(t)
   }, [playing, blocked, hold, cursor, steps, animIdx, playId, doneId, goTo, emit, slow, started])

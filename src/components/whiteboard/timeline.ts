@@ -66,6 +66,9 @@ export function buildTimeline(step: Step, index: number, timing: NarrationTiming
       at += a.action.type === 'set' ? 0 : dur
     }
     const end = actions.reduce((m, a) => Math.max(m, a.start + a.dur), 0)
+    // A silent full clear (the start of a section) only has to start the board fading: the next
+    // step begins while it fades, so a section boundary adds no wait.
+    if (step.type === 'clear' && !step.targets) return { actions, narrationMs: 0, total: opts.reduced ? 0 : 180, timing: null }
     const total = Math.max(end + (actions.length ? 320 : 0), step.type === 'pause' ? step.ms : 0, raw.length ? 0 : dwellMs(step))
     return { actions, narrationMs: 0, total, timing: null }
   }
