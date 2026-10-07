@@ -71,6 +71,6 @@ export async function POST(request: Request) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('Tutor step error:', message)
-    return NextResponse.json({ error: 'The tutor could not prepare a new explanation right now.' }, { status: 502 })
+    return NextResponse.json({ error: 'The tutor could not prepare a new explanation right now.', detail: message.slice(0, 300) }, { status: 502 })
   }
 }

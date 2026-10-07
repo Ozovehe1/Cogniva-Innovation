@@ -45,6 +45,10 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
       return response.text ?? ''
     } catch (err) {
       lastErr = err
+      // Not every model accepts the minimal thinking level: retry the same call at the default level.
+      if (opts.thinking === 'minimal' && /thinking|INVALID_ARGUMENT|\b400\b/i.test(err instanceof Error ? err.message : String(err))) {
+        return generateText(prompt, { ...opts, thinking: 'low' })
+      }
       if (!isRetryable(err)) throw err
       console.warn(`Gemini ${model} unavailable, trying next model:`, err instanceof Error ? err.message : err)
     }

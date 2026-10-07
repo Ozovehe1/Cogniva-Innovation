@@ -100,7 +100,7 @@ export function CheckCard({
                 >
                   <input type="radio" name="check-choice" className="sr-only" checked={selected} onChange={() => setChoice(i)} />
                   <span className={cx('flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold',
-                    selected ? 'border-accent bg-accent text-white' : 'border-line-strong text-muted')}>
+                    showWrong ? 'border-clay bg-clay text-white' : selected ? 'border-accent bg-accent text-white' : 'border-line-strong text-muted')}>
                     {String.fromCharCode(65 + i)}
                   </span>
                   <span className="min-w-0"><RichText text={o} /></span>
