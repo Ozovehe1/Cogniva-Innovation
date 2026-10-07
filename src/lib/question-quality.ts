@@ -17,7 +17,7 @@ export interface RawItem { q: string; options: string[]; answer: number; explain
 export interface CheckedItem { item: DiagItem; problems: string[] }
 
 /** Prompt lines every question generator includes. */
-export const QUESTION_RULES = `Maths formatting: put EVERY piece of maths, every number with a unit written in LaTeX, and every symbol inside $...$ (KaTeX), in the question, the options and the explanation, e.g. "$1.26 \\times 10^{-2}$ T", "$\\chi_m = 10^{-4}$", "$318$ A/m". Never write LaTeX commands outside $...$. In JSON strings escape each backslash ("\\\\times").
+export const QUESTION_RULES = `Maths formatting: put EVERY piece of maths, every number with a unit written in LaTeX, and every symbol inside $...$ (KaTeX), in the question, the options and the explanation, e.g. "$1.26 \\times 10^{-2}$ T", "$\\chi_m = 10^{-4}$", "$318$ A/m". Never write LaTeX commands outside $...$. Units go as plain text after the closing $ ("$2.00$ A", "$1000$ turns/m"), never as italic maths letters. In JSON strings escape each backslash ("\\\\times").
 Options: 4 options that differ meaningfully. Each wrong option is a specific common mistake (wrong formula, forgot a factor, unit slip, sign error, inverted ratio) - never the right answer with different rounding. Numeric options must differ by at least 10% from each other and use the same number of significant figures (3 is ideal).
 Verification: for every question whose correct answer is a number, give "calc": a plain arithmetic expression that computes the correct option's value in the option's unit (numbers, + - * / ^, parentheses, pi, sqrt(), sin() and cos() in radians, ln(), log() base 10, exp(); write 4*pi*10^(-7), not 4πe-7). Use "calc": null when the answer is not a number.`
 
