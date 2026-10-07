@@ -19,10 +19,16 @@ const log = (...a) => console.log(TAG, ...a)
 const warn = (...a) => console.warn(`${TAG} WARNING:`, ...a)
 const DEFAULT_APP_URL = 'https://cogniva-innovation.vercel.app'
 
+// Vercel truncates very long log messages, so print one line per call and only the tail.
+const TAIL_LINES = 60
 function run(cmd, args, { timeoutMs = 10 * 60_000, env = process.env, quiet = false } = {}) {
   const r = spawnSync(cmd, args, { env, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`
-  if (!quiet && out.trim()) console.log(out.trim().split('\n').map(l => `${TAG}   ${l}`).join('\n'))
+  if (!quiet && out.trim()) {
+    const lines = out.trim().split('\n').filter(l => l.trim())
+    if (lines.length > TAIL_LINES) console.log(`${TAG}   ... (${lines.length - TAIL_LINES} earlier lines omitted)`)
+    for (const l of lines.slice(-TAIL_LINES)) console.log(`${TAG}   ${l.slice(0, 500)}`)
+  }
   return { ok: r.status === 0 && !r.error, out, error: r.error }
 }
 
