@@ -2,16 +2,17 @@ import Link from 'next/link'
 import { ArrowRight, BookOpen, Check } from 'lucide-react'
 import { getSessionProfile } from '@/lib/auth'
 import { Badge, Card, EmptyState, PageHeader, ProgressBar } from '@/components/ui'
+import { formatDuration } from '@/lib/lesson-sections'
 
 export const dynamic = 'force-dynamic'
 
-type LessonRow = { id: string; title: string; subject: string; objectives: string[] | null; script: unknown[] }
+type LessonRow = { id: string; title: string; subject: string; objectives: string[] | null; chapters: { count?: number; ms?: number }[] | null }
 type ProgressRow = { lesson_id: string; step_index: number; completed_at: string | null }
 
 export default async function LearnPage() {
   const { supabase, profile } = await getSessionProfile()
   const [{ data: lessons }, { data: progress }] = await Promise.all([
-    supabase.from('lessons').select('id, title, subject, objectives, script').eq('status', 'approved').order('created_at', { ascending: true }),
+    supabase.from('lessons').select('id, title, subject, objectives, chapters').eq('status', 'approved').order('created_at', { ascending: true }),
     profile
       ? supabase.from('lesson_progress').select('lesson_id, step_index, completed_at').eq('student_id', profile.id)
       : Promise.resolve({ data: [] as ProgressRow[] }),
@@ -34,7 +35,9 @@ export default async function LearnPage() {
         <ul className="grid gap-3 md:grid-cols-2">
           {list.map(l => {
             const p = byLesson.get(l.id)
-            const total = Array.isArray(l.script) ? l.script.length : 0
+            const ch = Array.isArray(l.chapters) ? l.chapters : []
+            const total = ch.reduce((a, c) => a + (typeof c.count === 'number' ? c.count : 0), 0)
+            const ms = ch.reduce((a, c) => a + (typeof c.ms === 'number' ? c.ms : 0), 0)
             const done = !!p?.completed_at
             const started = !!p && !done && p.step_index > 0
             return (
@@ -52,6 +55,9 @@ export default async function LearnPage() {
                     <h3 className="font-display text-[22px] leading-snug text-ink">{l.title}</h3>
                     {l.objectives && l.objectives.length > 0 && (
                       <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted">{l.objectives[0]}</p>
+                    )}
+                    {ms > 0 && (
+                      <p className="tnum mt-2 text-[13px] text-faint">About {formatDuration(ms)}{ch.length > 1 ? ` · ${ch.length} sections` : ''}</p>
                     )}
                     <div className="mt-auto pt-5">
                       {started && <ProgressBar value={p!.step_index} max={total || 1} label="Lesson progress" className="mb-3" />}

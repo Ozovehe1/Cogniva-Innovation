@@ -8,9 +8,14 @@ export function IdleTimeout() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const signOut = useCallback(async () => {
+    // Let open lessons save their exact position while the session is still valid.
+    window.dispatchEvent(new Event('geniusmap:before-signout'))
+    await new Promise(r => setTimeout(r, 600))
     const supabase = createClient()
     await supabase.auth.signOut()
-    window.location.href = '/login'
+    // Come back to the same page (e.g. the lesson) after signing in again.
+    const next = window.location.pathname + window.location.search
+    window.location.href = next && next !== '/' ? `/login?next=${encodeURIComponent(next)}` : '/login'
   }, [])
 
   useEffect(() => {

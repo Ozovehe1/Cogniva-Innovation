@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Check, Film, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { Alert, Badge, Card, Spinner, buttonClass, cx, inputClass, labelClass, textareaClass } from '@/components/ui'
 import type { Step } from '@/lib/lesson-schema'
+import { TargetSelect } from '@/components/tutor-sections'
 
 export function LessonStatusBadge({ status }: { status: string }) {
   return status === 'approved'
@@ -14,17 +15,20 @@ export function LessonStatusBadge({ status }: { status: string }) {
 
 export function ObjectivesEditor({
   objectives,
+  targetMinutes,
   busy,
   onSave,
   onRegenerate,
 }: {
   objectives: string[]
+  targetMinutes: number
   busy: null | 'save' | 'regenerate'
   onSave: (objectives: string[]) => void
-  onRegenerate: (objectives: string[], notes: string) => void
+  onRegenerate: (objectives: string[], notes: string, targetMinutes: number) => void
 }) {
   const [items, setItems] = useState<string[]>(objectives.length ? objectives : [''])
   const [notes, setNotes] = useState('')
+  const [target, setTarget] = useState(targetMinutes)
   useEffect(() => { setItems(objectives.length ? objectives : ['']) }, [objectives])
   const clean = items.map(i => i.trim()).filter(Boolean)
   const dirty = JSON.stringify(clean) !== JSON.stringify(objectives)
@@ -32,7 +36,7 @@ export function ObjectivesEditor({
   return (
     <Card>
       <h2 className="text-[15px] font-semibold text-ink">Objectives</h2>
-      <p className="mt-1 text-[13px] leading-relaxed text-muted">The draft is written from these. Edit them, then regenerate.</p>
+      <p className="mt-1 text-[13px] leading-relaxed text-muted">The draft is planned from these and the length. Edit them, then redraft.</p>
       <ol className="mt-4 space-y-2">
         {items.map((o, i) => (
           <li key={i} className="flex items-center gap-2">
@@ -62,6 +66,10 @@ export function ObjectivesEditor({
         </button>
       )}
       <div className="mt-4">
+        <label htmlFor="regen-target" className={labelClass}>Lesson length</label>
+        <TargetSelect id="regen-target" value={target} onChange={setTarget} disabled={!!busy} />
+      </div>
+      <div className="mt-4">
         <label htmlFor="regen-notes" className={labelClass}>Notes for the next draft <span className="font-normal text-faint">(optional)</span></label>
         <textarea id="regen-notes" rows={2} className={textareaClass} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Use a real-world example first; slower pace." maxLength={1000} />
       </div>
@@ -69,9 +77,9 @@ export function ObjectivesEditor({
         <button type="button" className={buttonClass('secondary', 'md')} disabled={!dirty || !!busy || clean.length === 0} onClick={() => onSave(clean)}>
           {busy === 'save' ? <Spinner /> : null} Save objectives
         </button>
-        <button type="button" className={buttonClass('primary', 'md')} disabled={!!busy || clean.length === 0} onClick={() => onRegenerate(clean, notes)}>
+        <button type="button" className={buttonClass('primary', 'md')} disabled={!!busy || clean.length === 0} onClick={() => onRegenerate(clean, notes, target)}>
           {busy === 'regenerate' ? <Spinner /> : <RefreshCw className="h-4 w-4" strokeWidth={1.75} />}
-          {busy === 'regenerate' ? 'Regenerating…' : 'Regenerate draft'}
+          {busy === 'regenerate' ? 'Starting…' : 'Redraft lesson'}
         </button>
       </div>
     </Card>

@@ -1,12 +1,13 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
-import { draftLessonScript } from '@/lib/lesson-ai'
+import { loadSections, restartDraft, runDraftWork, selfOrigin, syncLessonScript } from '@/lib/lesson-drafting'
+import { LESSON_MAX_STEPS, MAX_TARGET, MIN_TARGET, chapterAt, estimateMs, flattenSections, normalizeChapters, validateSection } from '@/lib/lesson-sections'
 import { validateScript, type ManimClipStep, type Step } from '@/lib/lesson-schema'
 import { publicClipUrl } from '@/lib/supabase/admin'
 
-export const maxDuration = 180
+export const maxDuration = 300
 
-type Lesson = { id: string; tutor_id: string; title: string; subject: string; objectives: string[]; status: string; script: Step[] }
+type Lesson = { id: string; tutor_id: string; title: string; subject: string; objectives: string[]; status: string; script: Step[]; chapters: unknown; target_minutes: number | null }
 
 async function loadOwn(id: string) {
   const { supabase, profile } = await getSessionProfile()
@@ -21,7 +22,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params
   const r = await loadOwn(id)
   if ('error' in r) return r.error
-  return NextResponse.json({ lesson: r.lesson })
+  const sections = await loadSections(r.supabase, id)
+  return NextResponse.json({ lesson: r.lesson, sections })
 }
 
 /**
@@ -39,10 +41,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { supabase, profile, lesson } = r
   const body = await request.json().catch(() => ({}))
 
-  const save = async (patch: Partial<Lesson>) => {
+  const save = async (patch: Partial<Lesson> & Record<string, unknown>) => {
     const { data, error } = await supabase.from('lessons').update(patch).eq('id', id).select('*').single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ lesson: data })
+    return NextResponse.json({ lesson: data, sections: await loadSections(supabase, id) })
   }
 
   switch (body.action) {
@@ -56,28 +58,38 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return save(patch)
     }
     case 'regenerate': {
-      try {
-        const script = await draftLessonScript(
-          { title: lesson.title, subject: lesson.subject, objectives: lesson.objectives ?? [] },
-          typeof body.notes === 'string' ? body.notes.slice(0, 1000) : undefined,
-        )
-        return save({ script, status: 'draft' })
-      } catch (err) {
-        console.error('Regenerate failed:', err instanceof Error ? err.message : err)
-        return NextResponse.json({ error: 'The AI draft failed. Try again in a moment.' }, { status: 502 })
-      }
+      // New outline and sections, drafted in the background; the editor polls /draft.
+      const t = Math.round(Number(body.targetMinutes ?? lesson.target_minutes ?? 15))
+      if (!Number.isFinite(t) || t < MIN_TARGET || t > MAX_TARGET) return NextResponse.json({ error: `Target length must be ${MIN_TARGET} to ${MAX_TARGET} minutes.` }, { status: 400 })
+      const { error } = await restartDraft(supabase, id, t, typeof body.notes === 'string' ? body.notes.slice(0, 1000) : null)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      const origin = selfOrigin(request)
+      after(() => runDraftWork(id, { origin }).catch(err => console.error('Draft worker crashed:', err)))
+      const { data } = await supabase.from('lessons').select('*').eq('id', id).single()
+      return NextResponse.json({ lesson: data, sections: [] })
     }
     case 'approve': {
-      const v = validateScript(lesson.script)
+      const sections = await loadSections(supabase, id)
+      if (sections.length > 0) {
+        const notReady = sections.filter(x => x.status !== 'ready')
+        if (notReady.length) return NextResponse.json({ error: `Section ${notReady[0].position + 1} (“${notReady[0].title}”) isn’t drafted yet.` }, { status: 400 })
+        const flat = flattenSections(sections.map(x => ({ title: x.title, steps: x.steps })))
+        const v = validateScript(flat.steps, { maxSteps: LESSON_MAX_STEPS })
+        if (!v.ok) return NextResponse.json({ error: `The script has problems and cannot be approved: ${v.errors.slice(0, 3).join('; ')}` }, { status: 400 })
+        return save({ script: flat.steps, chapters: flat.chapters, status: 'approved' })
+      }
+      const v = validateScript(lesson.script, { maxSteps: LESSON_MAX_STEPS })
       if (!v.ok) return NextResponse.json({ error: `The script has problems and cannot be approved: ${v.errors.slice(0, 3).join('; ')}` }, { status: 400 })
-      return save({ status: 'approved' })
+      return save({ status: 'approved', chapters: normalizeChapters(null, v.steps.length, lesson.title, v.steps) })
     }
     case 'unapprove':
       return save({ status: 'draft' })
     case 'save_script': {
-      const v = validateScript(body.script)
+      if ((await loadSections(supabase, id)).length > 0)
+        return NextResponse.json({ error: 'This lesson has sections: edit each section’s script instead.' }, { status: 400 })
+      const v = validateScript(body.script, { maxSteps: LESSON_MAX_STEPS })
       if (!v.ok) return NextResponse.json({ error: v.errors.slice(0, 5).join('; ') }, { status: 400 })
-      return save({ script: v.steps, status: 'draft' })
+      return save({ script: v.steps, status: 'draft', chapters: [{ title: lesson.title, start: 0, count: v.steps.length, ms: estimateMs(v.steps) }] })
     }
     case 'insert_clip': {
       if (typeof body.jobId !== 'string') return NextResponse.json({ error: 'jobId is required' }, { status: 400 })
@@ -94,8 +106,28 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         jobId: j.id,
         caption: typeof body.caption === 'string' && body.caption.trim() ? body.caption.trim().slice(0, 300) : j.prompt.slice(0, 120),
       }
+      const sections = await loadSections(supabase, id)
+      if (sections.length > 0) {
+        // Insert into the section that holds the chosen step of the flattened script.
+        const flat = flattenSections(sections.filter(x => x.status === 'ready').map(x => ({ title: x.title, steps: x.steps })))
+        const ready = sections.filter(x => x.status === 'ready')
+        if (!ready.length) return NextResponse.json({ error: 'No drafted section to add the clip to yet.' }, { status: 400 })
+        const ci = after < 0 ? 0 : chapterAt(flat.chapters, after)
+        const target = ready[ci]
+        const ch = flat.chapters[ci]
+        // Offset inside the section's own steps (the flattened copy may carry an extra leading clear).
+        const extra = ch.count - target.steps.length
+        const offset = after < 0 ? 0 : Math.max(0, after - ch.start - extra + 1)
+        const steps = [...target.steps]
+        steps.splice(Math.min(offset, steps.length), 0, step)
+        const v = validateSection(steps, target.position)
+        if (!v.ok) return NextResponse.json({ error: v.errors.slice(0, 3).join('; ') }, { status: 400 })
+        await supabase.from('lesson_sections').update({ steps: v.steps }).eq('id', target.id)
+        await syncLessonScript(supabase, id)
+        return save({ status: 'draft' })
+      }
       script.splice(after + 1, 0, step)
-      return save({ script, status: 'draft' })
+      return save({ script, status: 'draft', chapters: [{ title: lesson.title, start: 0, count: script.length, ms: estimateMs(script) }] })
     }
     default:
       return NextResponse.json({ error: 'Unknown action' }, { status: 400 })

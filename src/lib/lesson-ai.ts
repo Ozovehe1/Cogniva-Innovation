@@ -1,8 +1,9 @@
-import { generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
+import { GeminiQuotaError, generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, type Step } from './lesson-schema'
 import { autoFixLayout, layoutIssues } from './lesson-layout'
 import { MANIM_API_SHEET, describeProblems, guardManimCode, hintsFor, tracebackOf } from './manim-guard'
 import { buildBoard } from '@/components/whiteboard/board-state'
+import { SECTION_MAX_STEPS, withSectionStart } from './lesson-sections'
 import { intelligenceLabel } from '@/components/intelligence'
 
 export interface StudentProfileLite {
@@ -85,6 +86,7 @@ async function generateSteps(
   try {
     raw = await generateStructuredJson(prompt, gen)
   } catch (err) {
+    if (err instanceof GeminiQuotaError) throw err
     // Malformed JSON: fall through to repair with the error message.
     raw = { __error: err instanceof Error ? err.message : String(err) }
   }
@@ -107,6 +109,7 @@ Return the full corrected JSON object {"steps": [...]} with the same teaching co
       const fixed = validateScript(fixedRaw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, maxSteps: opts.maxSteps })
       if (fixed.ok && layoutIssues(fixed.steps, start, offset).length < issues.length) return done(fixed.steps)
     } catch (err) {
+      if (err instanceof GeminiQuotaError) return done(result.steps)
       console.warn('Layout repair failed:', err instanceof Error ? err.message : err)
     }
     return done(result.steps)
@@ -127,6 +130,7 @@ Return the corrected JSON object {"steps": [...]} only.`
     raw = await generateStructuredJson(repairPrompt, gen)
     result = validateScript(raw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, maxSteps: opts.maxSteps })
   } catch (err) {
+    if (err instanceof GeminiQuotaError) throw err
     console.warn('Lesson repair failed:', err instanceof Error ? err.message : err)
   }
   if (result.ok) return done(result.steps)
@@ -155,6 +159,140 @@ ${LAYOUT_RULES}
 - End with a one-line summary written on the board.
 Return {"steps": [...]} only.`
   return generateSteps(prompt, { maxSteps: 60, timeoutMs: 55_000, layoutRepair: true })
+}
+
+/* ───────────── Long lessons: outline, then one section per call ───────────── */
+
+export interface OutlineSection { title: string; goal: string; minutes: number; keyPoints: string[] }
+
+/** Roughly how many steps fill a minute of lesson (narrated steps run ~8-12 s each). */
+export const STEPS_PER_MINUTE = 5.5
+
+export function sectionStepTarget(minutes: number) {
+  const n = Math.round(minutes * STEPS_PER_MINUTE)
+  return { min: Math.max(8, Math.round(n * 0.75)), max: Math.min(SECTION_MAX_STEPS - 4, Math.max(14, Math.round(n * 1.15))) }
+}
+
+/** How many sections a lesson of `minutes` should have (sections of about 6-10 minutes). */
+export function sectionCountFor(minutes: number) {
+  if (minutes <= 12) return Math.max(1, Math.round(minutes / 6))
+  return Math.min(16, Math.max(2, Math.round(minutes / 7.5)))
+}
+
+const mockMode = () => process.env.LESSON_AI_MOCK === '1' && process.env.VERCEL_ENV !== 'production'
+let mockQuotaThrown = false
+
+function cleanOutline(raw: unknown, targetMinutes: number, count: number): OutlineSection[] {
+  const arr = raw && typeof raw === 'object' && Array.isArray((raw as { sections?: unknown }).sections) ? (raw as { sections: unknown[] }).sections : Array.isArray(raw) ? raw : []
+  const out: OutlineSection[] = []
+  for (const r of arr.slice(0, 20)) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    const title = typeof o.title === 'string' ? o.title.trim().slice(0, 120) : ''
+    if (!title) continue
+    const kp = Array.isArray(o.keyPoints) ? o.keyPoints : Array.isArray(o.key_points) ? o.key_points : []
+    out.push({
+      title,
+      goal: typeof o.goal === 'string' ? o.goal.trim().slice(0, 400) : '',
+      minutes: typeof o.minutes === 'number' && o.minutes > 0 ? o.minutes : targetMinutes / count,
+      keyPoints: kp.filter((k): k is string => typeof k === 'string' && !!k.trim()).map(k => k.trim().slice(0, 200)).slice(0, 8),
+    })
+  }
+  if (out.length === 0) throw new Error('AI returned an empty outline')
+  // Scale minutes so the sections add up to the target, each 3..15 minutes.
+  const sum = out.reduce((a, b) => a + b.minutes, 0) || 1
+  for (const o of out) o.minutes = Math.round(Math.min(15, Math.max(3, (o.minutes / sum) * targetMinutes)) * 10) / 10
+  return out
+}
+
+/** Plans the sections of a lesson sized to the tutor's target length. One small model call. */
+export async function draftLessonOutline(lesson: LessonLite, targetMinutes: number, notes?: string): Promise<OutlineSection[]> {
+  const count = sectionCountFor(targetMinutes)
+  if (mockMode()) {
+    return Array.from({ length: count }, (_, i) => ({
+      title: i === 0 ? `Getting started: ${lesson.title}`.slice(0, 80) : `Part ${i + 1}: ${lesson.objectives[i % lesson.objectives.length] ?? 'Practice'}`.slice(0, 80),
+      goal: `Section ${i + 1} goal`,
+      minutes: Math.round((targetMinutes / count) * 10) / 10,
+      keyPoints: ['First idea', 'Second idea', 'Worked example'],
+    }))
+  }
+  const prompt = `Plan a whiteboard lesson of about ${targetMinutes} minutes as an ordered list of sections.
+Title: ${lesson.title}
+Subject: ${lesson.subject}
+Objectives:
+${lesson.objectives.map(o => `- ${o}`).join('\n')}
+${notes ? `Tutor notes: ${notes}\n` : ''}
+Rules:
+- About ${count} sections (between ${Math.max(1, count - 2)} and ${count + 2}); each section is one coherent idea taught in about 5 to 10 minutes, and the minutes add up to about ${targetMinutes}.
+- Build from intuition to formal understanding to practice; the last section consolidates and reviews.
+- Every objective is covered by at least one section.
+- Each section has: "title" (under 60 characters, no numbering), "goal" (one sentence: what the student can do after it), "minutes" (number), "keyPoints" (3 to 6 short phrases, in teaching order).
+Return {"sections": [...]} only.`
+  const raw = await generateStructuredJson(prompt, { systemInstruction: TUTOR_VOICE, timeoutMs: 60_000, primaryTimeoutMs: 45_000 })
+  return cleanOutline(raw, targetMinutes, count)
+}
+
+function mockSectionSteps(section: OutlineSection, position: number, total: number): Step[] {
+  const steps: Step[] = []
+  if (position > 0) steps.push({ type: 'clear' })
+  steps.push({ type: 'write', id: 'title', text: section.title.slice(0, 34), x: 40, y: 30, size: 'lg', say: `Section ${position + 1} of ${total}: ${section.title}.` })
+  const n = Math.max(6, Math.round(section.minutes * STEPS_PER_MINUTE) - 4)
+  let y = 110
+  for (let i = 0; i < n; i++) {
+    if (y > 430) { steps.push({ type: 'clear', targets: Array.from({ length: 6 }, (_, k) => `n${i - 6 + k}`).filter(id => steps.some(s => 'id' in s && s.id === id)) }); y = 110 }
+    steps.push({ type: 'write', id: `n${i}`, text: `Point ${i + 1} of section ${position + 1}`, x: 470, y, size: 'sm', font: 'sans', maxWidth: 300, say: `This is point ${i + 1} of section ${position + 1}, about ${section.keyPoints[i % section.keyPoints.length] ?? 'the idea'}.` })
+    y += 52
+    if (i === Math.floor(n / 2)) steps.push({ type: 'check', id: `c${position}`, kind: 'choice', prompt: `Section ${position + 1} check: which number is ${position + 1}?`, options: [`${position + 1}`, `${position + 2}`], answer: 0, explanation: 'Right.' })
+  }
+  steps.push({ type: 'draw', id: 'circ', shape: { kind: 'circle', center: [220, 290], r: 60 + position * 5 }, color: 'accent', say: `A circle for section ${position + 1}.` })
+  return steps
+}
+
+/**
+ * Drafts one section of a long lesson on a fresh board. The section starts with a
+ * clear (unless it is the first) and its own title, so it never depends on what an
+ * earlier section left on the board.
+ */
+export async function draftLessonSection(input: {
+  lesson: LessonLite
+  outline: OutlineSection[]
+  position: number
+  notes?: string
+  meta?: GenMeta
+}): Promise<Step[]> {
+  const { lesson, outline, position } = input
+  const section = outline[position]
+  if (mockMode()) {
+    const at = Number(process.env.LESSON_AI_MOCK_QUOTA_AT ?? -1)
+    if (at === position && !mockQuotaThrown) { mockQuotaThrown = true; throw new GeminiQuotaError('Mock quota reached', 60_000, true) }
+    await new Promise(r => setTimeout(r, 1500))
+    return mockSectionSteps(section, position, outline.length)
+  }
+  const { min, max } = sectionStepTarget(section.minutes)
+  const prev = outline[position - 1]
+  const next = outline[position + 1]
+  const prompt = `Write ONE section of a longer whiteboard lesson.
+Lesson: ${lesson.title} (${lesson.subject})
+Lesson objectives: ${lesson.objectives.join('; ')}
+Full plan (this is section ${position + 1} of ${outline.length}):
+${outline.map((o, i) => `${i + 1}. ${o.title}${i === position ? '   <-- THIS SECTION' : ''}`).join('\n')}
+
+This section: "${section.title}" (about ${section.minutes} minutes)
+Goal: ${section.goal}
+Key points, in order: ${section.keyPoints.join('; ')}
+${prev ? `The previous section ("${prev.title}") covered: ${prev.keyPoints.join('; ')}. Do not re-teach it; a one-line recap is fine.` : 'This is the opening section: hook the student with why the topic matters.'}
+${next ? `The next section will cover "${next.title}", so do not start it here.` : 'This is the final section: consolidate the whole lesson and end with a one-line summary on the board.'}
+${input.notes ? `Tutor notes for this section: ${input.notes}\n` : ''}
+${SCRIPT_SCHEMA_PROMPT}
+
+${LAYOUT_RULES}
+- The board is EMPTY when this section starts. ${position > 0 ? 'The first step must be {"type":"clear"}. ' : ''}Then write the section title (write, id "title", size lg, x 40, y 30) with a "say" that introduces the section.
+- Only refer to ids created in this section.
+- ${min} to ${max} steps.
+- After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach".
+Return {"steps": [...]} only.`
+  const steps = await generateSteps(prompt, { maxSteps: SECTION_MAX_STEPS, timeoutMs: 120_000, primaryTimeoutMs: 100_000, meta: input.meta })
+  return withSectionStart(steps, position)
 }
 
 export type TutorReason = 'explain_differently' | 'wrong_answer' | 'continue'

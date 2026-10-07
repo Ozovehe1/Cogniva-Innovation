@@ -31,7 +31,10 @@ export async function updateSession(request: NextRequest) {
     // Called by the Modal render service; authenticated with X-Render-Token instead of a session.
     path === '/api/manim/callback'
   if (!user && !isPublic) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    const login = new URL('/login', request.url)
+    // Pages (not API calls) come back to where they were after signing in.
+    if (!path.startsWith('/api/') && request.method === 'GET') login.searchParams.set('next', path + request.nextUrl.search)
+    return NextResponse.redirect(login)
   }
   return supabaseResponse
 }

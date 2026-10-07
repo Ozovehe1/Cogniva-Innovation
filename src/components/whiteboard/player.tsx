@@ -2,7 +2,7 @@
 import 'katex/dist/katex.min.css'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ListOrdered, Lock, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
 import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type Ink, type ManimClipStep, type Step } from '@/lib/lesson-schema'
 import { animMs, buildBoard, compactPartition, dwellMs, segmentStart, shapeBox, type Box } from './board-state'
 import { BoardScale, EASE_SMOOTH, HighlightElement, ShapeElement, TextElement } from './elements'
@@ -10,10 +10,14 @@ import { CheckCard, RichText, type CheckResponse } from './check-card'
 import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
 import { getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
 import { cx } from '@/components/ui'
+import { chapterAt, estimateStepMs, formatDuration, type Chapter } from '@/lib/lesson-sections'
 
 export type PlayerEvent =
   | { type: 'step'; index: number }
-  | { type: 'check'; index: number; stepId?: string; kind: CheckStep['kind']; response: CheckResponse; correct?: boolean; answer?: string }
+  | { type: 'check'; index: number; origIndex: number; stepId?: string; kind: CheckStep['kind']; response: CheckResponse; correct?: boolean; answer?: string }
+  /** Where the student is, in original-script terms (inserted re-teach steps are not counted). */
+  | { type: 'position'; cursor: number; section: number; furthest: number; total: number }
+  | { type: 'restart'; scope: 'lesson' | 'section'; section: number }
   | { type: 'reteach'; index: number; source: 'ai' | 'script' | 'replay'; reason: 'explain_differently' | 'wrong_answer' }
   | { type: 'complete' }
 
@@ -38,6 +42,14 @@ export interface WhiteboardPlayerProps {
   onNeedSteps?: (req: NeedStepsRequest) => Promise<Step[]>
   onEvent?: (e: PlayerEvent) => void
   className?: string
+  /** Sections of the script (see lesson-sections). Omitted = one section. */
+  chapters?: Chapter[]
+  /** Title used for the single section of a lesson without chapters. */
+  title?: string
+  /** Original indices of checks the student already answered (restored progress). */
+  answered?: number[]
+  /** Furthest original position reached before; students can jump to any section up to it. */
+  furthest?: number
 }
 
 /** Below this container width the board switches to the phone layout. */
@@ -59,20 +71,30 @@ export function WhiteboardPlayer({
   onNeedSteps,
   onEvent,
   className,
+  chapters: chaptersProp,
+  title,
+  answered,
+  furthest: furthestProp = 0,
 }: WhiteboardPlayerProps) {
   const reduced = !!useReducedMotion()
   const [steps, setSteps] = useState<Step[]>(initialSteps)
+  /** For each live step, its index in the original script (-1 = inserted re-teach step). */
+  const [orig, setOrig] = useState<number[]>(() => initialSteps.map((_, i) => i))
   const [cursor, setCursor] = useState(() => Math.min(initialIndex, initialSteps.length))
   const [animIdx, setAnimIdx] = useState(-1)
   const [playId, setPlayId] = useState(0)
   const [playing, setPlaying] = useState(autoPlay)
-  const [pendingCheck, setPendingCheck] = useState<number | null>(() =>
-    initialIndex > 0 && initialSteps[Math.min(initialIndex, initialSteps.length) - 1]?.type === 'check' ? Math.min(initialIndex, initialSteps.length) - 1 : null)
-  const [resolved, setResolved] = useState<Set<number>>(() => new Set())
+  const [resolved, setResolved] = useState<Set<number>>(() => new Set((answered ?? []).filter(i => i >= 0 && i < initialSteps.length)))
+  const [pendingCheck, setPendingCheck] = useState<number | null>(() => {
+    const at = Math.min(initialIndex, initialSteps.length) - 1
+    return at >= 0 && initialSteps[at]?.type === 'check' && !(answered ?? []).includes(at) ? at : null
+  })
   const [clipIdx, setClipIdx] = useState<number | null>(null)
   const [thinking, setThinking] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const [started, setStarted] = useState(autoPlay || initialIndex > 0)
+  const [started, setStarted] = useState(autoPlay)
+  /** Restored position waiting for the student to choose how to continue. */
+  const [resumeOffer, setResumeOffer] = useState(!autoPlay && initialIndex > 0)
   const completedRef = useRef(false)
   const onEventRef = useRef(onEvent)
   useEffect(() => { onEventRef.current = onEvent }, [onEvent])
@@ -85,11 +107,39 @@ export function WhiteboardPlayer({
     if (lastKey.current === scriptKey) return
     lastKey.current = scriptKey
     setSteps(initialSteps)
+    setOrig(initialSteps.map((_, i) => i))
     setCursor(0); setAnimIdx(-1); setPendingCheck(null); setClipIdx(null); setResolved(new Set())
-    setPlaying(false); setStarted(false); completedRef.current = false
+    setPlaying(false); setStarted(false); setResumeOffer(false); completedRef.current = false
   }, [scriptKey, initialSteps])
 
   const board = useMemo(() => buildBoard(steps, cursor), [steps, cursor])
+
+  /* ── Sections ── */
+  const origTotal = initialSteps.length
+  const chapters = useMemo<Chapter[]>(() => {
+    const base = chaptersProp && chaptersProp.length ? chaptersProp : [{ title: title ?? 'Lesson', start: 0, count: origTotal }]
+    // Map each section's original start to its live index (re-teach steps shift later sections).
+    const liveOf = new Map<number, number>()
+    orig.forEach((o, i) => { if (o >= 0 && !liveOf.has(o)) liveOf.set(o, i) })
+    const starts = base.map(c => liveOf.get(c.start) ?? c.start)
+    return base.map((c, k) => ({ ...c, start: starts[k], count: (k + 1 < base.length ? starts[k + 1] : steps.length) - starts[k] }))
+  }, [chaptersProp, title, origTotal, orig, steps.length])
+  const multi = chapters.length > 1
+  const section = chapterAt(chapters, cursor - 1)
+  const sectionStart = chapters[section]?.start ?? 0
+  /** Original-script position for a live cursor: original steps done. */
+  const origCursor = useCallback((c: number) => {
+    for (let k = Math.min(c, orig.length) - 1; k >= 0; k--) if (orig[k] >= 0) return orig[k] + 1
+    return 0
+  }, [orig])
+  /** Remaining time from each live index to the end. */
+  const suffixMs = useMemo(() => {
+    const out = new Array<number>(steps.length + 1).fill(0)
+    for (let i = steps.length - 1; i >= 0; i--) out[i] = out[i + 1] + estimateStepMs(steps[i])
+    return out
+  }, [steps])
+  const [furthest, setFurthest] = useState(() => Math.max(furthestProp, initialIndex))
+  const furthestSection = chapterAt(chapters, Math.max(0, Math.max(furthest, origCursor(cursor)) - 1))
 
   /* ── Scaling ── */
   const outerRef = useRef<HTMLDivElement>(null)
@@ -251,12 +301,58 @@ export function WhiteboardPlayer({
   }
   const prev = () => { unlockVoice(); setStarted(true); goTo(cursor - 2, true) }
   const replayStep = () => { unlockVoice(); setStarted(true); if (cursor > 0) goTo(cursor - 1, true) }
-  const restart = () => { unlockVoice(); setStarted(true); completedRef.current = false; goTo(-1, false); setPlaying(true) }
+  const restart = () => {
+    unlockVoice(); setStarted(true); setResumeOffer(false); completedRef.current = false
+    setResolved(new Set())
+    emit({ type: 'restart', scope: 'lesson', section: 0 })
+    goTo(-1, false); setPlaying(true)
+  }
+
+  /** Put the cursor at the top of section k (board empty, nothing animating) and play. */
+  const startSection = useCallback((k: number, why: 'section' | 'jump') => {
+    const ch = chapters[Math.max(0, Math.min(k, chapters.length - 1))]
+    if (!ch) return
+    unlockVoice()
+    setNotice(null)
+    setStarted(true); setResumeOffer(false); completedRef.current = false
+    const first = steps[ch.start]
+    // Skip the section's opening full clear so the board starts empty without a stray animation.
+    const at = first && first.type === 'clear' && !first.targets ? ch.start + 1 : ch.start
+    // Checks in this section and after it are asked again.
+    setResolved(r => new Set([...r].filter(i => i < ch.start)))
+    setPendingCheck(null); setClipIdx(null)
+    setCursor(at); setAnimIdx(-1); setPlayId(p => p + 1)
+    setPlaying(true)
+    if (why === 'section') emit({ type: 'restart', scope: 'section', section: k })
+  }, [chapters, steps, unlockVoice, emit])
+
+  /** Continue from the restored position: the board is already rebuilt silently up to it. */
+  const continueResume = () => {
+    unlockVoice()
+    setResumeOffer(false)
+    setStarted(true)
+    setAnimIdx(-1)
+    setPlaying(true)
+  }
+
+  // Report the position (original-script terms) whenever it changes.
+  const oc = origCursor(cursor)
+  useEffect(() => {
+    if (!started) return
+    setFurthest(f => Math.max(f, oc))
+  }, [oc, started])
+  useEffect(() => {
+    if (!started) return
+    emit({ type: 'position', cursor: oc, section, furthest: Math.max(furthest, oc), total: origTotal })
+  }, [oc, section, started, furthest, origTotal, emit])
 
   /* ── Checks ── */
   const insertAfter = useCallback((index: number, extra: Step[]) => {
     const list = [...steps.slice(0, index + 1), ...extra, ...steps.slice(index + 1)]
     setSteps(list)
+    setOrig(o => [...o.slice(0, index + 1), ...extra.map(() => -1), ...o.slice(index + 1)])
+    // Shift resolved indices past the insertion point.
+    setResolved(r => new Set([...r].map(i => (i > index ? i + extra.length : i))))
     return list
   }, [steps])
 
@@ -277,9 +373,12 @@ export function WhiteboardPlayer({
     if (onNeedSteps) {
       setThinking(true)
       try {
-        const played = steps.slice(0, index + 1)
+        // The board only depends on steps since the last full clear (each section starts with one).
+        let from = 0
+        for (let k = index; k >= 0; k--) { const st = steps[k]; if (st.type === 'clear' && !st.targets) { from = k; break } }
+        const played = steps.slice(from, index + 1)
         const { ids, axes } = boardIdsAfter(played)
-        extra = await onNeedSteps({ reason, check, checkIndex: index, answer, played, boardIds: ids, boardAxes: axes })
+        extra = await onNeedSteps({ reason, check, checkIndex: played.length - 1, answer, played, boardIds: ids, boardAxes: axes })
       } catch {
         extra = []
       } finally {
@@ -310,7 +409,7 @@ export function WhiteboardPlayer({
     if (pendingCheck === null) return
     const index = pendingCheck
     const check = steps[index] as CheckStep
-    emit({ type: 'check', index, stepId: check.id, kind: check.kind, response, correct: detail?.correct, answer: detail?.answer })
+    emit({ type: 'check', index, origIndex: Math.max(0, origCursor(index + 1) - 1), stepId: check.id, kind: check.kind, response, correct: detail?.correct, answer: detail?.answer })
     if (response === 'got_it' || response === 'continue') {
       setResolved(r => new Set(r).add(index))
       continueFrom(index)
@@ -324,10 +423,10 @@ export function WhiteboardPlayer({
     } else if (response === 'explain_wrong') {
       void reteach(index, 'wrong_answer', detail?.answer)
     }
-  }, [pendingCheck, steps, emit, continueFrom, goTo, reteach])
+  }, [pendingCheck, steps, emit, continueFrom, goTo, reteach, origCursor])
 
   /* ── Transcript ── */
-  const lines = useMemo(() => steps.slice(0, cursor).flatMap((st, i) => stepLines(st, i)), [steps, cursor])
+  const lines = useMemo(() => steps.slice(sectionStart, cursor).flatMap((st, i) => stepLines(st, sectionStart + i)), [steps, cursor, sectionStart])
   const currentIdx = lines.length ? lines[lines.length - 1].index : -1
 
   const clip = clipIdx !== null ? (steps[clipIdx] as ManimClipStep) : null
@@ -410,8 +509,82 @@ export function WhiteboardPlayer({
     </div>
   )
 
+  const leftMs = suffixMs[Math.min(cursor, steps.length)] ?? 0
+  const sectionTitle = chapters[section]?.title ?? ''
+  const [showSections, setShowSections] = useState(false)
+  const canJump = (k: number) => allowSkipChecks || k <= Math.max(furthestSection, section)
+  const resumeLabel = (() => {
+    if (!resumeOffer) return ''
+    const inSection = Math.max(0, cursor - sectionStart)
+    return multi ? `Section ${section + 1} of ${chapters.length} · ${sectionTitle}` : `Step ${inSection} of ${steps.length}`
+  })()
+
   return (
     <div className={cx('w-full', className)}>
+      {/* Section strip */}
+      {(multi || steps.length > 40) && (
+        <div className="mb-3 flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            {multi && (
+              <p className="tnum text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Section {section + 1} of {chapters.length}</p>
+            )}
+            {multi && <p className="mt-0.5 truncate font-display text-[19px] leading-snug text-ink md:text-[21px]">{sectionTitle}</p>}
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-1">
+            <span className="tnum hidden text-[13px] text-muted sm:inline">{atEnd ? 'Finished' : `${formatDuration(leftMs)} left`}</span>
+            {multi && (
+              <button
+                type="button"
+                onClick={() => setShowSections(v => !v)}
+                aria-expanded={showSections}
+                aria-controls="wb-sections"
+                className="ml-1 inline-flex h-9 items-center gap-1.5 rounded-full border border-line bg-surface px-3 text-[13px] font-medium text-ink-2 transition-colors duration-150 hover:border-line-strong hover:text-ink"
+              >
+                <ListOrdered className="h-4 w-4" strokeWidth={1.75} />
+                Sections
+                <ChevronDown className={cx('h-3.5 w-3.5 transition-transform duration-200', showSections && 'rotate-180')} strokeWidth={1.75} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {multi && showSections && (
+        <nav id="wb-sections" aria-label="Lesson sections" className="mb-3 max-h-[320px] overflow-y-auto overscroll-contain rounded-[14px] border border-line bg-surface">
+          <ol className="divide-y divide-line">
+            {chapters.map((c, k) => {
+              const done = k < section || (k === section && atEnd)
+              const current = k === section && !atEnd
+              const open = canJump(k)
+              return (
+                <li key={k}>
+                  <button
+                    type="button"
+                    disabled={!open}
+                    onClick={() => { startSection(k, 'jump'); setShowSections(false) }}
+                    aria-current={current ? 'step' : undefined}
+                    className={cx(
+                      'flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-150',
+                      open ? 'hover:bg-sunken' : 'cursor-not-allowed',
+                      current && 'bg-accent-soft/60',
+                    )}
+                  >
+                    <span className={cx(
+                      'tnum flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[12px] font-medium',
+                      done ? 'bg-accent text-white' : current ? 'border border-accent text-accent' : 'border border-line text-muted',
+                    )}>
+                      {done ? <Check className="h-3.5 w-3.5" strokeWidth={2.25} /> : k + 1}
+                    </span>
+                    <span className={cx('min-w-0 flex-1 truncate text-[15px]', current ? 'font-medium text-ink' : open ? 'text-ink-2' : 'text-faint')}>{c.title}</span>
+                    {!open && <Lock className="h-3.5 w-3.5 flex-shrink-0 text-faint" strokeWidth={1.75} aria-label="Not reached yet" />}
+                    {c.ms ? <span className="tnum flex-shrink-0 text-[12px] text-muted">{formatDuration(c.ms)}</span> : null}
+                  </button>
+                </li>
+              )
+            })}
+          </ol>
+        </nav>
+      )}
+
       {/* Board */}
       <BoardScale.Provider value={scale || 1}>
         <div
@@ -474,8 +647,28 @@ export function WhiteboardPlayer({
             )}
           </AnimatePresence>
 
+          {/* Resume overlay: the board behind it is already rebuilt (silently) to where the student stopped. */}
+          {resumeOffer && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#FDFCF9]/80 px-4 backdrop-blur-[2px]">
+              <div className="w-full max-w-[420px] rounded-[14px] border border-line bg-surface p-5 text-center shadow-[var(--shadow-raised)] md:p-6">
+                <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Welcome back</p>
+                <p className="mt-1.5 font-display text-[20px] leading-snug text-ink md:text-[22px]">Pick up where you left off?</p>
+                <p className="mt-1 truncate text-[13px] text-muted">{resumeLabel}</p>
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+                  <button type="button" onClick={continueResume} className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-accent px-5 text-[15px] font-medium text-white transition-colors duration-150 hover:bg-accent-hover">
+                    <Play className="h-4 w-4" fill="currentColor" strokeWidth={0} />
+                    Continue where you left off
+                  </button>
+                  <button type="button" onClick={() => startSection(section, 'section')} className="inline-flex h-11 items-center justify-center rounded-full border border-line px-5 text-[15px] font-medium text-ink-2 transition-colors duration-150 hover:border-line-strong hover:text-ink">
+                    Start section over
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Start overlay */}
-          {!started && (
+          {!started && !resumeOffer && (
             <button
               type="button"
               onClick={togglePlay}
@@ -512,10 +705,14 @@ export function WhiteboardPlayer({
         </ControlButton>
         <ControlButton label="Replay this step" onClick={replayStep} disabled={cursor === 0}><Undo2 className="h-[17px] w-[17px]" strokeWidth={1.75} /></ControlButton>
         <div className="ml-1 flex min-w-0 flex-1 items-center gap-3 sm:ml-2">
-          <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-label="Lesson progress" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={cursor}>
+          <div className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-label="Lesson progress" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={cursor}>
             <motion.div className="h-full rounded-full bg-accent" animate={{ width: `${progress * 100}%` }} transition={{ duration: reduced ? 0 : 0.4, ease: EASE_SMOOTH }} />
+            {multi && chapters.slice(1).map((c, k) => (
+              <span key={k} aria-hidden className="absolute top-0 h-full w-[2px] bg-[#FDFCF9]" style={{ left: `${(c.start / Math.max(1, steps.length)) * 100}%` }} />
+            ))}
           </div>
-          <span className="tnum hidden flex-shrink-0 text-[12px] text-muted sm:inline">{cursor} / {steps.length}</span>
+          <span className="tnum hidden flex-shrink-0 text-[12px] text-muted sm:inline">{multi ? `${section + 1} / ${chapters.length}` : `${cursor} / ${steps.length}`}</span>
+          {(multi || steps.length > 40) && <span className="tnum flex-shrink-0 text-[12px] text-muted sm:hidden">{atEnd ? 'Done' : formatDuration(leftMs).replace(' min', 'm').replace(' h', 'h')}</span>}
         </div>
         {voiceOk && (
           <button
@@ -584,12 +781,12 @@ export function WhiteboardPlayer({
       </div>
 
       {/* Transcript */}
-      <Transcript lines={lines} currentIdx={currentIdx} reduced={reduced} />
+      <Transcript lines={lines} currentIdx={currentIdx} reduced={reduced} heading={multi ? `Section ${section + 1} · ${sectionTitle}` : undefined} />
     </div>
   )
 }
 
-function Transcript({ lines, currentIdx, reduced }: { lines: ReturnType<typeof stepLines>; currentIdx: number; reduced: boolean }) {
+function Transcript({ lines, currentIdx, reduced, heading }: { lines: ReturnType<typeof stepLines>; currentIdx: number; reduced: boolean; heading?: string }) {
   const boxRef = useRef<HTMLDivElement>(null)
   const curRef = useRef<HTMLLIElement>(null)
   useEffect(() => {
@@ -612,7 +809,7 @@ function Transcript({ lines, currentIdx, reduced }: { lines: ReturnType<typeof s
   return (
     <section className="mt-4 rounded-[14px] border border-line bg-surface" aria-label="Lesson transcript">
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-        <h2 className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Transcript</h2>
+        <h2 className="min-w-0 truncate text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Transcript{heading ? <span className="normal-case tracking-normal text-faint"> · {heading}</span> : null}</h2>
         {lines.length > 0 && <span className="tnum text-[12px] text-muted">{lines.filter(l => l.kind === 'say').length} lines</span>}
       </div>
       <div ref={boxRef} className="wb-transcript relative max-h-[240px] overflow-y-auto overscroll-contain px-4 py-3 md:max-h-[300px]" tabIndex={0}>

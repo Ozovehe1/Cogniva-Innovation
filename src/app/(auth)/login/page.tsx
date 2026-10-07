@@ -51,8 +51,14 @@ export default function LoginPage() {
       })
     }
 
-    // Full-page navigation so the server layouts receive the fresh session cookie
-    window.location.href = role === 'tutor' ? '/tutor/dashboard' : '/dashboard'
+    // Full-page navigation so the server layouts receive the fresh session cookie.
+    // ?next= (set by the away sign-out and the sign-in redirect) returns the user to where they were.
+    const next = new URLSearchParams(window.location.search).get('next')
+    const safeNext = next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/login') ? next : null
+    const home = role === 'tutor' ? '/tutor/dashboard' : '/dashboard'
+    const studentArea = /^\/(dashboard|assessment|learn|projects)(\/|$|\?)/.test(safeNext ?? '')
+    const tutorArea = /^\/tutor(\/|$|\?)/.test(safeNext ?? '')
+    window.location.href = safeNext && ((role === 'tutor' && tutorArea) || (role !== 'tutor' && studentArea)) ? safeNext : home
   }
 
   return (

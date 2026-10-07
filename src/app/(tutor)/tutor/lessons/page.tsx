@@ -4,9 +4,10 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Presentation } from 'lucide-react'
 import { LessonStatusBadge } from '@/components/tutor-lessons'
+import { TargetSelect, targetLabel } from '@/components/tutor-sections'
 import { Alert, Card, EmptyState, PageHeader, Skeleton, Spinner, buttonClass, inputClass, labelClass, textareaClass } from '@/components/ui'
 
-type LessonRow = { id: string; title: string; subject: string; objectives: string[]; status: 'draft' | 'approved'; created_at: string }
+type LessonRow = { id: string; title: string; subject: string; objectives: string[]; status: 'draft' | 'approved'; target_minutes: number | null; chapters: unknown[] | null; draft_status: string; created_at: string }
 
 export default function TutorLessonsPage() {
   const router = useRouter()
@@ -14,6 +15,7 @@ export default function TutorLessonsPage() {
   const [title, setTitle] = useState('')
   const [subject, setSubject] = useState('')
   const [objectives, setObjectives] = useState('')
+  const [target, setTarget] = useState(20)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,11 +33,11 @@ export default function TutorLessonsPage() {
       const res = await fetch('/api/tutor/lessons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, subject, objectives: objs }),
+        body: JSON.stringify({ title, subject, objectives: objs, targetMinutes: target }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.id) { setError(data.error ?? 'Could not create the lesson.'); setCreating(false); return }
-      router.push(`/tutor/lessons/${data.id}${data.drafted ? '' : '?draft=failed'}`)
+      router.push(`/tutor/lessons/${data.id}`)
     } catch {
       setError('Network error. Check your connection and try again.')
       setCreating(false)
@@ -70,7 +72,12 @@ export default function TutorLessonsPage() {
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <h3 className="font-display text-[20px] leading-snug text-ink">{l.title}</h3>
-                          <p className="mt-1 text-[13px] text-muted">{l.subject} · {l.objectives?.length ?? 0} objective{l.objectives?.length === 1 ? '' : 's'}</p>
+                          <p className="mt-1 text-[13px] text-muted">
+                            {l.subject}
+                            {l.target_minutes ? ` · ${targetLabel(l.target_minutes)}` : ''}
+                            {Array.isArray(l.chapters) && l.chapters.length > 1 ? ` · ${l.chapters.length} sections` : ''}
+                            {['outlining', 'drafting'].includes(l.draft_status) ? ' · drafting…' : l.draft_status === 'paused' ? ' · drafting paused' : ''}
+                          </p>
                         </div>
                         <LessonStatusBadge status={l.status} />
                       </div>
@@ -101,11 +108,16 @@ export default function TutorLessonsPage() {
                 <label htmlFor="l-obj" className={labelClass}>Objectives <span className="font-normal text-faint">(one per line)</span></label>
                 <textarea id="l-obj" rows={5} className={textareaClass} value={objectives} onChange={e => setObjectives(e.target.value)} placeholder={'Explain …\nCompute …\nRecognise …'} disabled={creating} />
               </div>
+              <div>
+                <label htmlFor="l-target" className={labelClass}>Lesson length</label>
+                <TargetSelect id="l-target" value={target} onChange={setTarget} disabled={creating} />
+                <p className="mt-1.5 text-[13px] text-muted">Longer lessons are split into sections of about 8 minutes, each drafted on its own.</p>
+              </div>
               {error && <Alert>{error}</Alert>}
               <button type="submit" className={buttonClass('primary', 'md', 'w-full')} disabled={creating}>
-                {creating ? <><Spinner /> Drafting the lesson…</> : 'Create and draft'}
+                {creating ? <><Spinner /> Creating…</> : 'Create and draft'}
               </button>
-              {creating && <p className="text-[13px] leading-relaxed text-muted">The tutor is writing the whiteboard script. This usually takes one to three minutes.</p>}
+              
             </form>
           </Card>
         </section>

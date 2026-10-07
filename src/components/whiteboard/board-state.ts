@@ -156,8 +156,16 @@ export function applyStep(state: BoardState, step: Step, index: number): BoardSt
 }
 
 export function buildBoard(steps: Step[], count: number): BoardState {
+  const n = Math.min(count, steps.length)
+  // A full clear empties the board, so only the steps after the last one matter
+  // (keeps long lessons cheap: the cost is bounded by one section, not the lesson).
+  let from = 0
+  for (let k = n - 1; k >= 0; k--) {
+    const st = steps[k]
+    if (st.type === 'clear' && !st.targets) { from = k + 1; break }
+  }
   let s = emptyBoard()
-  for (let i = 0; i < Math.min(count, steps.length); i++) s = applyStep(s, steps[i], i)
+  for (let i = from; i < n; i++) s = applyStep(s, steps[i], i)
   return s
 }
 
