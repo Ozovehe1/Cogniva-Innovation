@@ -164,11 +164,16 @@ export interface Line {
 export function stepLines(step: Step, index: number): Line[] {
   const out: Line[] = []
   if (step.say?.trim()) out.push({ index, text: step.say.trim(), kind: 'say' })
-  else if (step.type === 'write') out.push({ index, text: step.text.replace(/\s*\n\s*/g, ' '), kind: 'say' })
+  else if (step.type === 'write') out.push({ index, text: liveAsExpr(step.text).replace(/\s*\n\s*/g, ' '), kind: 'say' })
   if (step.type === 'check') out.push({ index, text: step.prompt, kind: 'check' })
-  if (step.type === 'math' && !/\\begin\{/.test(step.tex)) out.push({ index, text: `$${step.tex}$`, kind: 'math' })
-  if (step.type === 'transform' && step.tex && !/\\begin\{/.test(step.tex)) out.push({ index, text: `$${step.tex}$`, kind: 'math' })
+  if (step.type === 'math' && !/\\begin\{/.test(step.tex)) out.push({ index, text: `$${liveAsExpr(step.tex)}$`, kind: 'math' })
+  if (step.type === 'transform' && step.tex && !/\\begin\{/.test(step.tex)) out.push({ index, text: `$${liveAsExpr(step.tex)}$`, kind: 'math' })
   return out
+}
+
+/** Live values ({{expr}} / {{expr:2}}) shown as their expression, for the transcript and the voice. */
+export function liveAsExpr(text: string): string {
+  return text.replace(/\{\{([^{}:]+)(?::\d)?\}\}/g, (_, ex: string) => ex.trim())
 }
 
 /**
@@ -180,15 +185,15 @@ export function stepNarration(step: Step): { text: string; map: number[] } {
   const parts: string[] = []
   const map: number[] = []
   let count = 0
-  const src = step.say?.trim() ? step.say : step.type === 'write' ? step.text : ''
+  const src = step.say?.trim() ? step.say : step.type === 'write' ? liveAsExpr(step.text) : ''
   if (src) {
     for (const w of splitSayWords(src)) {
       map.push(count)
       const spoken = w === '=' ? 'equals' : toSpeech(w)
       if (spoken) { parts.push(spoken); count += spoken.split(/\s+/).filter(Boolean).length }
     }
-  } else if (step.type === 'math') parts.push(texToWords(step.tex))
-  else if (step.type === 'transform' && step.tex) parts.push(texToWords(step.tex))
+  } else if (step.type === 'math') parts.push(texToWords(liveAsExpr(step.tex)))
+  else if (step.type === 'transform' && step.tex) parts.push(texToWords(liveAsExpr(step.tex)))
   if (step.type === 'check') parts.push(toSpeech(step.prompt))
   return { text: tidy(parts.filter(Boolean).join(' ')), map }
 }

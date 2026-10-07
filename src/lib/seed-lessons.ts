@@ -36,7 +36,7 @@ export const SAMPLE_SCRIPT: Step[] = [
     ],
   },
   {
-    type: 'math', id: 'slope', tex: '\\text{slope} = \\frac{(1+h)^2 - 1}{h} = {{2 + h:2}}', x: 490, y: 210, size: 'md',
+    type: 'math', id: 'slope', tex: 'm = \\frac{(1+h)^2 - 1}{h} = {{2 + h:2}}', x: 480, y: 210, size: 'md',
     say: 'Call the gap between them $h$. Rise over run simplifies to $2 + h$, so right now the slope is $3$: an average between P and Q.',
     cues: [{ type: 'highlight', target: 'slope', style: 'underline', color: 'clay', at: 'average' }],
   },
@@ -58,7 +58,7 @@ export const SAMPLE_SCRIPT: Step[] = [
       { type: 'camera', zoom: 1, at: 'touches' },
     ],
   },
-  { type: 'transform', target: 'slope', tex: '\\lim_{h \\to 0}\\,(2 + h) = 2', say: 'And the slope $2 + h$ becomes exactly $2$.', at: 'becomes', cues: [{ type: 'color', target: 'slope', color: 'navy', pulse: true, at: 'exactly' }] },
+  { type: 'transform', target: 'slope', tex: 'm = \\lim_{h \\to 0}\\,(2 + h) = 2', say: 'And the slope $2 + h$ becomes exactly $2$.', at: 'becomes', cues: [{ type: 'color', target: 'slope', color: 'navy', pulse: true, at: 'exactly' }] },
   { type: 'math', id: 'fp', tex: "f'(1) = 2", x: 490, y: 300, size: 'lg', color: 'navy', at: 'derivative.', say: 'That limiting slope is the derivative. At $x = 1$, the curve is climbing at a rate of $2$: we write $f\'(1) = 2$.' },
   { type: 'write', id: 'def', text: 'The derivative is the slope of the tangent line.', x: 490, y: 370, size: 'sm', font: 'sans', color: 'ink', maxWidth: 280, say: 'So, in one sentence: the derivative is the slope of the tangent line.', cues: [{ type: 'highlight', target: 'tan', style: 'box', color: 'navy', at: 'tangent' }] },
   {

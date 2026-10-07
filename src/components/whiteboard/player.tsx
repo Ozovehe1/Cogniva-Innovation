@@ -262,6 +262,8 @@ export function WhiteboardPlayer({
     return () => n.cancel()
   }, [])
   const voiceOn = voiceOk && soundOn
+  /** What voiced the last line: the natural (Kokoro) voice or the device's speech engine. */
+  const [voiceSource, setVoiceSource] = useState<'audio' | 'device' | null>(null)
   const voiceOnRef = useRef(voiceOn)
   useEffect(() => { voiceOnRef.current = voiceOn }, [voiceOn])
   const holdRef = useRef(hold)
@@ -325,6 +327,7 @@ export function WhiteboardPlayer({
       if (voiced && n) {
         speaking = true
         n.speak(text, () => { speaking = false })
+        setVoiceSource(n.source ?? null)
       }
       const started = performance.now()
       let base = 0
@@ -857,15 +860,16 @@ export function WhiteboardPlayer({
             type="button"
             onClick={toggleSound}
             aria-pressed={soundOn}
-            aria-label={soundOn ? 'Voice on. Turn voice off' : 'Voice off. Turn voice on'}
-            title={soundOn ? 'Voice on' : 'Voice off'}
+            aria-label={soundOn ? `Voice on${voiceSource === 'audio' ? ' (natural voice)' : voiceSource === 'device' ? ' (device voice)' : ''}. Turn voice off` : 'Voice off. Turn voice on'}
+            title={soundOn ? (voiceSource === 'audio' ? 'Voice on · natural voice' : voiceSource === 'device' ? 'Voice on · device voice' : 'Voice on') : 'Voice off'}
+            data-voice-source={voiceSource ?? 'none'}
             className={cx(
               'flex h-10 flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium transition-colors duration-150 sm:px-3',
               soundOn ? 'text-accent hover:bg-accent-soft' : 'text-muted hover:bg-sunken hover:text-ink',
             )}
           >
             {soundOn ? <Volume2 className="h-[18px] w-[18px]" strokeWidth={1.75} /> : <VolumeX className="h-[18px] w-[18px]" strokeWidth={1.75} />}
-            <span className="hidden sm:inline">{soundOn ? 'Voice on' : 'Voice off'}</span>
+            <span className="hidden sm:inline">{soundOn ? (voiceSource === 'audio' ? 'Natural voice' : 'Voice on') : 'Voice off'}</span>
           </button>
         )}
       </div>
