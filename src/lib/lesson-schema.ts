@@ -856,6 +856,15 @@ Return a JSON object {"steps": Step[]}. Each Step is one of:
 - {"type":"pause","ms": 200..10000}
 - {"type":"check","kind":"understand"|"choice"|"short","prompt","options"? (choice: 2..6),"answer"? (choice: index),"accept"? (short: accepted answers),"explanation"?}
 - {"type":"manim_clip","url","caption"?} — only reuse URLs you were given; never invent one.
+Motion (like Manim's ValueTracker and animate):
+- {"type":"set","vars":{"h":1}} — named numeric variables (letters only, not x, e or pi). Coordinates of line/arrow/point, secant x1/x2, tangent "at", and function "expr" may use them as expressions ("1 + h", "(1+h)^2"); write/math text may show a live value with {{expr}} or {{expr:2}} (2 decimals).
+- {"type":"animate","var":"h","to":0.05,"from"?,"ease"?:"smooth|linear|there_and_back"} — glides a variable; everything that depends on it moves continuously (a point sliding along a curve, a secant turning into a tangent, a live number counting).
+- {"type":"move","target","by":[dx,dy] | "to":[x,y]} | {"type":"fade","target","to":0..1} | {"type":"scale","target","by"} | {"type":"color","target","color","pulse"?} | {"type":"camera","zoom":1..4,"center"?:[x,y],"on"?: axes id} (zoom 1 resets).
+- Extra shapes (need "on"): {"kind":"secant","expr","x1","x2","extend"?} (line through the curve at x1 and x2) | {"kind":"tangent","expr","at","len"?}.
+Timing to the voice (every step may use these):
+- "at": the word (or short phrase, or 0-based word index) of the step's "say" at which its action starts; "until": the word where it should be finished. Without them the action starts with the narration and stretches to fill the sentence.
+- "cues": [{...action, "at": "word"}] — further actions (any of write, math, draw, highlight, transform, clear, set, animate, move, fade, scale, color, camera; no "say") fired as their word is spoken, in spoken order. Use cues so the board moves while the sentence is spoken: name a thing, and it appears or moves on that word.
+- Each action runs from its cue word until the next cue, so motion is continuous through the sentence. Prefer one step with a sentence and 2-4 cues over several silent steps; prefer animate over clearing and redrawing something in a new position.
 Colors: ink (default), accent (deep green, for the key idea), clay (warm red, for contrast/mistakes), navy, amber, muted.
 Sizes: sm 22, md 30, lg 40, xl 54 units tall. Roughly 0.5 x size units per character of width.
 Ids: letters, digits, - or _, start with a letter, unique on the board.

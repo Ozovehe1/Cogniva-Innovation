@@ -98,7 +98,15 @@ export function buildTimeline(step: Step, index: number, timing: NarrationTiming
         case 'set': dur = 0; break
         case 'animate': dur = clamp(gap - 80, 900, 14_000); break
         case 'write': case 'math': case 'draw':
-          dur = gap > 0 ? clamp(gap - 120, natural * 0.8, natural * 2.6) : natural
+          // Fill the phrase up to the next cue. The last action of a step may stretch
+          // further so the board is still moving while the sentence finishes.
+          dur = gap > 0 ? clamp(gap - 120, natural * 0.8, i === raw.length - 1 ? Math.max(natural * 2.6, 7000) : natural * 2.6) : natural
+          break
+        case 'move': case 'scale': case 'camera': case 'transform':
+          dur = gap > 0 ? clamp(gap - 100, Math.min(natural, 700), 6000) : natural
+          break
+        case 'highlight': case 'fade': case 'color':
+          dur = gap > 0 ? clamp(gap - 100, Math.min(natural, 500), 3200) : natural
           break
         default: dur = natural
       }
