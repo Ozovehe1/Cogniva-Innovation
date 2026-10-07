@@ -1,22 +1,28 @@
 'use client'
-import React, { createContext, useContext, useLayoutEffect, useMemo, useState } from 'react'
+import React, { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import katex from 'katex'
-import { compileExpr } from '@/lib/lesson-schema'
-import type { Shape } from '@/lib/lesson-schema'
+import type { Num, Shape, Vars } from '@/lib/lesson-schema'
 import {
   INK_HEX,
   SIZE_PX,
   animMs,
+  evalFn,
+  evalNum,
+  fillTemplates,
   shapeBox,
   toBoard,
   xScale,
   type AxesDef,
   type Box,
+  type Fx,
   type HighlightEl,
   type ShapeEl,
   type TextEl,
 } from './board-state'
+import { useLiveVars } from './live-vars'
+
+const NO_VARS: Vars = {}
 
 /** Smooth, slightly front-loaded ease used for strokes (close to 3Blue1Brown's "smooth"). */
 export const EASE_SMOOTH: [number, number, number, number] = [0.45, 0.05, 0.25, 1]
@@ -59,6 +65,8 @@ export function TextElement({
   registerRef,
   flow,
   mark,
+  duration,
+  vars = NO_VARS,
 }: {
   el: TextEl
   /** 'enter' when this element was just created, 'morph' when it was just transformed. */
@@ -69,13 +77,25 @@ export function TextElement({
   flow?: boolean
   /** Highlight drawn around a reflowed note. */
   mark?: { style: 'box' | 'underline'; color: TextEl['color']; fresh: boolean } | null
+  /** Length of the write-on / morph in ms (timed to the narration by the player). */
+  duration?: number
+  /** Board variables, for {{...}} live values. */
+  vars?: Vars
 }) {
   const boardPx = SIZE_PX[el.size] * (el.kind === 'math' ? 0.86 : 1)
   const labelPx = useMinUnits(boardPx, 15)
-  if (flow) return <FlowText el={el} animate={animate} reduced={reduced} registerRef={registerRef} mark={mark ?? null} />
-  const fontPx = labelPx
+  const live = useLiveVars(!!el.dyn, vars)
+  const shown = el.dyn ? { ...el, content: fillTemplates(el.content, live), prevContent: el.prevContent !== undefined ? fillTemplates(el.prevContent, live) : undefined } : el
+  if (flow) return <FlowText el={shown} animate={animate} reduced={reduced} registerRef={registerRef} mark={mark ?? null} duration={duration} />
+  return <BoardText el={shown} animate={animate} reduced={reduced} registerRef={registerRef} fontPx={labelPx} duration={duration} />
+}
+
+function BoardText({ el, animate, reduced, registerRef, fontPx, duration }: {
+  el: TextEl; animate: 'enter' | 'morph' | null; reduced: boolean; registerRef: (id: string, node: HTMLElement | null) => void; fontPx: number; duration?: number
+}) {
   const translateX = el.align === 'center' ? '-50%' : el.align === 'right' ? '-100%' : '0%'
-  const enterMs = animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
+  const enterMs = duration ?? animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
+  const morphS = Math.max(0.5, Math.min(2.4, (duration ?? 950) / 1000))
   const style: React.CSSProperties = {
     fontSize: fontPx,
     color: INK_HEX[el.color],
@@ -93,7 +113,7 @@ export function TextElement({
       initial={from}
       animate={{ left: el.x, top: el.y }}
       exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.28 } }}
-      transition={{ duration: reduced || !morphing ? 0 : 0.9, ease: EASE_SMOOTH }}
+      transition={{ duration: reduced || !morphing ? 0 : morphS, ease: EASE_SMOOTH }}
       style={{ ...from }}
     >
       <div
@@ -101,14 +121,16 @@ export function TextElement({
         className={`relative leading-[1.18] ${cls}`}
         style={{ ...style, transform: `translateX(${translateX})` }}
       >
-        {morphing && el.prevContent !== undefined ? (
+        {morphing && el.prevContent !== undefined && el.kind === 'math' && !reduced ? (
+          <MorphMath from={el.prevContent} to={el.content} ms={morphS * 1000} />
+        ) : morphing && el.prevContent !== undefined ? (
           <>
             <motion.div
               aria-hidden
               className="pointer-events-none absolute left-0 top-0"
               initial={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
               animate={{ opacity: 0, y: reduced ? 0 : -8, filter: reduced ? 'blur(0px)' : 'blur(2px)' }}
-              transition={{ duration: reduced ? 0.15 : 0.55, ease: EASE_SMOOTH }}
+              transition={{ duration: reduced ? 0.15 : morphS * 0.6, ease: EASE_SMOOTH }}
               style={{ whiteSpace: style.whiteSpace }}
             >
               <Content kind={el.kind} content={el.prevContent} />
@@ -116,7 +138,7 @@ export function TextElement({
             <motion.div
               initial={{ opacity: 0, y: reduced ? 0 : 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: reduced ? 0.15 : 0.6, delay: reduced ? 0 : 0.28, ease: EASE_SMOOTH }}
+              transition={{ duration: reduced ? 0.15 : morphS * 0.65, delay: reduced ? 0 : morphS * 0.3, ease: EASE_SMOOTH }}
             >
               <Content kind={el.kind} content={el.content} />
             </motion.div>
@@ -134,7 +156,7 @@ export function TextElement({
           <motion.div
             initial={animate ? { opacity: 0 } : false}
             animate={{ opacity: 1 }}
-            transition={{ duration: 0.18 }}
+            transition={{ duration: reduced ? 0.2 : 0.18 }}
           >
             <Content kind={el.kind} content={el.content} />
           </motion.div>
@@ -151,18 +173,20 @@ function FlowText({
   reduced,
   registerRef,
   mark,
+  duration,
 }: {
   el: TextEl
   animate: 'enter' | 'morph' | null
   reduced: boolean
   registerRef: (id: string, node: HTMLElement | null) => void
   mark: { style: 'box' | 'underline'; color: TextEl['color']; fresh: boolean } | null
+  duration?: number
 }) {
   const px = FLOW_PX[el.size] * (el.kind === 'math' ? 1.08 : 1)
   const cls = el.font === 'sans' && el.kind === 'text' ? 'font-sans tracking-[-0.01em]' : 'font-display'
   const color = INK_HEX[el.color]
   const markColor = mark ? INK_HEX[mark.color] : undefined
-  const enterMs = animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
+  const enterMs = duration ?? animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
   const morphing = animate === 'morph'
   return (
     <motion.div
@@ -194,15 +218,122 @@ function FlowText({
         }}
       >
         <motion.div
-          key={morphing ? `m-${el.content}` : 'c'}
+          key={morphing ? `m-${el.morphAct ?? el.content}` : 'c'}
           initial={morphing ? { opacity: 0, y: reduced ? 0 : 6 } : animate === 'enter' && !reduced ? { clipPath: 'inset(-20% 100% -20% -2%)' } : false}
           animate={{ opacity: 1, y: 0, clipPath: 'inset(-20% -2% -20% -2%)' }}
-          transition={{ duration: morphing ? (reduced ? 0.15 : 0.6) : enterMs / 1000, ease: morphing ? EASE_SMOOTH : 'linear' }}
+          transition={{ duration: morphing ? (reduced ? 0.15 : 0.6) : reduced ? 0.2 : enterMs / 1000, ease: morphing ? EASE_SMOOTH : 'linear' }}
           className={el.kind === 'math' ? 'max-w-full overflow-x-auto overflow-y-hidden py-1' : undefined}
         >
           <Content kind={el.kind} content={el.content} />
         </motion.div>
       </div>
+    </motion.div>
+  )
+}
+
+
+/* ───────────── Equation morph (like Manim's TransformMatchingTex) ───────────── */
+
+function glyphLeaves(root: HTMLElement): HTMLElement[] {
+  const html = root.querySelector('.katex-html') ?? root
+  return Array.from(html.querySelectorAll<HTMLElement>('span')).filter(n => n.childElementCount === 0 && !!n.textContent?.trim())
+}
+
+/**
+ * Morphs one rendered equation into the next: glyphs that appear in both slide
+ * from their old place to their new place (and resize), glyphs that disappear
+ * fade out, and new glyphs fade in. Pure DOM measurement plus the Web Animations
+ * API, so KaTeX's own layout is never disturbed (the moving glyphs are clones).
+ */
+function MorphMath({ from, to, ms }: { from: string; to: string; ms: number }) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const oldRef = useRef<HTMLDivElement>(null)
+  const newRef = useRef<HTMLDivElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const oldHtml = useMemo(() => renderTex(from, true), [from])
+  const newHtml = useMemo(() => renderTex(to, true), [to])
+  useLayoutEffect(() => {
+    const host = hostRef.current, oldEl = oldRef.current, newEl = newRef.current, overlay = overlayRef.current
+    if (!host || !oldEl || !newEl || !overlay || typeof host.animate !== 'function') return
+    const hr = host.getBoundingClientRect()
+    const k = host.offsetWidth ? hr.width / host.offsetWidth : 1
+    const olds = glyphLeaves(oldEl), news = glyphLeaves(newEl)
+    const used = new Set<number>()
+    const anims: Animation[] = []
+    const clones: HTMLElement[] = []
+    const easing = 'cubic-bezier(0.45, 0.05, 0.25, 1)'
+    news.forEach((n, ni) => {
+      const txt = n.textContent
+      // Prefer the unused old glyph with the same text nearest in relative position.
+      let best = -1, bestD = Infinity
+      olds.forEach((o, oi) => {
+        if (used.has(oi) || o.textContent !== txt) return
+        const d = Math.abs(oi / Math.max(1, olds.length) - ni / Math.max(1, news.length))
+        if (d < bestD) { bestD = d; best = oi }
+      })
+      if (best < 0 || bestD > 0.6) return
+      used.add(best)
+      const o = olds[best]
+      const or = o.getBoundingClientRect(), nr = n.getBoundingClientRect()
+      if (!or.width || !nr.width) return
+      const cs = getComputedStyle(o)
+      const c = document.createElement('span')
+      c.textContent = txt
+      Object.assign(c.style, {
+        position: 'absolute', left: `${(or.left - hr.left) / k}px`, top: `${(or.top - hr.top) / k}px`,
+        fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontStyle: cs.fontStyle, fontWeight: cs.fontWeight,
+        lineHeight: `${or.height / k}px`, height: `${or.height / k}px`, whiteSpace: 'pre', color: cs.color, transformOrigin: '0 0', margin: '0', padding: '0',
+      })
+      overlay.appendChild(c)
+      clones.push(c)
+      o.style.visibility = 'hidden'
+      n.style.visibility = 'hidden'
+      const dx = (nr.left - or.left) / k, dy = (nr.top - or.top) / k, sc = nr.height / or.height || 1
+      const a = c.animate([{ transform: 'translate(0,0) scale(1)' }, { transform: `translate(${dx}px, ${dy}px) scale(${sc})` }], { duration: ms * 0.85, easing, fill: 'forwards' })
+      a.onfinish = () => { n.style.visibility = ''; c.remove() }
+      anims.push(a)
+    })
+    anims.push(oldEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms * 0.4, easing, fill: 'forwards' }))
+    anims.push(newEl.animate([{ opacity: 0 }, { opacity: 0, offset: 0.35 }, { opacity: 1 }], { duration: ms, easing, fill: 'forwards' }))
+    return () => {
+      anims.forEach(a => { try { a.cancel() } catch { /* ignore */ } })
+      clones.forEach(c => c.remove())
+      news.forEach(n => { n.style.visibility = '' })
+    }
+  }, [oldHtml, newHtml, ms])
+  return (
+    <div ref={hostRef} className="relative">
+      <div ref={oldRef} aria-hidden className="pointer-events-none absolute left-0 top-0" style={{ whiteSpace: 'pre' }}>
+        <span className="wb-math" dangerouslySetInnerHTML={{ __html: oldHtml }} />
+      </div>
+      <div ref={newRef}>
+        <span className="wb-math" dangerouslySetInnerHTML={{ __html: newHtml }} />
+      </div>
+      <div ref={overlayRef} aria-hidden className="katex pointer-events-none absolute inset-0" style={{ fontSize: 'inherit' }} />
+    </div>
+  )
+}
+
+/* ───────────── Motion applied after drawing (move / fade / scale / pulse) ───────────── */
+
+/** Wraps an element so move / fade / scale / colour pulses animate over the action's duration. */
+export function FxWrap({ fx, ms, reduced, svg, children }: { fx?: Fx; ms: number; reduced: boolean; svg?: boolean; children: React.ReactNode }) {
+  if (!fx) return <>{children}</>
+  const t = { duration: reduced ? 0.15 : Math.max(0.2, ms / 1000), ease: EASE_SMOOTH }
+  const anim = { x: reduced ? fx.dx : fx.dx, y: fx.dy, scale: fx.scale, opacity: fx.opacity }
+  const pulse = fx.pulse && !reduced
+    ? { scale: [1, 1.16, 1], transition: { duration: Math.min(1.1, Math.max(0.5, ms / 1000)), ease: EASE_SMOOTH } }
+    : undefined
+  if (svg) {
+    return (
+      <motion.g initial={false} animate={anim} transition={t} style={{ transformBox: 'fill-box', originX: 0.5, originY: 0.5 }}>
+        <motion.g key={fx.pulse ?? 'p'} animate={pulse} style={{ transformBox: 'fill-box', originX: 0.5, originY: 0.5 }}>{children}</motion.g>
+      </motion.g>
+    )
+  }
+  return (
+    <motion.div initial={false} animate={anim} transition={t} className="absolute left-0 top-0" style={{ width: 0, height: 0, overflow: 'visible' }}>
+      <motion.div key={fx.pulse ?? 'p'} animate={pulse} style={{ width: 0, height: 0, overflow: 'visible' }}>{children}</motion.div>
     </motion.div>
   )
 }
@@ -220,9 +351,9 @@ function arrowHead(from: [number, number], to: [number, number], size = 13) {
   return `M${l[0].toFixed(2)} ${l[1].toFixed(2)} L${to[0].toFixed(2)} ${to[1].toFixed(2)} L${r[0].toFixed(2)} ${r[1].toFixed(2)}`
 }
 
-function functionPath(expr: string, axes: AxesDef, domain?: [number, number]) {
-  const c = compileExpr(expr)
-  if (!c.ok) return ''
+function functionPath(expr: string, axes: AxesDef, domain: [number, number] | undefined, vars: Vars) {
+  const fn = evalFn(expr, vars)
+  const c = { fn }
   const [x0, x1] = domain ?? axes.xRange
   const [y0, y1] = axes.yRange
   const span = y1 - y0
@@ -324,7 +455,14 @@ function FadeIn({ children, animate, delay = 0, reduced }: { children: React.Rea
   )
 }
 
-export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: boolean; reduced: boolean }) {
+/** Slope of f at x (central difference). */
+function slopeAt(f: (x: number) => number, x: number) {
+  const h = 1e-4
+  return (f(x + h) - f(x - h)) / (2 * h)
+}
+
+export function ShapeElement({ el, animate, reduced, duration, vars: boardVars = NO_VARS }: { el: ShapeEl; animate: boolean; reduced: boolean; duration?: number; vars?: Vars }) {
+  const vars = useLiveVars(!!el.dyn, boardVars)
   const { step } = el
   const tickPx = useMinUnits(14, 11.5)
   const axisLabelPx = useMinUnits(20, 15)
@@ -332,10 +470,10 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
   const shape: Shape = step.shape
   const color = INK_HEX[step.color ?? 'ink']
   const width = step.width ?? (shape.kind === 'axes' ? 1.6 : 2.6)
-  const dur = animMs(step) / 1000
+  const dur = (duration ?? animMs(step)) / 1000
   const clipId = el.axes ? `wb-clip-${el.axes.id}` : undefined
   const maskId = `wb-mask-${el.key.replace(/[^\w-]/g, '_')}`
-  const P = (p: [number, number]) => toBoard(el.axes, p)
+  const P = (p: [Num, Num]) => toBoard(el.axes, [evalNum(p[0], vars), evalNum(p[1], vars)])
   const base = { color, width, dashed: step.dashed, animate, reduced, maskId }
   // 8-digit hex: the stroke colour at ~12% opacity.
   const fillTint = step.fill ? `${color}1F` : 'none'
@@ -386,6 +524,7 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
     }
     case 'point': {
       const [x, y] = P(shape.at)
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null
       return (
         <FadeIn animate={animate} reduced={reduced}>
           <motion.circle
@@ -461,9 +600,32 @@ export function ShapeElement({ el, animate, reduced }: { el: ShapeEl; animate: b
     }
     case 'function': {
       if (!el.axes) return null
-      const d = functionPath(shape.expr, el.axes, shape.domain)
+      const d = functionPath(shape.expr, el.axes, shape.domain, vars)
       if (!d) return null
       return <Stroke {...base} width={step.width ?? 3} d={d} duration={dur} clipId={clipId} />
+    }
+    case 'secant':
+    case 'tangent': {
+      if (!el.axes) return null
+      const f = evalFn(shape.expr, vars)
+      const [xr0, xr1] = el.axes.xRange
+      let xa: number, xb: number, m: number, x0: number
+      if (shape.kind === 'secant') {
+        xa = evalNum(shape.x1, vars); xb = evalNum(shape.x2, vars)
+        m = Math.abs(xb - xa) < 1e-6 ? slopeAt(f, xa) : (f(xb) - f(xa)) / (xb - xa)
+        x0 = xa
+        const ext = shape.extend ?? (xr1 - xr0) * 0.35
+        xa = Math.min(xa, xb) - ext; xb = Math.max(evalNum(shape.x1, vars), xb) + ext
+      } else {
+        x0 = evalNum(shape.at, vars)
+        m = slopeAt(f, x0)
+        const half = (shape.len ?? (xr1 - xr0) * 2) / 2
+        xa = x0 - half; xb = x0 + half
+      }
+      const y0 = f(x0)
+      if (![xa, xb, m, y0].every(Number.isFinite)) return null
+      const d = pathFromPoints([P([xa, y0 + m * (xa - x0)]), P([xb, y0 + m * (xb - x0)])])
+      return <Stroke {...base} d={d} duration={dur} clipId={clipId} />
     }
   }
 }

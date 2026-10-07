@@ -31,7 +31,23 @@ interface StepBase {
    * $...$ (rendered with KaTeX in the transcript, read out in words).
    */
   say?: string
+  /**
+   * Narration sync. The step's own action starts when the word `at` is spoken and
+   * lasts until the word `until` (defaults: starts with the narration, natural length
+   * stretched to the phrase). A cue is a 0-based word index into `say`, or a word or
+   * short phrase that appears in `say`.
+   */
+  at?: Cue
+  until?: Cue
+  /** More actions fired at words of this step's narration (in spoken order). */
+  cues?: CueAction[]
 }
+
+/** A moment in a step's narration: a 0-based word index into `say`, or a word/phrase from `say`. */
+export type Cue = number | string
+/** A number, or an expression in the board's variables (see `set` / `animate`), e.g. "a + h". */
+export type Num = number | string
+export type PtX = [Num, Num]
 
 export interface WriteStep extends StepBase {
   type: 'write'
@@ -58,8 +74,8 @@ export interface MathStep extends StepBase {
 }
 
 export type Shape =
-  | { kind: 'line'; from: Pt; to: Pt }
-  | { kind: 'arrow'; from: Pt; to: Pt }
+  | { kind: 'line'; from: PtX; to: PtX }
+  | { kind: 'arrow'; from: PtX; to: PtX }
   | { kind: 'circle'; center: Pt; r: number }
   | { kind: 'rect'; x: number; y: number; w: number; h: number }
   | { kind: 'polyline'; points: Pt[] }
@@ -69,7 +85,11 @@ export type Shape =
   | { kind: 'arc'; center: Pt; r: number; from: number; to: number }
   /** Pie wedge (sector); angles as for arc. */
   | { kind: 'sector'; center: Pt; r: number; from: number; to: number }
-  | { kind: 'point'; at: Pt; label?: string; labelPos?: 'ne' | 'nw' | 'se' | 'sw' }
+  | { kind: 'point'; at: PtX; label?: string; labelPos?: 'ne' | 'nw' | 'se' | 'sw' }
+  /** Line through the curve at x1 and x2, extended past both; becomes the tangent as x2 -> x1. Needs `on`. */
+  | { kind: 'secant'; expr: string; x1: Num; x2: Num; extend?: number }
+  /** Tangent to the curve at x = at (numerical slope). Needs `on`. `len` = length in x units (default: the axes width). */
+  | { kind: 'tangent'; expr: string; at: Num; len?: number }
   | {
       kind: 'axes'
       frame: Frame
@@ -83,7 +103,7 @@ export type Shape =
     }
   | {
       kind: 'function'
-      /** Expression in x, e.g. "x^2", "sin(x) + 0.5*x". */
+      /** Expression in x (and board variables), e.g. "x^2", "sin(x) + 0.5*x", "m*(x - 1) + 1". */
       expr: string
       /** Defaults to the axes' x range. */
       domain?: [number, number]
@@ -155,7 +175,68 @@ export interface ManimClipStep extends StepBase {
   jobId?: string
 }
 
+/** Set board variables instantly (used by expressions in shapes and {{...}} in text). */
+export interface SetStep extends StepBase {
+  type: 'set'
+  vars: Record<string, number>
+}
+
+/** Smoothly animate a board variable (like Manim's ValueTracker) over the step's narration. */
+export interface AnimateStep extends StepBase {
+  type: 'animate'
+  var: string
+  to: number
+  /** Start value (defaults to the variable's current value). */
+  from?: number
+  ease?: 'smooth' | 'linear' | 'there_and_back'
+}
+
+/** Move an element: `by` [dx, dy] in board units (or graph units for shapes on axes), or `to` [x, y] for text. */
+export interface MoveStep extends StepBase {
+  type: 'move'
+  target: string
+  by?: Pt
+  to?: Pt
+}
+
+/** Fade an element to an opacity (0 hides it but keeps its id). */
+export interface FadeStep extends StepBase {
+  type: 'fade'
+  target: string
+  to: number
+}
+
+/** Scale an element about its centre. */
+export interface ScaleStep extends StepBase {
+  type: 'scale'
+  target: string
+  by: number
+}
+
+/** Recolour an element; `pulse` briefly enlarges it to draw the eye (like Manim's Indicate). */
+export interface ColorStep extends StepBase {
+  type: 'color'
+  target: string
+  color: Ink
+  pulse?: boolean
+}
+
+/** Camera: zoom into a point of the board (or of an axes' graph with `on`); zoom 1 resets. */
+export interface CameraStep extends StepBase {
+  type: 'camera'
+  zoom: number
+  center?: Pt
+  on?: string
+}
+
 export type Step =
+  | SetStep
+  | AnimateStep
+  | MoveStep
+  | FadeStep
+  | ScaleStep
+  | ColorStep
+  | CameraStep
   | WriteStep
   | MathStep
   | DrawStep
@@ -167,7 +248,24 @@ export type Step =
   | ManimClipStep
 
 export type StepType = Step['type']
-export const STEP_TYPES: StepType[] = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'pause', 'check', 'manim_clip']
+export const STEP_TYPES: StepType[] = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'pause', 'check', 'manim_clip', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera']
+
+/** Step types that can also be fired as cues during another step's narration. */
+export const ACTION_TYPES = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera'] as const
+export type ActionType = (typeof ACTION_TYPES)[number]
+type ActionStep = Extract<Step, { type: ActionType }>
+/** An action fired at a word of the step's narration. */
+export type CueAction = (ActionStep extends infer A ? A extends ActionStep ? Omit<A, 'say' | 'cues' | 'at'> & { at: Cue } : never : never)
+
+/** Variables usable in expressions: letters/digits, starting with a letter, not reserved names. */
+const VAR_RE = /^[a-zA-Z]{1,12}$/
+const RESERVED = new Set(['x', 'e', 'pi', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'exp', 'ln', 'log', 'sqrt', 'abs', 'sinh', 'cosh', 'tanh', 'floor', 'ceil', 'min', 'max'])
+export function isVarName(v: unknown): v is string {
+  return typeof v === 'string' && VAR_RE.test(v) && !RESERVED.has(v.toLowerCase())
+}
+
+/** {{expr}} or {{expr:2}} (decimals) inside write text / math tex: replaced by the live value. */
+export const TEMPLATE_RE = /\{\{([^{}:]+)(?::(\d))?\}\}/g
 
 /* ───────────── Validation ───────────── */
 
@@ -186,6 +284,26 @@ const isStr = (v: unknown): v is string => typeof v === 'string'
 const isPt = (v: unknown): v is Pt => Array.isArray(v) && v.length === 2 && isNum(v[0]) && isNum(v[1])
 const isRange = (v: unknown): v is [number, number] => isPt(v) && (v as number[])[0] < (v as number[])[1]
 const ID_RE = /^[A-Za-z][\w-]{0,39}$/
+
+interface Ctx { ids: Set<string>; axes: Set<string>; vars: Set<string>; depth: number }
+
+/** A number or an expression over the known variables. */
+function isNumX(v: unknown, vars: Set<string>): boolean {
+  if (isNum(v)) return true
+  if (!isStr(v) || !v.trim() || v.length > 120) return false
+  const c = compileExpr(v, vars, false)
+  return c.ok
+}
+const isPtX = (v: unknown, vars: Set<string>) => Array.isArray(v) && v.length === 2 && isNumX(v[0], vars) && isNumX(v[1], vars)
+
+/** Check {{expr}} templates in text against the known variables. */
+function checkTemplates(text: unknown, errs: string[], at: string, vars: Set<string>) {
+  if (!isStr(text)) return
+  for (const m of text.matchAll(TEMPLATE_RE)) {
+    const c = compileExpr(m[1], vars, false)
+    if (!c.ok) errs.push(`${at}: {{${m[1]}}} — ${c.error}`)
+  }
+}
 
 function optEnum<T extends string>(o: Obj, key: string, allowed: readonly T[], errs: string[], at: string) {
   if (o[key] === undefined) return
@@ -209,13 +327,13 @@ function optNum(o: Obj, key: string, errs: string[], at: string, min = -10_000, 
   reqNum(o, key, errs, at, min, max)
 }
 
-function validateShape(s: unknown, errs: string[], at: string) {
+function validateShape(s: unknown, errs: string[], at: string, vars: Set<string> = new Set()) {
   if (!isObj(s)) { errs.push(`${at} must be an object`); return }
   switch (s.kind) {
     case 'line':
     case 'arrow':
-      if (!isPt(s.from)) errs.push(`${at}.from must be [x,y]`)
-      if (!isPt(s.to)) errs.push(`${at}.to must be [x,y]`)
+      if (!isPtX(s.from, vars)) errs.push(`${at}.from must be [x,y] (numbers or expressions in set variables)`)
+      if (!isPtX(s.to, vars)) errs.push(`${at}.to must be [x,y] (numbers or expressions in set variables)`)
       break
     case 'circle':
       if (!isPt(s.center)) errs.push(`${at}.center must be [x,y]`)
@@ -238,7 +356,7 @@ function validateShape(s: unknown, errs: string[], at: string) {
       reqNum(s, 'to', errs, at, -1440, 1440)
       break
     case 'point':
-      if (!isPt(s.at)) errs.push(`${at}.at must be [x,y]`)
+      if (!isPtX(s.at, vars)) errs.push(`${at}.at must be [x,y] (numbers or expressions in set variables)`)
       optStr(s, 'label', errs, at, 60)
       optEnum(s, 'labelPos', ['ne', 'nw', 'se', 'sw'] as const, errs, at)
       break
@@ -255,25 +373,108 @@ function validateShape(s: unknown, errs: string[], at: string) {
     case 'function':
       reqStr(s, 'expr', errs, at, 200)
       if (isStr(s.expr)) {
-        const e = compileExpr(s.expr)
+        const e = compileExpr(s.expr, vars)
         if (!e.ok) errs.push(`${at}.expr: ${e.error}`)
       }
       if (s.domain !== undefined && !isRange(s.domain)) errs.push(`${at}.domain must be [min,max] with min<max`)
       break
+    case 'secant':
+    case 'tangent': {
+      reqStr(s, 'expr', errs, at, 200)
+      if (isStr(s.expr)) {
+        const e = compileExpr(s.expr, vars)
+        if (!e.ok) errs.push(`${at}.expr: ${e.error}`)
+      }
+      if (s.kind === 'secant') {
+        if (!isNumX(s.x1, vars)) errs.push(`${at}.x1 must be a number or an expression in set variables`)
+        if (!isNumX(s.x2, vars)) errs.push(`${at}.x2 must be a number or an expression in set variables`)
+        optNum(s, 'extend', errs, at, 0, 1000)
+      } else {
+        if (!isNumX(s.at, vars)) errs.push(`${at}.at must be a number or an expression in set variables`)
+        optNum(s, 'len', errs, at, 0.0001, 100000)
+      }
+      break
+    }
     default:
-      errs.push(`${at}.kind must be one of line|arrow|circle|rect|polyline|polygon|arc|sector|point|axes|function`)
+      errs.push(`${at}.kind must be one of line|arrow|circle|rect|polyline|polygon|arc|sector|point|axes|function|secant|tangent`)
   }
 }
 
-function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<string>; axes: Set<string>; depth: number }): raw is Step {
+function validateCue(v: unknown, step: Obj, errs: string[], at: string, key: string) {
+  if (v === undefined) return
+  if (isNum(v)) {
+    const n = cueWordCount(step)
+    if (!Number.isInteger(v) || v < 0 || (n > 0 && v >= n)) errs.push(`${at}.${key} must be a word index 0..${Math.max(0, n - 1)} of "say"`)
+    return
+  }
+  if (!isStr(v) || !v.trim() || v.length > 80) { errs.push(`${at}.${key} must be a word index or a short phrase from "say"`); return }
+  if (cueWordCount(step) > 0 && findCueWord(step, v) < 0) errs.push(`${at}.${key} "${v}" does not appear in this step's "say"`)
+}
+
+function validateStep(raw: unknown, errs: string[], at: string, ctx: Ctx, cueOf?: Obj): raw is Step {
   const before = errs.length
   if (!isObj(raw)) { errs.push(`${at} must be an object`); return false }
   const s = raw
   if (s.id !== undefined && (!isStr(s.id) || !ID_RE.test(s.id))) errs.push(`${at}.id must match ${ID_RE}`)
-  optStr(s, 'say', errs, at, 400)
+  if (cueOf) {
+    // A cue: an action fired during another step's narration.
+    if (!(ACTION_TYPES as readonly string[]).includes(s.type as string)) errs.push(`${at}.type must be one of ${ACTION_TYPES.join('|')} (a cue cannot be a ${String(s.type)})`)
+    if (s.say !== undefined) errs.push(`${at}: a cue has no "say" (the step's narration is spoken)`)
+    if (s.cues !== undefined) errs.push(`${at}: cues cannot be nested`)
+    if (s.at === undefined) errs.push(`${at}.at is required (the word of the step's "say" that fires it)`)
+    validateCue(s.at, cueOf, errs, at, 'at')
+    validateCue(s.until, cueOf, errs, at, 'until')
+  } else {
+    optStr(s, 'say', errs, at, 400)
+    validateCue(s.at, s, errs, at, 'at')
+    validateCue(s.until, s, errs, at, 'until')
+  }
   switch (s.type) {
+    case 'set':
+      if (!isObj(s.vars) || Object.keys(s.vars).length === 0 || Object.keys(s.vars).length > 8) errs.push(`${at}.vars must be an object of 1..8 {name: number}`)
+      else for (const [k, v] of Object.entries(s.vars)) {
+        if (!isVarName(k)) errs.push(`${at}.vars: "${k}" is not a valid variable name (letters/digits, not x, e or pi)`)
+        else if (!isNum(v)) errs.push(`${at}.vars.${k} must be a number`)
+      }
+      break
+    case 'animate':
+      if (!isVarName(s.var)) errs.push(`${at}.var must be a variable name (letters/digits, not x, e or pi)`)
+      else if (!ctx.vars.has(s.var) && !isNum(s.from)) errs.push(`${at}.var "${s.var}" is not set yet: add "from" or a set step first`)
+      reqNum(s, 'to', errs, at, -1e6, 1e6)
+      optNum(s, 'from', errs, at, -1e6, 1e6)
+      optEnum(s, 'ease', ['smooth', 'linear', 'there_and_back'] as const, errs, at)
+      break
+    case 'move':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      if (s.by === undefined && s.to === undefined) errs.push(`${at} needs "by" [dx,dy] or "to" [x,y]`)
+      if (s.by !== undefined && !isPt(s.by)) errs.push(`${at}.by must be [dx,dy]`)
+      if (s.to !== undefined && !isPt(s.to)) errs.push(`${at}.to must be [x,y]`)
+      break
+    case 'fade':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      reqNum(s, 'to', errs, at, 0, 1)
+      break
+    case 'scale':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      reqNum(s, 'by', errs, at, 0.2, 4)
+      break
+    case 'color':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      if (!isStr(s.color) || !(INKS as readonly string[]).includes(s.color)) errs.push(`${at}.color must be one of ${INKS.join('|')}`)
+      if (s.pulse !== undefined && typeof s.pulse !== 'boolean') errs.push(`${at}.pulse must be boolean`)
+      break
+    case 'camera':
+      reqNum(s, 'zoom', errs, at, 1, 4)
+      if (s.center !== undefined && !isPt(s.center)) errs.push(`${at}.center must be [x,y]`)
+      if (s.on !== undefined && (!isStr(s.on) || !ctx.axes.has(s.on))) errs.push(`${at}.on refers to unknown axes "${String(s.on)}"`)
+      break
     case 'write':
       reqStr(s, 'text', errs, at, 300)
+      checkTemplates(s.text, errs, `${at}.text`, ctx.vars)
       reqNum(s, 'x', errs, at, 0, BOARD_W); reqNum(s, 'y', errs, at, 0, BOARD_H)
       optEnum(s, 'size', SIZES, errs, at); optEnum(s, 'color', INKS, errs, at)
       optEnum(s, 'font', ['serif', 'sans'] as const, errs, at)
@@ -282,12 +483,13 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<
       break
     case 'math':
       reqStr(s, 'tex', errs, at, 400)
+      checkTemplates(s.tex, errs, `${at}.tex`, ctx.vars)
       reqNum(s, 'x', errs, at, 0, BOARD_W); reqNum(s, 'y', errs, at, 0, BOARD_H)
       optEnum(s, 'size', SIZES, errs, at); optEnum(s, 'color', INKS, errs, at)
       optEnum(s, 'align', ['left', 'center', 'right'] as const, errs, at)
       break
     case 'draw':
-      validateShape(s.shape, errs, `${at}.shape`)
+      validateShape(s.shape, errs, `${at}.shape`, ctx.vars)
       optEnum(s, 'color', INKS, errs, at)
       optNum(s, 'width', errs, at, 0.5, 12)
       if (s.dashed !== undefined && typeof s.dashed !== 'boolean') errs.push(`${at}.dashed must be boolean`)
@@ -296,7 +498,7 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<
         if (!isStr(s.on)) errs.push(`${at}.on must be an axes id`)
         else if (!ctx.axes.has(s.on)) errs.push(`${at}.on refers to unknown axes "${s.on}"`)
       }
-      if (isObj(s.shape) && s.shape.kind === 'function' && !isStr(s.on)) errs.push(`${at}: a function shape needs "on" (an axes id)`)
+      if (isObj(s.shape) && (s.shape.kind === 'function' || s.shape.kind === 'secant' || s.shape.kind === 'tangent') && !isStr(s.on)) errs.push(`${at}: a ${s.shape.kind} shape needs "on" (an axes id)`)
       if (isObj(s.shape) && s.shape.kind === 'axes') {
         if (!isStr(s.id)) errs.push(`${at}: axes need an "id" so plots can reference them`)
         else ctx.axes.add(s.id)
@@ -314,6 +516,7 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<
       if (s.tex === undefined && s.text === undefined && s.x === undefined && s.y === undefined)
         errs.push(`${at} must change something (tex, text, x or y)`)
       optStr(s, 'tex', errs, at, 400); optStr(s, 'text', errs, at, 300)
+      checkTemplates(s.tex, errs, `${at}.tex`, ctx.vars); checkTemplates(s.text, errs, `${at}.text`, ctx.vars)
       optNum(s, 'x', errs, at, 0, BOARD_W); optNum(s, 'y', errs, at, 0, BOARD_H)
       optEnum(s, 'color', INKS, errs, at)
       break
@@ -342,7 +545,7 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<
         else if (!Array.isArray(s.reteach) || s.reteach.length > 30) errs.push(`${at}.reteach must be an array of up to 30 steps`)
         else {
           // reteach runs from the board state at this point; validate with a copy of the ids.
-          const sub = { ids: new Set(ctx.ids), axes: new Set(ctx.axes), depth: 1 }
+          const sub = { ids: new Set(ctx.ids), axes: new Set(ctx.axes), vars: new Set(ctx.vars), depth: 1 }
           s.reteach.forEach((r, i) => validateStep(r, errs, `${at}.reteach[${i}]`, sub))
         }
       }
@@ -357,13 +560,67 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<
     default:
       errs.push(`${at}.type must be one of ${STEP_TYPES.join('|')}`)
   }
-  const ok = errs.length === before
-  if (ok && isStr(s.id) && ['write', 'math', 'draw'].includes(s.type as string)) ctx.ids.add(s.id)
-  if (ok && s.type === 'clear') {
+  let ok = errs.length === before
+  if (ok) registerEffects(s, ctx)
+  // Cues run during this step's narration, after its own action, in order.
+  if (s.cues !== undefined && !cueOf) {
+    if (!Array.isArray(s.cues) || s.cues.length > 16) { errs.push(`${at}.cues must be an array of up to 16 actions`); ok = false }
+    else {
+      const b = errs.length
+      s.cues.forEach((c, k) => { validateStep(c, errs, `${at}.cues[${k}]`, ctx, s) })
+      if (errs.length > b) ok = false
+    }
+  }
+  return ok
+}
+
+/** What a valid step adds to / removes from the board context. */
+function registerEffects(s: Obj, ctx: Ctx) {
+  if (isStr(s.id) && ['write', 'math', 'draw'].includes(s.type as string)) ctx.ids.add(s.id)
+  if (s.type === 'clear') {
     if (Array.isArray(s.targets)) for (const t of s.targets) { ctx.ids.delete(t as string); ctx.axes.delete(t as string) }
     else { ctx.ids.clear(); ctx.axes.clear() }
   }
-  return ok
+  if (s.type === 'set' && isObj(s.vars)) for (const k of Object.keys(s.vars)) ctx.vars.add(k)
+  if (s.type === 'animate' && isStr(s.var)) ctx.vars.add(s.var)
+}
+
+/* ───────────── Narration cues ───────────── */
+
+/** The words of a step's narration that cues index into (its `say`, or the written text). */
+export function cueWords(step: { say?: unknown; type?: unknown; text?: unknown }): string[] {
+  const src = isStr(step.say) && step.say.trim() ? step.say : step.type === 'write' && isStr(step.text) ? step.text : ''
+  return splitSayWords(src)
+}
+
+/** Split narration into words, keeping each inline $...$ formula (with attached punctuation) as one word. */
+export function splitSayWords(say: string): string[] {
+  return say.match(/(?:[^\s$]*\$[^$]*\$)+[^\s$]*|[^\s]+/g) ?? []
+}
+
+function cueWordCount(step: Obj) { return cueWords(step).length }
+
+const normWord = (w: string) => w.toLowerCase().replace(/\$/g, '').replace(/[^\p{L}\p{N}^'+\-=/.]/gu, '').replace(/^[.'-]+|[.'-]+$/g, '')
+
+/** Index of the word a cue refers to in `cueWords(step)`, searching from `from` first; -1 if absent. */
+export function findCueWord(step: { say?: unknown; type?: unknown; text?: unknown }, cue: Cue, from = 0): number {
+  const words = cueWords(step)
+  if (typeof cue === 'number') return cue >= 0 && cue < words.length ? Math.floor(cue) : -1
+  const want = splitSayWords(cue).map(normWord).filter(Boolean)
+  if (!want.length) return -1
+  const have = words.map(normWord)
+  const scan = (start: number) => {
+    for (let i = start; i + want.length <= have.length; i++) {
+      if (want.every((w, k) => have[i + k] === w)) return i
+    }
+    // Looser: a word that starts with the cue word ("tangent" matches "tangent:").
+    for (let i = start; i + want.length <= have.length; i++) {
+      if (want.every((w, k) => have[i + k]?.startsWith(w))) return i
+    }
+    return -1
+  }
+  const hit = scan(Math.max(0, from))
+  return hit >= 0 ? hit : from > 0 ? scan(0) : -1
 }
 
 const INK_ALIASES: Record<string, Ink> = {
@@ -406,7 +663,12 @@ export function normalizeScript(input: unknown): unknown {
       if ((sh.kind === 'arc' || sh.kind === 'sector') && sh.from === undefined && isNum(sh.startAngle)) { sh.from = sh.startAngle; sh.to = sh.endAngle }
       s.shape = sh
     }
+    for (const k of ['zoom', 'by', 'to', 'from']) {
+      if (isStr(s[k]) && s[k] !== '' && Number.isFinite(Number(s[k]))) s[k] = Number(s[k])
+    }
     if (s.type === 'check' && Array.isArray(s.reteach)) s.reteach = s.reteach.map(fixStep)
+    if (Array.isArray(s.cues)) s.cues = s.cues.map(fixStep)
+    else if (s.cues === null) delete s.cues
     return s
   }
   return arr.map(fixStep)
@@ -416,14 +678,14 @@ export function normalizeScript(input: unknown): unknown {
  * Validate a script. `knownIds` lets a continuation (AI next steps) refer to
  * elements already on the board.
  */
-export function validateScript(input: unknown, opts: { knownIds?: Iterable<string>; knownAxes?: Iterable<string>; maxSteps?: number } = {}): ValidationResult {
+export function validateScript(input: unknown, opts: { knownIds?: Iterable<string>; knownAxes?: Iterable<string>; knownVars?: Iterable<string>; maxSteps?: number } = {}): ValidationResult {
   const errors: string[] = []
   const arr = normalizeScript(input)
   if (!Array.isArray(arr)) return { ok: false, steps: [], errors: ['script must be an array of steps (or {"steps": [...]})'], total: 0 }
   const max = opts.maxSteps ?? 200
   if (arr.length === 0) errors.push('script has no steps')
   if (arr.length > max) errors.push(`script has more than ${max} steps`)
-  const ctx = { ids: new Set(opts.knownIds ?? []), axes: new Set(opts.knownAxes ?? []), depth: 0 }
+  const ctx: Ctx = { ids: new Set(opts.knownIds ?? []), axes: new Set(opts.knownAxes ?? []), vars: new Set(opts.knownVars ?? []), depth: 0 }
   const steps: Step[] = []
   arr.slice(0, max).forEach((raw, i) => {
     if (validateStep(raw, errors, `steps[${i}]`, ctx)) steps.push(raw as Step)
@@ -431,11 +693,12 @@ export function validateScript(input: unknown, opts: { knownIds?: Iterable<strin
   return { ok: errors.length === 0, steps, errors, total: arr.length }
 }
 
-/** The ids and axes that exist on the board after playing `steps`. */
-export function boardIdsAfter(steps: Step[]): { ids: string[]; axes: string[] } {
+/** The ids, axes and variables that exist on the board after playing `steps` (cues included). */
+export function boardIdsAfter(steps: Step[]): { ids: string[]; axes: string[]; vars: string[] } {
   const ids = new Set<string>()
   const axes = new Set<string>()
-  for (const s of steps) {
+  const vars = new Set<string>()
+  const one = (s: Step | CueAction) => {
     if ((s.type === 'write' || s.type === 'math' || s.type === 'draw') && s.id) {
       ids.add(s.id)
       if (s.type === 'draw' && s.shape.kind === 'axes') axes.add(s.id)
@@ -444,8 +707,14 @@ export function boardIdsAfter(steps: Step[]): { ids: string[]; axes: string[] } 
       if (s.targets) for (const t of s.targets) { ids.delete(t); axes.delete(t) }
       else { ids.clear(); axes.clear() }
     }
+    if (s.type === 'set') Object.keys(s.vars).forEach(k => vars.add(k))
+    if (s.type === 'animate') vars.add(s.var)
   }
-  return { ids: [...ids], axes: [...axes] }
+  for (const s of steps) {
+    one(s)
+    if ('cues' in s && Array.isArray(s.cues)) s.cues.forEach(c => one(c as CueAction))
+  }
+  return { ids: [...ids], axes: [...axes], vars: [...vars] }
 }
 
 /* ───────────── Safe math expressions (for function plots) ───────────── */
@@ -482,10 +751,16 @@ function tokenize(src: string): Tok[] {
   return out
 }
 
-type Node = (x: number) => number
+export type Vars = Record<string, number>
+type Node = (x: number, v?: Vars) => number
 
-/** Compile an expression in x without eval. Supports + - * / ^, parentheses, implicit multiplication (2x), and common functions. */
-export function compileExpr(src: string): { ok: true; fn: Node } | { ok: false; error: string } {
+/**
+ * Compile an expression in x (and named board variables) without eval. Supports
+ * + - * / ^, parentheses, implicit multiplication (2x), and common functions.
+ * `vars`: the variable names allowed (unknown names are an error); `allowX`: x may appear.
+ */
+export function compileExpr(src: string, vars?: Iterable<string>, allowX = true): { ok: true; fn: Node } | { ok: false; error: string } {
+  const allowed = new Set([...(vars ?? [])].map(v => v.toLowerCase()))
   try {
     const toks = tokenize(src)
     let p = 0
@@ -498,7 +773,7 @@ export function compileExpr(src: string): { ok: true; fn: Node } | { ok: false; 
       while (isOp('+') || isOp('-')) {
         const op = toks[p++].v
         const l = left, r = term()
-        left = op === '+' ? x => l(x) + r(x) : x => l(x) - r(x)
+        left = op === '+' ? (x, v) => l(x, v) + r(x, v) : (x, v) => l(x, v) - r(x, v)
       }
       return left
     }
@@ -508,22 +783,22 @@ export function compileExpr(src: string): { ok: true; fn: Node } | { ok: false; 
         if (isOp('*') || isOp('/')) {
           const op = toks[p++].v
           const l = left, r = unary()
-          left = op === '*' ? x => l(x) * r(x) : x => l(x) / r(x)
+          left = op === '*' ? (x, v) => l(x, v) * r(x, v) : (x, v) => l(x, v) / r(x, v)
         } else if (startsPrimary()) {
           const l = left, r = power()
-          left = x => l(x) * r(x)
+          left = (x, v) => l(x, v) * r(x, v)
         } else break
       }
       return left
     }
     function unary(): Node {
-      if (isOp('-')) { p++; const u = unary(); return x => -u(x) }
+      if (isOp('-')) { p++; const u = unary(); return (x, v) => -u(x, v) }
       if (isOp('+')) { p++; return unary() }
       return power()
     }
     function power(): Node {
       const base = primary()
-      if (isOp('^')) { p++; const e = unary(); return x => Math.pow(base(x), e(x)) }
+      if (isOp('^')) { p++; const e = unary(); return (x, v) => Math.pow(base(x, v), e(x, v)) }
       return base
     }
     function primary(): Node {
@@ -537,15 +812,24 @@ export function compileExpr(src: string): { ok: true; fn: Node } | { ok: false; 
         return e
       }
       if (t.t === 'id') {
-        if (t.v === 'x') return x => x
-        if (t.v in CONSTS) { const v = CONSTS[t.v]; return () => v }
+        if (t.v === 'x') { if (!allowX) throw new Error('x is only allowed in function expressions'); return x => x }
+        if (t.v in CONSTS) { const c = CONSTS[t.v]; return () => c }
         if (t.v in FUNCS) {
           const f = FUNCS[t.v]
           if (!isOp('(')) throw new Error(`${t.v} needs parentheses`)
           const arg = primary()
-          return x => f(arg(x))
+          return (x, v) => f(arg(x, v))
         }
-        throw new Error(`unknown name "${t.v}"`)
+        if (allowed.has(t.v)) {
+          const name = t.v
+          return (_x, v) => {
+            if (!v) return NaN
+            if (name in v) return v[name]
+            const k = Object.keys(v).find(key => key.toLowerCase() === name)
+            return k ? v[k] : NaN
+          }
+        }
+        throw new Error(`unknown name "${t.v}"${/^[a-z]+$/.test(t.v) ? ' (set it as a variable first)' : ''}`)
       }
       throw new Error(`unexpected "${t.v}"`)
     }

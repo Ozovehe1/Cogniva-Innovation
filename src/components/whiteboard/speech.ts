@@ -1,4 +1,4 @@
-import type { Step } from '@/lib/lesson-schema'
+import { splitSayWords, type Step } from '@/lib/lesson-schema'
 
 /* ───────────── Math to spoken words ───────────── */
 
@@ -171,15 +171,31 @@ export function stepLines(step: Step, index: number): Line[] {
   return out
 }
 
-/** What the narrator should say for a step, in plain words (empty = silent step). */
-export function stepSpeech(step: Step): string {
+/**
+ * What the narrator says for a step, in plain words, plus where each narration
+ * word (the words cues index into: `say`, or a write step's text) starts in the
+ * spoken text. Each word is converted on its own so the mapping is exact.
+ */
+export function stepNarration(step: Step): { text: string; map: number[] } {
   const parts: string[] = []
-  if (step.say?.trim()) parts.push(toSpeech(step.say))
-  else if (step.type === 'write') parts.push(toSpeech(step.text))
-  else if (step.type === 'math') parts.push(texToWords(step.tex))
+  const map: number[] = []
+  let count = 0
+  const src = step.say?.trim() ? step.say : step.type === 'write' ? step.text : ''
+  if (src) {
+    for (const w of splitSayWords(src)) {
+      map.push(count)
+      const spoken = w === '=' ? 'equals' : toSpeech(w)
+      if (spoken) { parts.push(spoken); count += spoken.split(/\s+/).filter(Boolean).length }
+    }
+  } else if (step.type === 'math') parts.push(texToWords(step.tex))
   else if (step.type === 'transform' && step.tex) parts.push(texToWords(step.tex))
   if (step.type === 'check') parts.push(toSpeech(step.prompt))
-  return parts.filter(Boolean).join(' ')
+  return { text: tidy(parts.filter(Boolean).join(' ')), map }
+}
+
+/** What the narrator should say for a step, in plain words (empty = silent step). */
+export function stepSpeech(step: Step): string {
+  return stepNarration(step).text
 }
 
 /** Rough speaking time at rate 1, used as a fallback when an engine never reports the end. */

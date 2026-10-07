@@ -1,5 +1,5 @@
-import type { CheckStep, DrawStep, Ink, Step, TextSize } from '@/lib/lesson-schema'
-import { BOARD_H, BOARD_W } from '@/lib/lesson-schema'
+import type { CheckStep, Cue, CueAction, DrawStep, Ink, Num, Step, TextSize, Vars } from '@/lib/lesson-schema'
+import { ACTION_TYPES, BOARD_H, BOARD_W, TEMPLATE_RE, compileExpr } from '@/lib/lesson-schema'
 
 export const INK_HEX: Record<Ink, string> = {
   ink: '#14141A',
@@ -19,6 +19,18 @@ export interface AxesDef {
   yRange: [number, number]
 }
 
+/** Motion applied to an element after it was drawn (move / fade / scale / color pulse). */
+export interface Fx {
+  dx: number
+  dy: number
+  scale: number
+  opacity: number
+  /** Action key of the last pulse (Indicate). */
+  pulse?: string
+  /** Action key of the last change, so the player can animate it over that action's duration. */
+  act: string
+}
+
 interface ElBase {
   /** Stable React key. */
   key: string
@@ -26,6 +38,11 @@ interface ElBase {
   id?: string
   /** Index of the step that created the element. */
   born: number
+  /** Action that created it: "<step>.<k>" (k = 0 for the step itself, k >= 1 for its cues). */
+  act: string
+  fx?: Fx
+  /** Geometry or text depends on board variables (re-rendered while they animate). */
+  dyn?: boolean
 }
 
 export interface TextEl extends ElBase {
@@ -36,6 +53,8 @@ export interface TextEl extends ElBase {
   prevY?: number
   /** Index of the transform step that last changed this element. */
   morphedAt?: number
+  /** Action key of that transform. */
+  morphAct?: string
   x: number
   y: number
   size: TextSize
@@ -60,27 +79,119 @@ export interface HighlightEl extends ElBase {
 
 export type BoardEl = TextEl | ShapeEl | HighlightEl
 
+export interface Camera { zoom: number; cx: number; cy: number; act: string }
+
 export interface BoardState {
   els: BoardEl[]
   axes: Record<string, AxesDef>
+  /** Board variables (set / animate), at their final values. */
+  vars: Vars
+  camera: Camera | null
 }
 
-export const emptyBoard = (): BoardState => ({ els: [], axes: {} })
+export const emptyBoard = (vars: Vars = {}): BoardState => ({ els: [], axes: {}, vars, camera: null })
 
-/** Apply one step to a board (pure, returns a new state). Unknown targets are ignored. */
+/* ───────────── Actions: a step's own action plus its narration cues ───────────── */
+
+export type Action = Exclude<Step, { type: 'check' | 'pause' | 'manim_clip' }> | CueAction
+
+export interface StepAction {
+  /** 0 = the step's own action, k >= 1 = cues[k - 1]. */
+  k: number
+  key: string
+  action: Action
+  at?: Cue
+  until?: Cue
+}
+
+const isActionType = (t: string) => (ACTION_TYPES as readonly string[]).includes(t)
+
+/** The actions a step performs, in order: its own (when it is an action type) then its cues. */
+export function stepActions(step: Step, index: number): StepAction[] {
+  const out: StepAction[] = []
+  if (isActionType(step.type)) out.push({ k: 0, key: `${index}.0`, action: step as Action, at: step.at, until: step.until })
+  const cues = (step as { cues?: CueAction[] }).cues
+  if (Array.isArray(cues)) cues.forEach((c, i) => out.push({ k: i + 1, key: `${index}.${i + 1}`, action: c, at: c.at, until: c.until }))
+  return out
+}
+
+const hasVarRef = (v: Num | undefined) => typeof v === 'string'
+function shapeIsDyn(step: DrawStep): boolean {
+  const sh = step.shape
+  switch (sh.kind) {
+    case 'line': case 'arrow': return sh.from.some(hasVarRef) || sh.to.some(hasVarRef)
+    case 'point': return sh.at.some(hasVarRef)
+    case 'secant': return hasVarRef(sh.x1) || hasVarRef(sh.x2) || /[a-wyz]/i.test(sh.expr.replace(/sin|cos|tan|exp|ln|log|sqrt|abs|pi|e\b/g, ''))
+    case 'tangent': return hasVarRef(sh.at) || /[a-wyz]/i.test(sh.expr.replace(/sin|cos|tan|exp|ln|log|sqrt|abs|pi|e\b/g, ''))
+    case 'function': return /[a-wyz]/i.test(sh.expr.replace(/sin|cos|tan|exp|ln|log|sqrt|abs|pi|e\b|asin|acos|atan|sinh|cosh|tanh|floor|ceil/g, ''))
+    default: return false
+  }
+}
+const hasTemplate = (t: string) => { TEMPLATE_RE.lastIndex = 0; return TEMPLATE_RE.test(t) }
+
+/* ───────────── Evaluating expressions ───────────── */
+
+const exprCache = new Map<string, ReturnType<typeof compileExpr>>()
+function compiled(src: string, vars: Vars) {
+  const ck = `${src}|${Object.keys(vars).sort().join(',')}`
+  let c = exprCache.get(ck)
+  if (!c) { c = compileExpr(src, Object.keys(vars)); if (exprCache.size > 500) exprCache.clear(); exprCache.set(ck, c) }
+  return c
+}
+
+/** A number, or an expression evaluated with the board variables. */
+export function evalNum(v: Num, vars: Vars, x = 0): number {
+  if (typeof v === 'number') return v
+  const c = compiled(v, vars)
+  return c.ok ? c.fn(x, vars) : NaN
+}
+
+/** A function of x (with variables). */
+export function evalFn(expr: string, vars: Vars): (x: number) => number {
+  const c = compiled(expr, vars)
+  return c.ok ? (x: number) => c.fn(x, vars) : () => NaN
+}
+
+/** Fill {{expr}} / {{expr:2}} templates with live values. */
+export function fillTemplates(text: string, vars: Vars): string {
+  if (!text.includes('{{')) return text
+  return text.replace(TEMPLATE_RE, (_, ex: string, dp?: string) => {
+    const v = evalNum(ex.trim(), vars)
+    if (!Number.isFinite(v)) return '?'
+    const d = dp !== undefined ? Number(dp) : 2
+    const r = v.toFixed(d)
+    return r === '-0' || /^-0\.0*$/.test(r) ? r.slice(1) : r
+  })
+}
+
+/** Apply a whole step (its own action and all its cues) to a board (pure). */
 export function applyStep(state: BoardState, step: Step, index: number): BoardState {
+  let s = state
+  for (const a of stepActions(step, index)) s = applyAction(s, a.action, index, a.k)
+  return s
+}
+
+const baseFx = (el: BoardEl, act: string): Fx => ({ dx: 0, dy: 0, scale: 1, opacity: 1, ...el.fx, act })
+
+/** Apply one action to a board (pure, returns a new state). Unknown targets are ignored. */
+export function applyAction(state: BoardState, step: Action, index: number, k = 0): BoardState {
   const els = state.els
   const axes = state.axes
-  const anon = `s${index}`
+  const act = `${index}.${k}`
+  const anon = k ? `s${index}c${k}` : `s${index}`
+  const keyOf = (id?: string) => `${id ?? anon}@${k ? act : index}`
   switch (step.type) {
     case 'write':
     case 'math': {
+      const content = step.type === 'write' ? step.text : step.tex
       const el: TextEl = {
         kind: step.type === 'write' ? 'text' : 'math',
-        key: `${step.id ?? anon}@${index}`,
+        key: keyOf(step.id),
         id: step.id,
         born: index,
-        content: step.type === 'write' ? step.text : step.tex,
+        act,
+        dyn: hasTemplate(content) || undefined,
+        content,
         x: step.x,
         y: step.y,
         size: step.size ?? 'md',
@@ -90,31 +201,33 @@ export function applyStep(state: BoardState, step: Step, index: number): BoardSt
         maxWidth: step.type === 'write' ? step.maxWidth : undefined,
       }
       const rest = step.id ? els.filter(e => e.id !== step.id) : els
-      return { els: [...rest, el], axes }
+      return { ...state, els: [...rest, el] }
     }
     case 'draw': {
       const axesDef = step.on ? axes[step.on] : undefined
       if (step.on && !axesDef) return state
-      const el: ShapeEl = { kind: 'shape', key: `${step.id ?? anon}@${index}`, id: step.id, born: index, step, axes: axesDef }
+      const plain: DrawStep = { type: 'draw', id: step.id, shape: step.shape, color: step.color, width: step.width, dashed: step.dashed, fill: step.fill, on: step.on }
+      const el: ShapeEl = { kind: 'shape', key: keyOf(step.id), id: step.id, born: index, act, step: plain, axes: axesDef, dyn: shapeIsDyn(plain) || undefined }
       const rest = step.id ? els.filter(e => e.id !== step.id) : els
       let nextAxes = axes
       if (step.shape.kind === 'axes' && step.id) {
         nextAxes = { ...axes, [step.id]: { id: step.id, frame: step.shape.frame, xRange: step.shape.xRange, yRange: step.shape.yRange } }
       }
-      return { els: [...rest, el], axes: nextAxes }
+      return { ...state, els: [...rest, el], axes: nextAxes }
     }
     case 'highlight': {
       if (!els.some(e => e.id === step.target && e.kind !== 'highlight')) return state
       const el: HighlightEl = {
         kind: 'highlight',
-        key: `hl-${step.target}@${index}`,
+        key: `hl-${step.target}@${k ? act : index}`,
         born: index,
+        act,
         target: step.target,
         style: step.style ?? 'box',
         color: step.color ?? 'amber',
       }
       // One highlight per target at a time.
-      return { els: [...els.filter(e => !(e.kind === 'highlight' && e.target === step.target)), el], axes }
+      return { ...state, els: [...els.filter(e => !(e.kind === 'highlight' && e.target === step.target)), el] }
     }
     case 'transform': {
       let changed = false
@@ -130,29 +243,90 @@ export function applyStep(state: BoardState, step: Step, index: number): BoardSt
           prevX: e.x,
           prevY: e.y,
           content,
+          dyn: hasTemplate(content) || undefined,
           x: step.x ?? e.x,
           y: step.y ?? e.y,
           color: step.color ?? e.color,
           morphedAt: index,
+          morphAct: act,
         } satisfies TextEl
       })
       if (!changed) return state
       // Highlights on a morphing element would point at stale geometry.
-      return { els: next.filter(e => !(e.kind === 'highlight' && e.target === step.target)), axes }
+      return { ...state, els: next.filter(e => !(e.kind === 'highlight' && e.target === step.target)) }
     }
     case 'clear': {
-      if (!step.targets) return emptyBoard()
+      if (!step.targets) return emptyBoard(state.vars)
       const drop = new Set(step.targets)
       const nextAxes = { ...axes }
       for (const t of drop) delete nextAxes[t]
       return {
+        ...state,
         els: els.filter(e => !(e.id && drop.has(e.id)) && !(e.kind === 'highlight' && drop.has(e.target))),
         axes: nextAxes,
       }
     }
+    case 'set':
+      return { ...state, vars: { ...state.vars, ...step.vars } }
+    case 'animate':
+      // there_and_back returns to where it started.
+      return { ...state, vars: { ...state.vars, [step.var]: step.ease === 'there_and_back' ? step.from ?? state.vars[step.var] ?? step.to : step.to } }
+    case 'move':
+    case 'fade':
+    case 'scale':
+    case 'color': {
+      let changed = false
+      const next = els.map(e => {
+        if (changed || e.id !== step.target || e.kind === 'highlight') return e
+        changed = true
+        const fx = baseFx(e, act)
+        if (step.type === 'move') {
+          if (step.by) {
+            const sx = e.kind === 'shape' && e.axes ? xScale(e.axes) : 1
+            const sy = e.kind === 'shape' && e.axes ? e.axes.frame.h / (e.axes.yRange[1] - e.axes.yRange[0]) : 1
+            fx.dx += step.by[0] * sx
+            fx.dy -= e.kind === 'shape' && e.axes ? step.by[1] * sy : -step.by[1]
+          } else if (step.to) {
+            if (e.kind === 'shape') {
+              const b = shapeBox(e, state.vars)
+              if (b) { fx.dx = step.to[0] - (b.x + b.w / 2); fx.dy = step.to[1] - (b.y + b.h / 2) }
+            } else { fx.dx = step.to[0] - e.x; fx.dy = step.to[1] - e.y }
+          }
+        } else if (step.type === 'fade') fx.opacity = step.to
+        else if (step.type === 'scale') fx.scale = fx.scale * step.by
+        else if (step.type === 'color') {
+          if (step.pulse) fx.pulse = act
+          if (e.kind === 'shape') return { ...e, fx, step: { ...e.step, color: step.color } }
+          return { ...e, fx, color: step.color }
+        }
+        return { ...e, fx }
+      })
+      return changed ? { ...state, els: next } : state
+    }
+    case 'camera': {
+      if (step.zoom <= 1.001) return { ...state, camera: null }
+      let c: [number, number] = step.center ?? [BOARD_W / 2, BOARD_H / 2]
+      if (step.on && axes[step.on]) {
+        const a = axes[step.on]
+        c = step.center ? toBoard(a, step.center) : [a.frame.x + a.frame.w / 2, a.frame.y + a.frame.h / 2]
+      }
+      return { ...state, camera: { zoom: step.zoom, cx: c[0], cy: c[1], act } }
+    }
     default:
       return state
   }
+}
+
+/** Variables set by steps before `from` (a full clear keeps variables). */
+function varsBefore(steps: Step[], from: number): Vars {
+  const v: Vars = {}
+  for (let i = 0; i < from; i++) {
+    for (const a of stepActions(steps[i], i)) {
+      if (a.action.type === 'set') Object.assign(v, a.action.vars)
+      else if (a.action.type === 'animate') v[a.action.var] = a.action.to
+    }
+  }
+  return v
 }
 
 export function buildBoard(steps: Step[], count: number): BoardState {
@@ -164,7 +338,7 @@ export function buildBoard(steps: Step[], count: number): BoardState {
     const st = steps[k]
     if (st.type === 'clear' && !st.targets) { from = k + 1; break }
   }
-  let s = emptyBoard()
+  let s = emptyBoard(from > 0 ? varsBefore(steps, from) : {})
   for (let i = from; i < n; i++) s = applyStep(s, steps[i], i)
   return s
 }
@@ -172,12 +346,19 @@ export function buildBoard(steps: Step[], count: number): BoardState {
 /* ───────────── Timing ───────────── */
 
 const SHAPE_MS: Record<string, number> = {
-  line: 700, arrow: 800, circle: 900, rect: 900, polyline: 1000, polygon: 1000, arc: 800, sector: 900, point: 380, axes: 1200, function: 1600,
+  line: 700, arrow: 800, circle: 900, rect: 900, polyline: 1000, polygon: 1000, arc: 800, sector: 900, point: 380, axes: 1200, function: 1600, secant: 700, tangent: 700,
 }
 
-/** How long a step's own animation runs, in ms. */
-export function animMs(step: Step): number {
+/** How long a step's own animation runs, in ms (its natural length, before narration stretches it). */
+export function animMs(step: Step | Action): number {
   switch (step.type) {
+    case 'set': return 0
+    case 'animate': return 1500
+    case 'move': return 900
+    case 'fade': return 600
+    case 'scale': return 700
+    case 'color': return 650
+    case 'camera': return 1100
     case 'write': return clamp(320 + step.text.length * 30, 520, 2400)
     case 'math': return clamp(450 + step.tex.length * 14, 650, 1800)
     case 'draw': return SHAPE_MS[step.shape.kind] ?? 800
@@ -191,6 +372,7 @@ export function animMs(step: Step): number {
 
 /** How long to dwell on a step before the next one starts, in ms. */
 export function dwellMs(step: Step): number {
+  if (step.type === 'check' || step.type === 'manim_clip') return 0
   const words = step.say ? step.say.trim().split(/\s+/).length : 0
   const reading = words ? Math.min(5200, 700 + words * 210) : 0
   return Math.max(animMs(step) + 320, reading)
@@ -217,12 +399,13 @@ export function xScale(axes: AxesDef | undefined) {
 export interface Box { x: number; y: number; w: number; h: number }
 
 /** Bounding box of a shape element in board units. */
-export function shapeBox(el: ShapeEl): Box | null {
+export function shapeBox(el: ShapeEl, vars: Vars = {}): Box | null {
   const { shape } = el.step
   const pts: [number, number][] = []
+  const P = (p: [Num, Num]): [number, number] => toBoard(el.axes, [evalNum(p[0], vars), evalNum(p[1], vars)])
   switch (shape.kind) {
     case 'line':
-    case 'arrow': pts.push(toBoard(el.axes, shape.from), toBoard(el.axes, shape.to)); break
+    case 'arrow': pts.push(P(shape.from), P(shape.to)); break
     case 'polyline':
     case 'polygon': shape.points.forEach(p => pts.push(toBoard(el.axes, p))); break
     case 'arc':
@@ -231,7 +414,7 @@ export function shapeBox(el: ShapeEl): Box | null {
       const r = shape.r * xScale(el.axes)
       pts.push([cx - r, cy - r], [cx + r, cy + r]); break
     }
-    case 'point': { const [x, y] = toBoard(el.axes, shape.at); pts.push([x - 6, y - 6], [x + 6, y + 6]); break }
+    case 'point': { const [x, y] = P(shape.at); if (!Number.isFinite(x) || !Number.isFinite(y)) return null; pts.push([x - 6, y - 6], [x + 6, y + 6]); break }
     case 'rect': pts.push(toBoard(el.axes, [shape.x, shape.y]), toBoard(el.axes, [shape.x + shape.w, shape.y + shape.h])); break
     case 'circle': {
       const [cx, cy] = toBoard(el.axes, shape.center)
@@ -242,12 +425,15 @@ export function shapeBox(el: ShapeEl): Box | null {
       const f = shape.frame
       pts.push([f.x, f.y], [f.x + f.w, f.y + f.h]); break
     }
-    case 'function': {
+    case 'function':
+    case 'secant':
+    case 'tangent': {
       if (!el.axes) return null
       const f = el.axes.frame
       pts.push([f.x, f.y], [f.x + f.w, f.y + f.h]); break
     }
   }
+  if (pts.some(p => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null
   if (!pts.length) return null
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
   const x = Math.min(...xs), y = Math.min(...ys)
@@ -351,7 +537,7 @@ export function compactPartition(board: BoardState): CompactLayout {
   const shapes: Box[] = []
   for (const el of board.els) {
     if (el.kind !== 'shape') continue
-    const b = shapeBox(el)
+    const b = shapeBox(el, board.vars)
     if (b) shapes.push(b)
   }
   const labels = new Set<string>()

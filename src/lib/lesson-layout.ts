@@ -10,11 +10,18 @@ import { LABEL_MAX_CHARS, applyStep, visibleTexLength, emptyBoard, estimateTextB
 
 export { estimateTextBox }
 
-export function elementBox(el: BoardEl): Box | null {
-  if (el.kind === 'text' || el.kind === 'math') return estimateTextBox(el)
-  if (el.kind === 'shape') return shapeBox(el)
+export function elementBox(el: BoardEl, vars?: BoardState['vars']): Box | null {
+  if (el.kind === 'text' || el.kind === 'math') {
+    const b = estimateTextBox(el)
+    return el.fx ? { ...b, x: b.x + el.fx.dx, y: b.y + el.fx.dy } : b
+  }
+  if (el.kind === 'shape') return shapeBox(el, vars)
   return null
 }
+
+/** Step types (or cues) that put something new on the board or move it. */
+const PLACING = new Set(['write', 'math', 'transform', 'draw', 'move'])
+const placing = (step: Step) => PLACING.has(step.type) || (Array.isArray((step as { cues?: { type: string }[] }).cues) && (step as { cues: { type: string }[] }).cues.some(c => PLACING.has(c.type)))
 
 function interArea(a: Box, b: Box) {
   const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
@@ -45,18 +52,19 @@ function collisions(steps: Step[], start: BoardState = emptyBoard(), offset = 0)
   steps.forEach((step, i) => {
     const index = offset + i
     board = applyStep(board, step, index)
-    if (step.type !== 'write' && step.type !== 'math' && step.type !== 'transform' && step.type !== 'draw') return
-    const el =
-      step.type === 'transform'
-        ? board.els.find(e => e.id === step.target && (e.kind === 'text' || e.kind === 'math'))
-        : board.els.find(e => e.born === index && e.kind !== 'highlight')
-    if (!el) return
-    const box = elementBox(el)
-    if (!box) return
+    if (!placing(step)) return
+    // Everything this step (and its cues) placed, transformed or moved.
+    const targets = new Set<string>()
+    if (step.type === 'transform' || step.type === 'move') targets.add(step.target)
+    for (const c of (step as { cues?: { type: string; target?: string }[] }).cues ?? []) if ((c.type === 'transform' || c.type === 'move') && c.target) targets.add(c.target)
+    const placed = board.els.filter(e => e.kind !== 'highlight' && ((e.born === index && e.fx === undefined) || (e.id && targets.has(e.id))))
+    for (const el of placed) {
+    const box = elementBox(el, board.vars)
+    if (!box) continue
     const isText = el.kind === 'text' || el.kind === 'math'
     const others = board.els.filter(o => {
       if (o === el || o.kind === 'highlight') return false
-      const ob = elementBox(o)
+      const ob = elementBox(o, board.vars)
       if (!ob) return false
       const oText = o.kind === 'text' || o.kind === 'math'
       if (!isText && !oText) return false // shape on shape is usually intentional
@@ -70,6 +78,7 @@ function collisions(steps: Step[], start: BoardState = emptyBoard(), offset = 0)
     })
     const outOfBounds = isText && (box.x < 4 || box.y < 4 || box.x + box.w > BOARD_W - 4 || box.y + box.h > BOARD_H - 4)
     if (others.length || outOfBounds) out.push({ index, el, others, outOfBounds })
+    }
   })
   return out
 }
@@ -86,20 +95,20 @@ function compactIssues(steps: Step[], start: BoardState = emptyBoard(), offset =
   steps.forEach((step, i) => {
     const index = offset + i
     board = applyStep(board, step, index)
-    if (step.type !== 'write' && step.type !== 'math') return
-    const el = board.els.find(e => e.born === index && (e.kind === 'text' || e.kind === 'math'))
-    if (!el || (el.kind !== 'text' && el.kind !== 'math')) return
+    for (const el of board.els) {
+    if (el.born !== index || (el.kind !== 'text' && el.kind !== 'math')) continue
     const len = el.kind === 'math' ? visibleTexLength(el.content) : el.content.length
-    if (len <= LABEL_MAX_CHARS) return
+    if (len <= LABEL_MAX_CHARS) continue
     const box = estimateTextBox(el)
     const onShape = board.els.some(o => {
       if (o.kind !== 'shape') return false
       const k = o.step.shape.kind
       if (k !== 'axes' && k !== 'function') return false
-      const b = shapeBox(o)
+      const b = shapeBox(o, board.vars)
       return !!b && box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y
     })
     if (onShape) out.push(`steps[${i}] ${describe(el)} is long text inside a graph. Labels on a drawing must be under ${LABEL_MAX_CHARS} characters; move longer text to the notes column.`)
+    }
   })
   return out
 }
@@ -137,14 +146,19 @@ export function autoFixLayout(steps: Step[], start: BoardState = emptyBoard(), o
     return s
   })
 
-  // Ids that later steps still need (highlight/transform targets, axes for plots).
+  // Ids that later steps (or their cues) still need: targets, axes for plots.
   const neededAfter = (i: number) => {
     const need = new Set<string>()
-    for (const s of withIds.slice(i + 1)) {
-      if (s.type === 'highlight' || s.type === 'transform') need.add(s.target)
-      if (s.type === 'draw' && s.on) need.add(s.on)
+    const add = (s: { type: string; target?: string; on?: string; targets?: string[] }) => {
+      if (s.target) need.add(s.target)
+      if (s.on) need.add(s.on)
       if (s.type === 'clear' && s.targets) s.targets.forEach(t => need.add(t))
     }
+    withIds.forEach((s, k) => {
+      if (k > i) add(s as never)
+      // Cues of this very step run after its own action.
+      if (k >= i) for (const c of (s as { cues?: never[] }).cues ?? []) add(c)
+    })
     return need
   }
 
