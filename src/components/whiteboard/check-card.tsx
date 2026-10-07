@@ -6,13 +6,13 @@ import type { CheckStep } from '@/lib/lesson-schema'
 import { buttonClass, cx, inputClass } from '@/components/ui'
 import { EASE_SMOOTH } from './elements'
 import { RichText } from '../rich-text'
+import { answerMatches } from '@/lib/answer-match'
 
 export type CheckResponse = 'got_it' | 'again' | 'differently' | 'continue' | 'answer' | 'explain_wrong'
 
 /** The shared renderer for AI-written text (inline maths, bare LaTeX, plain fallback). */
 export { RichText }
 
-const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '').replace(/[.,;:!]+$/, '')
 
 export function CheckCard({
   step,
@@ -39,7 +39,7 @@ export function CheckCard({
     } else {
       if (!text.trim()) return
       answer = text.trim()
-      correct = (step.accept ?? []).some(a => norm(a) === norm(answer))
+      correct = answerMatches(answer, step.accept ?? [])
     }
     setResult({ correct, answer })
     onRespond('answer', { correct, answer })
