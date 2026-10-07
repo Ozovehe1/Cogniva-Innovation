@@ -4,6 +4,7 @@
  * content-addressed by text + voice (see lib/narration). Server only.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { after } from 'next/server'
 import { createAdminClient } from './supabase/admin'
 import { AUDIO_BUCKET, MAX_TTS_CHARS, NARRATION_SPEED, NARRATION_VOICE, audioPaths, audioPublicBase, narrationKey, normalizeSpoken, type NarrationClip, type WordTiming } from './narration'
 import type { Step } from './lesson-schema'
@@ -113,7 +114,15 @@ export async function ensureNarration(texts: string[], opts: { timeoutMs?: numbe
  * Pre-generate narration for a script within a time budget (approval, drafted
  * sections). Lines already cached cost one storage lookup. Never throws.
  */
-export async function pregenerateNarration(steps: Step[], budgetMs = 240_000): Promise<{ lines: number; synthesized: number; done: boolean }> {
+export function pregenerateNarration(steps: Step[], budgetMs = 240_000): Promise<{ lines: number; synthesized: number; done: boolean }> {
+  const p = voiceScript(steps, budgetMs)
+  // Keep the function alive until the voicing finishes, even when the caller does not await it
+  // (lesson drafting fires it and moves on to the next section). Outside a request scope this throws; ignore.
+  try { after(() => p.then(() => undefined)) } catch { /* not in a request */ }
+  return p
+}
+
+async function voiceScript(steps: Step[], budgetMs: number): Promise<{ lines: number; synthesized: number; done: boolean }> {
   const t0 = Date.now()
   const lines = scriptLines(steps)
   let synthesized = 0

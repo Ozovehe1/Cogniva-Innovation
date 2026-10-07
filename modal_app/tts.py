@@ -14,7 +14,10 @@ GET /health -> {"ok": true, "voice": ..., "loaded": bool}
 
 Secrets (Modal secret "geniusmap-render", shared with the Manim app): RENDER_TOKEN.
 Deployed from the Vercel production build (scripts/deploy-modal.mjs).
-Cost: CPU only; the container scales to zero after 60 s idle.
+Cost: CPU only (2 cores + 2 GiB ~ $0.11 per container-hour on Modal list prices). The container
+stays up 5 min after the last request (scaledown_window) and the site wakes it when a lesson page
+opens (/api/tts/warm). Memory snapshots make cold starts restore the loaded model instead of
+re-importing torch and Kokoro.
 """
 
 import base64
@@ -123,24 +126,38 @@ def to_mp3(audio) -> bytes:
     return proc.stdout
 
 
-@app.cls(image=image, secrets=[secret], cpu=2.0, memory=2048, scaledown_window=60, max_containers=3, timeout=300)
+@app.cls(
+    image=image,
+    secrets=[secret],
+    cpu=2.0,
+    memory=2048,
+    scaledown_window=300,
+    max_containers=3,
+    timeout=300,
+    enable_memory_snapshot=True,
+)
 @modal.concurrent(max_inputs=4)
 class TTS:
-    @modal.enter()
+    @modal.enter(snap=True)
     def load(self):
-        import torch
+        # Runs once when the snapshot is taken; later cold starts restore this state.
         from kokoro import KPipeline
 
-        torch.set_num_threads(max(1, os.cpu_count() or 2))
         t = time.time()
         self.pipes = {"a": KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")}
         try:
             self.pipes["b"] = KPipeline(lang_code="b", repo_id="hexgrad/Kokoro-82M", model=self.pipes["a"].model)
         except Exception as exc:  # noqa: BLE001
             print("British pipeline unavailable:", exc)
-        self.lock = threading.Lock()
         list(self.pipes["a"]("Ready.", voice=DEFAULT_VOICE))
         print(f"Kokoro loaded in {time.time() - t:.1f}s")
+
+    @modal.enter(snap=False)
+    def after_restore(self):
+        import torch
+
+        torch.set_num_threads(max(1, os.cpu_count() or 2))
+        self.lock = threading.Lock()
 
     def synth_one(self, text: str, voice: str, speed: float):
         import numpy as np

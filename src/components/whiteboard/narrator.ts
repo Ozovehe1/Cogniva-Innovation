@@ -27,7 +27,18 @@ export interface Narrator {
   position?(): number
   /** What spoke the last line: natural audio or the device voice. */
   readonly source?: 'audio' | 'device' | null
+  /** Why the last line fell back to the device voice (only set after a real failure). */
+  readonly fallbackReason?: string | null
+  /** Wake the natural voice service (it scales to zero when idle). */
+  warm?(): void
 }
+
+/**
+ * How long the narrator waits for natural audio before it gives up and uses the
+ * device voice. Generous on purpose: a cold voice container takes ~20-40 s, and a
+ * robotic first line is worse than a short "Preparing voice" pause.
+ */
+export const NATURAL_VOICE_WAIT_MS = 45_000
 
 const PREFERRED_VOICES = [
   /Google UK English Female/i,
@@ -187,7 +198,10 @@ class AudioNarrator implements Narrator {
   private token = 0
   /** On-demand synthesis refused (signed out or rate limited): stop asking for a while. */
   private demandBlockedUntil = 0
+  private lastError: string | null = null
+  private warmedAt = 0
   source: 'audio' | 'device' | null = null
+  fallbackReason: string | null = null
 
   constructor() {
     this.device = new WebSpeechNarrator()
@@ -204,7 +218,8 @@ class AudioNarrator implements Narrator {
     try {
       a.src = SILENT_MP3
       const p = a.play()
-      if (p) p.then(() => a.pause()).catch(() => {})
+      // Pause only the silent unlock clip: on a warm cache the first line can start before this resolves.
+      if (p) p.then(() => { if (a.src === SILENT_MP3) a.pause() }).catch(() => {})
     } catch { /* ignore */ }
   }
 
@@ -216,7 +231,8 @@ class AudioNarrator implements Narrator {
     let p = this.clips.get(t)
     if (!p) {
       p = this.lookup(t).then(c => c ?? this.demand(t)).catch(() => null)
-      p.then(c => { this.ready.set(t, c); if (c) void fetch(c.url, { cache: 'force-cache' }).catch(() => {}) })
+      // Only successes are remembered: a failed line is asked for again next time.
+      p.then(c => { if (c) { this.ready.set(t, c); void fetch(c.url, { cache: 'force-cache' }).catch(() => {}) } else this.clips.delete(t) })
       this.clips.set(t, p)
     }
     return p
@@ -251,16 +267,22 @@ class AudioNarrator implements Narrator {
     let chain = Promise.resolve()
     for (const b of batches) {
       chain = chain.then(async () => {
+        const send = () => fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ texts: b.map(x => x.text), lessonId: currentLessonId }),
+        })
         try {
-          const res = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ texts: b.map(x => x.text), lessonId: currentLessonId }),
-          })
+          let res = await send().catch(() => null)
+          // One retry after a transient failure (a voice container still starting, a network blip).
+          if (!res || res.status >= 500) { await new Promise(r => setTimeout(r, 1500)); res = await send().catch(() => null) }
+          if (!res) { this.lastError = 'network'; b.forEach(x => x.resolve(null)); return }
           if (res.status === 401 || res.status === 403 || res.status === 429) this.demandBlockedUntil = Date.now() + (res.status === 429 ? 60_000 : 10 * 60_000)
+          if (!res.ok) this.lastError = res.status === 429 ? 'limit' : res.status === 401 || res.status === 403 ? 'signed-out' : `voice service ${res.status}`
           const j = res.ok ? await res.json().catch(() => null) as { clips?: (NarrationClip | null)[] } | null : null
           b.forEach((x, i) => x.resolve(j?.clips?.[i] ?? null))
         } catch {
+          this.lastError = 'network'
           b.forEach(x => x.resolve(null))
         }
       })
@@ -271,11 +293,22 @@ class AudioNarrator implements Narrator {
     for (const t of texts) if (t.trim()) void this.resolve(t)
   }
 
-  async prepare(text: string, timeoutMs = 5000): Promise<NarrationTiming | null> {
+  /** Ping the voice service so a cold container starts while the student reads the page. Throttled. */
+  warm() {
+    if (typeof window === 'undefined' || Date.now() - this.warmedAt < 120_000) return
+    this.warmedAt = Date.now()
+    // The lesson being opened (so the server can voice the rest of its lines ahead of the student).
+    const lessonId = currentLessonId ?? /\/learn\/([0-9a-f-]{36})(?:[/?#]|$)/i.exec(window.location.pathname)?.[1] ?? null
+    void fetch('/api/tts/warm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lessonId }), keepalive: true }).catch(() => {})
+  }
+
+  async prepare(text: string, timeoutMs = NATURAL_VOICE_WAIT_MS): Promise<NarrationTiming | null> {
     if (!text.trim()) return null
     const t = normalizeSpoken(text).slice(0, MAX_TTS_CHARS)
     if (this.ready.has(t)) { const c = this.ready.get(t); return c ? { ms: c.ms, words: c.words } : null }
-    const c = await Promise.race([this.resolve(t), new Promise<null>(r => setTimeout(() => r(null), timeoutMs))])
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const c = await Promise.race([this.resolve(t), new Promise<null>(r => { timer = setTimeout(() => { this.lastError = 'timed out'; r(null) }, timeoutMs) })])
+    clearTimeout(timer)
     return c ? { ms: c.ms, words: c.words } : null
   }
 
@@ -290,12 +323,14 @@ class AudioNarrator implements Narrator {
       const a = this.audio
       this.mode = 'audio'
       this.source = 'audio'
+      this.fallbackReason = null
       a.onended = () => { if (token === this.token) this.finish() }
       a.onerror = () => {
         if (token !== this.token || this.mode !== 'audio') return
         // Audio failed (network, codec): say it with the device voice instead.
         this.mode = 'device'
         this.source = 'device'
+        this.fallbackReason = 'audio playback failed'
         this.device.speak(text, () => { if (token === this.token) this.finish() })
       }
       a.src = clip.url
@@ -304,8 +339,10 @@ class AudioNarrator implements Narrator {
       if (p) p.catch(() => { a.onerror?.(new Event('error')) })
       return
     }
+    // Only reached after a real failure: prepare() waited for the natural voice and got nothing.
     this.mode = 'device'
     this.source = 'device'
+    this.fallbackReason = this.lastError ?? 'natural voice unavailable'
     this.device.speak(text, () => { if (token === this.token) this.finish() })
   }
 

@@ -8,7 +8,7 @@ import { applyAction, buildBoard, compactPartition, segmentStart, shapeBox, type
 import { BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, ShapeElement, TextElement } from './elements'
 import { CheckCard, RichText, type CheckResponse } from './check-card'
 import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
-import { getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
+import { NATURAL_VOICE_WAIT_MS, getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
 import { buildTimeline, firedAt, varsAt, type StepTimeline } from './timeline'
 import { VarStore, VarsContext } from './live-vars'
 import { cx } from '@/components/ui'
@@ -264,6 +264,33 @@ export function WhiteboardPlayer({
   const voiceOn = voiceOk && soundOn
   /** What voiced the last line: the natural (Kokoro) voice or the device's speech engine. */
   const [voiceSource, setVoiceSource] = useState<'audio' | 'device' | null>(null)
+  const [fallbackReason, setFallbackReason] = useState<string | null>(null)
+  /**
+   * The first lines' natural audio is fetched (and the voice service woken) as soon
+   * as the player mounts; Start waits for the opening line so the lesson never opens
+   * on the device voice while natural audio is still on its way.
+   */
+  const [voicePrep, setVoicePrep] = useState<'idle' | 'preparing' | 'ready' | 'failed'>('idle')
+  useEffect(() => {
+    const n = narratorRef.current
+    if (!n || !voiceOn || started) return
+    n.warm?.()
+    const at = Math.max(0, Math.min(initialIndex, initialSteps.length - 1))
+    const texts: string[] = []
+    for (let k = at; k < initialSteps.length && texts.length < 6; k++) {
+      const t = stepSpeech(initialSteps[k])
+      if (t) texts.push(t)
+    }
+    if (!texts.length || !n.prepare) { setVoicePrep('ready'); return }
+    n.preload?.(texts)
+    let live = true
+    setVoicePrep('preparing')
+    void n.prepare(texts[0], NATURAL_VOICE_WAIT_MS).then(t => { if (live) setVoicePrep(t ? 'ready' : 'failed') })
+    return () => { live = false }
+    // Runs once per script and voice setting, before the lesson starts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceOn, scriptKey])
+  const preparingVoice = voicePrep === 'preparing' && !started
   const voiceOnRef = useRef(voiceOn)
   useEffect(() => { voiceOnRef.current = voiceOn }, [voiceOn])
   const holdRef = useRef(hold)
@@ -290,7 +317,7 @@ export function WhiteboardPlayer({
     if (!n?.preload || !voiceOnRef.current) return
     const list = stepsRef.current
     const texts: string[] = []
-    for (let k = Math.max(0, i); k < list.length && texts.length < 3; k++) {
+    for (let k = Math.max(0, i); k < list.length && texts.length < 4; k++) {
       const t = stepSpeech(list[k])
       if (t) texts.push(t)
     }
@@ -318,7 +345,8 @@ export function WhiteboardPlayer({
     preloadFrom(index + 1)
     void (async () => {
       n?.cancel()
-      const timing = voiced && n?.prepare ? await n.prepare(text, index === 0 ? 8000 : 5000) : null
+      // Wait for the natural voice (generously); the device voice is only a fallback after a real failure.
+      const timing = voiced && n?.prepare ? await n.prepare(text, NATURAL_VOICE_WAIT_MS) : null
       if (cancelled) return
       const t = buildTimeline(step, index, timing, { reduced: reducedRef.current })
       const startVars = buildBoard(stepsRef.current, index).vars
@@ -328,6 +356,7 @@ export function WhiteboardPlayer({
         speaking = true
         n.speak(text, () => { speaking = false })
         setVoiceSource(n.source ?? null)
+        setFallbackReason(n.source === 'device' ? (n.fallbackReason ?? null) : null)
       }
       const started = performance.now()
       let base = 0
@@ -812,13 +841,22 @@ export function WhiteboardPlayer({
             <button
               type="button"
               onClick={togglePlay}
-              className="group absolute inset-0 z-20 flex items-center justify-center bg-[#FDFCF9]/70 backdrop-blur-[1px]"
-              aria-label="Start lesson"
+              disabled={preparingVoice}
+              aria-busy={preparingVoice}
+              data-voice-prep={voicePrep}
+              className="group absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#FDFCF9]/70 backdrop-blur-[1px] disabled:cursor-wait"
+              aria-label={preparingVoice ? 'Preparing voice' : 'Start lesson'}
             >
-              <span className="inline-flex h-12 items-center gap-2.5 rounded-full bg-accent px-6 text-[15px] font-medium text-white shadow-[var(--shadow-raised)] transition-transform duration-150 group-hover:scale-[1.02]">
-                <Play className="h-4 w-4" fill="currentColor" strokeWidth={0} />
-                Start lesson
+              <span className={cx(
+                'inline-flex h-12 items-center gap-2.5 rounded-full px-6 text-[15px] font-medium shadow-[var(--shadow-raised)] transition-all duration-300',
+                preparingVoice ? 'bg-surface text-muted' : 'bg-accent text-white group-hover:scale-[1.02]',
+              )}>
+                {preparingVoice
+                  ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none" aria-hidden />
+                  : <Play className="h-4 w-4" fill="currentColor" strokeWidth={0} />}
+                {preparingVoice ? 'Preparing voice…' : 'Start lesson'}
               </span>
+              {voicePrep === 'failed' && <span className="text-[12px] text-muted">Natural voice unavailable · the device voice will read this lesson</span>}
             </button>
           )}
         </div>
@@ -861,7 +899,8 @@ export function WhiteboardPlayer({
             onClick={toggleSound}
             aria-pressed={soundOn}
             aria-label={soundOn ? `Voice on${voiceSource === 'audio' ? ' (natural voice)' : voiceSource === 'device' ? ' (device voice)' : ''}. Turn voice off` : 'Voice off. Turn voice on'}
-            title={soundOn ? (voiceSource === 'audio' ? 'Voice on · natural voice' : voiceSource === 'device' ? 'Voice on · device voice' : 'Voice on') : 'Voice off'}
+            title={soundOn ? (voiceSource === 'audio' ? 'Voice on · natural voice' : voiceSource === 'device' ? `Voice on · device voice${fallbackReason ? ` (natural voice ${fallbackReason})` : ''}` : 'Voice on') : 'Voice off'}
+            data-voice-fallback={fallbackReason ?? undefined}
             data-voice-source={voiceSource ?? 'none'}
             className={cx(
               'flex h-10 flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium transition-colors duration-150 sm:px-3',
@@ -869,7 +908,7 @@ export function WhiteboardPlayer({
             )}
           >
             {soundOn ? <Volume2 className="h-[18px] w-[18px]" strokeWidth={1.75} /> : <VolumeX className="h-[18px] w-[18px]" strokeWidth={1.75} />}
-            <span className="hidden sm:inline">{soundOn ? (voiceSource === 'audio' ? 'Natural voice' : 'Voice on') : 'Voice off'}</span>
+            <span className={cx(voiceSource === 'device' && soundOn ? 'inline' : 'hidden sm:inline')}>{soundOn ? (voiceSource === 'audio' ? 'Natural voice' : voiceSource === 'device' ? 'Device voice' : preparingVoice ? 'Preparing…' : 'Voice on') : 'Voice off'}</span>
           </button>
         )}
       </div>
