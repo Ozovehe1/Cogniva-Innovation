@@ -2,7 +2,6 @@ import React from 'react'
 import Link from 'next/link'
 import clsx, { type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import { intelligenceLabel, intelligenceMeta, intelligenceOrder } from './intelligence'
 
 export function cx(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -282,117 +281,6 @@ export function ProgressBar({
         style={{ width: `${pct}%` }}
       />
     </div>
-  )
-}
-
-/** Horizontal bar list for intelligence scores (0–10). Highest score is emphasised. */
-export function ScoreBars({
-  scores,
-  highlight,
-  limit,
-  showRank = false,
-  compact = false,
-}: {
-  scores: Record<string, number>
-  highlight?: string
-  limit?: number
-  showRank?: boolean
-  compact?: boolean
-}) {
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1])
-  const rows = typeof limit === 'number' ? sorted.slice(0, limit) : sorted
-  const top = highlight ?? sorted[0]?.[0]
-  return (
-    <ul className={cx(compact ? 'space-y-3' : 'space-y-3.5')}>
-      {rows.map(([key, val], i) => {
-        const emphasised = key === top
-        return (
-          <li key={key}>
-            <div className="mb-1.5 flex items-baseline justify-between gap-3">
-              <span className="flex min-w-0 items-baseline gap-2">
-                {showRank && <span className="tnum w-5 flex-shrink-0 text-[12px] text-faint">{String(i + 1).padStart(2, '0')}</span>}
-                <span className={cx('truncate text-sm', emphasised ? 'font-semibold text-ink' : 'text-ink-2')}>{intelligenceLabel(key)}</span>
-              </span>
-              <span className="tnum flex-shrink-0 text-[13px] text-muted">
-                <span className={cx(emphasised ? 'font-semibold text-ink' : 'text-ink-2')}>{val}</span>
-                <span className="text-faint"> / 10</span>
-              </span>
-            </div>
-            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-sunken">
-              <div
-                className={cx('h-full rounded-full', emphasised ? 'bg-accent' : 'bg-[#8FAE9E]')}
-                style={{ width: `${Math.max(0, Math.min(10, val)) * 10}%` }}
-              />
-            </div>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-/** Octagonal radar chart for the eight intelligences, drawn in plain SVG. */
-export function RadarChart({ scores, size = 280, className }: { scores: Record<string, number>; size?: number; className?: string }) {
-  const keys = intelligenceOrder.filter(k => k in scores).length === 8 ? intelligenceOrder : Object.keys(scores)
-  const n = keys.length
-  if (n < 3) return null
-  const pad = 64
-  const vb = size + pad * 2
-  const c = vb / 2
-  const r = size / 2
-  const point = (i: number, v: number) => {
-    const a = (Math.PI * 2 * i) / n - Math.PI / 2
-    return [c + Math.cos(a) * r * (v / 10), c + Math.sin(a) * r * (v / 10)] as const
-  }
-  const rings = [2.5, 5, 7.5, 10]
-  const poly = keys.map((k, i) => point(i, Math.max(0, Math.min(10, scores[k] ?? 0))).join(',')).join(' ')
-  const top = Object.entries(scores).sort((a, b) => b[1] - a[1])[0]?.[0]
-
-  return (
-    <svg
-      viewBox={`0 0 ${vb} ${vb}`}
-      role="img"
-      aria-label={`Intelligence profile: ${keys.map(k => `${intelligenceLabel(k)} ${scores[k]} of 10`).join(', ')}`}
-      className={cx('h-auto w-full overflow-visible', className)}
-    >
-      {rings.map(rv => (
-        <polygon
-          key={rv}
-          points={keys.map((_, i) => point(i, rv).join(',')).join(' ')}
-          fill={rv === 10 ? '#FBFAF7' : 'none'}
-          stroke="#E5E1D8"
-          strokeWidth={1}
-        />
-      ))}
-      {keys.map((_, i) => {
-        const [x, y] = point(i, 10)
-        return <line key={i} x1={c} y1={c} x2={x} y2={y} stroke="#ECE8E0" strokeWidth={1} />
-      })}
-      <polygon points={poly} fill="rgba(31,77,58,0.12)" stroke="#1F4D3A" strokeWidth={1.5} strokeLinejoin="round" />
-      {keys.map((k, i) => {
-        const [x, y] = point(i, Math.max(0, Math.min(10, scores[k] ?? 0)))
-        return <circle key={k} cx={x} cy={y} r={k === top ? 4 : 2.75} fill={k === top ? '#1F4D3A' : '#FFFFFF'} stroke="#1F4D3A" strokeWidth={1.5} />
-      })}
-      {keys.map((k, i) => {
-        const [x, y] = point(i, 11.9)
-        const anchor = Math.abs(x - c) < 4 ? 'middle' : x > c ? 'start' : 'end'
-        return (
-          <text
-            key={k}
-            x={x}
-            y={y}
-            textAnchor={anchor}
-            dominantBaseline="middle"
-            fontSize={14}
-            fill={k === top ? '#14141A' : '#66666F'}
-            fontWeight={k === top ? 600 : 400}
-            style={{ fontFamily: 'var(--font-sans)' }}
-          >
-            {intelligenceMeta[k]?.short ?? k}
-          </text>
-        )
-      })}
-    </svg>
   )
 }
 

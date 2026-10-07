@@ -14,7 +14,7 @@ export function StudentShell({
   navItems: NavItem[]
 }) {
   return (
-    <AppShell fullName={fullName} initials={initials} navItems={navItems} roleLabel="Student" homeHref="/dashboard">
+    <AppShell fullName={fullName} initials={initials} navItems={navItems} roleLabel="Learner" homeHref="/dashboard">
       {children}
     </AppShell>
   )

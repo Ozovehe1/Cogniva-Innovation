@@ -12,7 +12,7 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
     const { data: profile } = await supabase
       .from('profiles').select('role').eq('user_id', user.id).single()
     if (profile) {
-      redirect(profile.role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
+      redirect('/dashboard')
     }
   }
 
@@ -23,15 +23,15 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
         <Logo inverted />
         <div>
           <blockquote className="font-display text-[34px] leading-[1.2]">
-            &ldquo;The problem is not that students lack intelligence. It is that the system is rarely set up to see it.&rdquo;
+            Start from what you already know, and learn the next thing properly.
           </blockquote>
-          <p className="mt-5 text-sm text-white/70">The idea behind GeniusMap</p>
+          <p className="mt-5 text-sm text-white/70">An AI tutor that teaches at your level and pace</p>
         </div>
         <ul className="grid gap-3 text-sm text-white/80">
           {[
-            'A short self-assessment across eight intelligences',
-            'A written profile with study suggestions',
-            'Projects assigned and reviewed by your tutor',
+            'A short conversation about your goal and why it matters',
+            'A quick adaptive check of what you know and what’s next',
+            'Lessons on a live whiteboard, with a natural voice',
           ].map(item => (
             <li key={item} className="flex items-start gap-3">
               <span className="mt-[7px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-white/60" />

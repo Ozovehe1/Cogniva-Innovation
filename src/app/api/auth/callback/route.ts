@@ -11,7 +11,7 @@ export async function GET(request: Request) {
 
     if (data?.user) {
       const meta = data.user.user_metadata
-      const role = (meta?.role as 'student' | 'tutor') ?? 'student'
+      const role = 'student'
 
       // Create profile if it doesn't exist yet (email-confirmation flow)
       await supabase.rpc('ensure_profile_exists', {
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
         p_role: role,
       })
 
-      return NextResponse.redirect(`${origin}${role === 'tutor' ? '/tutor/dashboard' : '/dashboard'}`)
+      return NextResponse.redirect(`${origin}/dashboard`)
     }
   }
 

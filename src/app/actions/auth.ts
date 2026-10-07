@@ -55,16 +55,16 @@ export async function loginAction(
   }
 
   const meta = data.user.user_metadata
-  const role = await ensureProfile(
+  await ensureProfile(
     supabase,
     data.user.id,
     meta?.full_name ?? email.split('@')[0],
     email,
-    meta?.role ?? 'student'
+    'student'
   )
 
   revalidatePath('/', 'layout')
-  redirect(role === 'tutor' ? '/tutor/dashboard' : '/dashboard')
+  redirect('/dashboard')
 }
 
 export async function signupAction(
@@ -74,7 +74,7 @@ export async function signupAction(
   const email = formData.get('email') as string
   const password = formData.get('password') as string
   const fullName = formData.get('fullName') as string
-  const role = formData.get('role') as 'student' | 'tutor'
+  const role = 'student'
 
   const supabase = await createClient()
   const { data, error } = await supabase.auth.signUp({
@@ -89,7 +89,7 @@ export async function signupAction(
   if (data.session) {
     await ensureProfile(supabase, data.user.id, fullName, email, role)
     revalidatePath('/', 'layout')
-    redirect(role === 'student' ? '/assessment' : '/tutor/dashboard')
+    redirect('/start')
   }
 
   return { error: '', confirmEmail: true }

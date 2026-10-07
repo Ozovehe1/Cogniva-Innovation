@@ -1,179 +1,119 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowRight, ClipboardList, FolderKanban } from 'lucide-react'
-import { Card, EmptyState, Eyebrow, PageHeader, ProgressBar, ScoreBars, SectionTitle, StatusBadge, buttonClass, cx, gradeTone } from '@/components/ui'
+import { redirect } from 'next/navigation'
+import { ArrowRight, Check, Circle, Lock, RotateCcw } from 'lucide-react'
+import { getSessionProfile } from '@/lib/auth'
+import { loadPathView, PURPOSE_LABEL, formatDue } from '@/lib/path-view'
+import { Card, Eyebrow, PageHeader, ProgressBar, SectionTitle, buttonClass, cx } from '@/components/ui'
+import { TopicStart } from '@/components/topic-start'
 
 export const dynamic = 'force-dynamic'
 
-export default async function StudentDashboard() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+export default async function Dashboard() {
+  const { supabase, profile } = await getSessionProfile()
+  if (!profile) redirect('/login')
+  const firstName = profile.full_name?.split(' ')[0] ?? 'there'
+  const { learner, path, topics, progress, next } = await loadPathView(supabase, profile.id)
 
-  const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
-
-  const [{ data: intel }, { data: growth }, { data: assignments }] = await Promise.all([
-    supabase.from('intelligence_profiles').select('*').eq('student_id', profile?.id).single(),
-    supabase.from('student_growth').select('*').eq('student_id', profile?.id).single(),
-    supabase.from('project_assignments')
-      .select('*, project:projects(title, subject, difficulty, estimated_hours)')
-      .eq('student_id', profile?.id)
-      .order('created_at', { ascending: false }),
-  ])
-
-  const firstName = profile?.full_name?.split(' ')[0] ?? 'there'
-
-  if (!intel) {
+  if (!learner?.completed_at || !path || path.status !== 'ready') {
+    const started = !!learner && Object.keys(learner.answers ?? {}).length > 0
+    const checking = path?.status === 'diagnosing'
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center">
         <Eyebrow className="mb-3">Welcome, {firstName}</Eyebrow>
-        <h1 className="font-display text-[34px] leading-tight text-ink md:text-[40px]">Start with the assessment.</h1>
+        <h1 className="font-display text-[34px] leading-tight text-ink md:text-[40px]">
+          {checking ? 'Finish your short check.' : started ? 'Let’s pick up where you left off.' : 'Let’s get to know each other.'}
+        </h1>
         <p className="mt-3 text-[15px] leading-relaxed text-muted">
-          It&apos;s 24 short statements about how you think and work. Your profile is ready as soon as you finish,
-          and your tutor will be able to see it too.
+          {checking
+            ? 'A few more questions and your tutor will know what you know now and what to learn next.'
+            : 'Your AI tutor asks what you want to learn, why it matters and how you’re feeling, then runs a short adaptive check to find where to start. About five minutes.'}
         </p>
         <div className="mt-8">
-          <Link href="/assessment" className={buttonClass('primary', 'lg', 'w-full sm:w-auto')}>
-            <ClipboardList className="h-4 w-4" strokeWidth={1.75} />
-            Start the assessment
+          <Link href="/start" className={buttonClass('primary', 'lg', 'w-full sm:w-auto')}>
+            {checking ? 'Continue the check' : started ? 'Continue' : 'Get started'}
+            <ArrowRight className="h-4 w-4" strokeWidth={2} />
           </Link>
         </div>
       </div>
     )
   }
 
-  const level = growth?.level || 'Seed'
-  const sublevel = (growth as { sublevel?: number } | null)?.sublevel || 1
-  const avgScore = (growth as { average_score?: number } | null)?.average_score || 0
-  const completedProjects = growth?.projects_completed || 0
-  const totalProjects = growth?.projects_total || 0
-  const overallPct = Math.min(Math.round((completedProjects / 45) * 100), 100)
-
-  const activeProjects = (assignments || []).filter(a => a.status !== 'completed')
-  const completedList = (assignments || []).filter(a => a.status === 'completed')
-
-  const scores = intel.intelligence_scores as Record<string, number>
-  const top3 = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 3)
+  const title = (id: string) => path.graph.nodes.find(n => n.id === id)?.title ?? id
+  const mastered = topics.filter(t => t.status === 'mastered').length
+  const nextLessonDone = next?.lesson_id ? !!progress.get(next.lesson_id)?.completed_at : false
+  const nextStarted = next?.lesson_id ? (progress.get(next.lesson_id)?.step_index ?? 0) > 0 : false
+  const knownNow = [...new Set([...(path.known ?? []), ...topics.filter(t => t.status === 'mastered').map(t => t.node_id)])]
+  const upNext = topics.filter(t => t.status === 'ready' || t.status === 'review' || t.status === 'learning').map(t => t.title)
 
   return (
     <div>
-      <PageHeader eyebrow="Dashboard" title={<>Hello, {firstName}</>} />
+      <PageHeader eyebrow="Home" title={<>Hello, {firstName}</>} />
 
-      {/* Summary */}
-      <Card className="mb-6" padded={false}>
-        <div className="grid grid-cols-2 md:grid-cols-4">
-          <div className="border-b border-r border-line p-5 md:border-b-0 md:p-6">
-            <p className="text-[13px] text-muted">Level</p>
-            <p className="mt-1 font-display text-[28px] leading-none text-ink">{level}</p>
-            <p className="tnum mt-1.5 text-[12px] text-faint">Sublevel {sublevel} of 9</p>
-          </div>
-          <div className="border-b border-line p-5 md:border-b-0 md:border-r md:p-6">
-            <p className="text-[13px] text-muted">Stages complete</p>
-            <p className="tnum mt-1 font-display text-[28px] leading-none text-ink">
-              {completedProjects}<span className="text-[18px] text-faint"> / 45</span>
-            </p>
-            <p className="tnum mt-1.5 text-[12px] text-faint">{overallPct}% of the journey</p>
-          </div>
-          <div className="border-r border-line p-5 md:p-6">
-            <p className="text-[13px] text-muted">Average grade</p>
-            <p className={cx('tnum mt-1 font-display text-[28px] leading-none', avgScore > 0 ? gradeTone(avgScore) : 'text-faint')}>
-              {avgScore > 0 ? avgScore.toFixed(1) : '—'}
-            </p>
-            <p className="mt-1.5 text-[12px] text-faint">out of 10</p>
-          </div>
-          <div className="p-5 md:p-6">
-            <p className="text-[13px] text-muted">Projects approved</p>
-            <p className="tnum mt-1 font-display text-[28px] leading-none text-ink">{completedProjects}</p>
-            <p className="tnum mt-1.5 text-[12px] text-faint">{activeProjects.length} in progress</p>
-          </div>
-        </div>
-        <div className="border-t border-line px-5 py-4 md:px-6">
-          <div className="mb-2 flex items-center justify-between text-[13px]">
-            <span className="text-muted">Overall progress</span>
-            <span className="tnum font-medium text-ink">{overallPct}%</span>
-          </div>
-          <ProgressBar value={overallPct} label="Overall progress" />
+      {/* Goal and plan */}
+      <Card className="mb-6">
+        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Your goal</p>
+        <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink md:text-[28px]">{path.goal}</h2>
+        <dl className="mt-4 grid grid-cols-2 gap-y-3 text-[14px] sm:grid-cols-4">
+          <div><dt className="text-muted">For</dt><dd className="mt-0.5 font-medium text-ink">{PURPOSE_LABEL[learner.purpose ?? ''] ?? '—'}</dd></div>
+          <div><dt className="text-muted">Deadline</dt><dd className="tnum mt-0.5 font-medium text-ink">{learner.deadline ? formatDue(learner.deadline) : 'None'}</dd></div>
+          <div><dt className="text-muted">Lessons</dt><dd className="tnum mt-0.5 font-medium text-ink">About {path.plan.lessonMinutes} min</dd></div>
+          <div><dt className="text-muted">Rhythm</dt><dd className="tnum mt-0.5 font-medium text-ink">{path.plan.sessionsPerWeek}× a week</dd></div>
+        </dl>
+        {path.plan.note && <p className="mt-4 border-t border-line pt-3 text-[14px] leading-relaxed text-muted">{path.plan.note}</p>}
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between text-[13px]"><span className="text-muted">Path</span><span className="tnum font-medium text-ink">{mastered} of {topics.length} topics</span></div>
+          <ProgressBar value={mastered} max={Math.max(1, topics.length)} label="Path progress" />
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        {/* Projects */}
-        <section className="lg:col-span-3">
-          <SectionTitle
-            action={totalProjects > 0 ? (
-              <Link href="/projects" className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline underline-offset-4">
-                View all <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
-              </Link>
-            ) : undefined}
-          >
-            Current projects
-          </SectionTitle>
-
-          {totalProjects === 0 ? (
-            <EmptyState
-              icon={<FolderKanban className="h-5 w-5" strokeWidth={1.75} />}
-              title="No projects yet"
-              action={<Link href="/projects" className={buttonClass('primary', 'md')}>Connect to a tutor</Link>}
-            >
-              Your tutor assigns projects once you&apos;re connected. Enter their code on the Projects page.
-            </EmptyState>
-          ) : (
-            <Card padded={false} className="overflow-hidden">
-              {activeProjects.length === 0 ? (
-                <div className="px-5 py-5 text-sm text-muted md:px-6">
-                  You&apos;re all caught up. Ask your tutor for the next project.
-                </div>
-              ) : (
-                <ul className="divide-y divide-line">
-                  {activeProjects.map(a => (
-                    <li key={a.id}>
-                      <Link href="/projects" className="flex items-center gap-4 px-5 py-4 transition-colors duration-150 hover:bg-[#FBFAF7] md:px-6">
-                        <div className="min-w-0 flex-1">
-                          <p className="line-clamp-2 text-[15px] font-medium leading-snug text-ink sm:line-clamp-1">{a.project?.title}</p>
-                          <p className="tnum mt-0.5 truncate text-[13px] text-muted">
-                            {a.project?.subject} · {a.project?.estimated_hours}h
-                          </p>
-                        </div>
-                        <StatusBadge status={a.status} />
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {completedList.length > 0 && (
-                <div className="flex items-center justify-between border-t border-line bg-[#FBFAF7] px-5 py-3 text-[13px] md:px-6">
-                  <span className="tnum text-muted">{completedList.length} completed</span>
-                  <Link href="/projects" className="font-medium text-accent hover:underline underline-offset-4">See all</Link>
-                </div>
-              )}
-            </Card>
-          )}
+      {/* Next step */}
+      {next && (
+        <section className="mb-6 rounded-[14px] border border-accent-line bg-accent-soft p-5 md:p-6">
+          <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{next.status === 'review' ? 'Back to basics' : 'Up next'}</p>
+          <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink">{next.title}</h2>
+          {next.summary && <p className="mt-1.5 text-[15px] leading-relaxed text-ink-2">{next.summary}</p>}
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            {next.lesson_id ? (
+              nextLessonDone
+                ? <Link href={`/learn/${next.lesson_id}/check`} className={buttonClass('primary', 'md')}>Take the mastery check<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
+                : <Link href={`/learn/${next.lesson_id}`} className={buttonClass('primary', 'md')}>{nextStarted ? 'Continue lesson' : 'Start lesson'}<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
+            ) : <TopicStart topicId={next.id} />}
+            {next.due_on && <span className="tnum text-[13px] text-muted">Aim to finish by {formatDue(next.due_on)}</span>}
+          </div>
         </section>
+      )}
 
-        {/* Profile */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+        <section className="lg:col-span-3">
+          <SectionTitle action={<Link href="/learn" className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline underline-offset-4">All lessons <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} /></Link>}>Your path</SectionTitle>
+          <Card padded={false}>
+            <ol className="divide-y divide-line">
+              {topics.map(t => (
+                <li key={t.id} className="flex items-center gap-3 px-5 py-3.5">
+                  <span className={cx('flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border', t.status === 'mastered' ? 'border-accent bg-accent text-white' : t.status === 'locked' ? 'border-line text-faint' : 'border-accent text-accent')}>
+                    {t.status === 'mastered' ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : t.status === 'locked' ? <Lock className="h-3 w-3" strokeWidth={2} /> : t.status === 'review' ? <RotateCcw className="h-3 w-3" strokeWidth={2} /> : <Circle className="h-2.5 w-2.5 fill-current" />}
+                  </span>
+                  <span className={cx('min-w-0 flex-1 text-[15px] leading-snug', t.status === 'locked' ? 'text-muted' : 'text-ink')}>{t.title}</span>
+                  {t.due_on && t.status !== 'mastered' && <span className="tnum flex-shrink-0 text-[12px] text-faint">{formatDue(t.due_on)}</span>}
+                </li>
+              ))}
+            </ol>
+          </Card>
+        </section>
         <aside className="space-y-6 lg:col-span-2">
           <section>
-            <SectionTitle
-              action={
-                <Link href="/assessment" className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline underline-offset-4">
-                  Full profile <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
-                </Link>
-              }
-            >
-              Top strengths
-            </SectionTitle>
+            <SectionTitle>What you know now</SectionTitle>
             <Card>
-              <ScoreBars scores={Object.fromEntries(top3)} showRank compact />
+              {knownNow.length ? <ul className="space-y-2 text-[15px] text-ink">{knownNow.map(k => <li key={k} className="flex gap-2"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} />{title(k)}</li>)}</ul>
+                : <p className="text-[15px] text-muted">We’re building this from the first step.</p>}
             </Card>
           </section>
-
-          {intel.genius_statement && (
-            <figure className="rounded-[14px] border border-accent-line bg-accent-soft p-5 md:p-6">
-              <Eyebrow className="mb-3 text-accent">In a sentence</Eyebrow>
-              <blockquote className="font-display text-[19px] leading-snug text-ink">{intel.genius_statement}</blockquote>
-            </figure>
-          )}
+          <section>
+            <SectionTitle>What’s next</SectionTitle>
+            <Card>
+              <ul className="space-y-2 text-[15px] text-ink">{upNext.map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} />{k}</li>)}</ul>
+            </Card>
+          </section>
         </aside>
       </div>
     </div>

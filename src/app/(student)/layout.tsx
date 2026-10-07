@@ -51,13 +51,11 @@ select_error: ${selectError?.message ?? 'none'}`}
     }
   }
 
-  if (profile.role === 'tutor') redirect('/tutor/dashboard')
-
+  // GeniusMap is AI-tutor only: every account (including former tutor accounts) gets the learner experience.
   const navItems = [
-    { href: '/dashboard', icon: 'home', label: 'Dashboard' },
-    { href: '/assessment', icon: 'brain', label: 'Assessment' },
+    { href: '/dashboard', icon: 'home', label: 'Home' },
     { href: '/learn', icon: 'learn', label: 'Learn' },
-    { href: '/projects', icon: 'list', label: 'My Projects' },
+    { href: '/start', icon: 'goal', label: 'Your goal' },
   ]
 
   const initials = profile.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()

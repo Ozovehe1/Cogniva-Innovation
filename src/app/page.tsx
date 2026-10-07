@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
-import { ScoreBars, buttonClass } from '@/components/ui'
+import { buttonClass } from '@/components/ui'
 import { LessonIllustration, SiteFooter, SiteHeader, demoAvailable } from '@/components/site-chrome'
 
 const lessonFeatures = [
@@ -9,56 +9,43 @@ const lessonFeatures = [
     desc: 'Each lesson plays on a whiteboard. Ideas are written one line at a time and equations change in place, so you can follow how one step becomes the next.',
   },
   {
-    title: 'Diagrams that move',
-    desc: 'Graphs, shapes and points are drawn as they are explained. Where a still drawing is not enough, tutors can add a short rendered animation.',
+    title: 'Diagrams and animations',
+    desc: 'Graphs, shapes and points are drawn as they are explained, and a lesson can include a short rendered animation for the idea that needs motion.',
   },
   {
-    title: 'Spoken, with a transcript',
-    desc: 'The explanation is read aloud using your device’s voice, and every line is kept in a transcript you can scroll back through. Turn the voice off at any time.',
+    title: 'A natural voice, with a transcript',
+    desc: 'The AI tutor explains each step aloud in a natural voice, and every line is kept in a transcript you can scroll back through. Turn the voice off at any time.',
   },
   {
     title: 'Checks that re-explain',
-    desc: 'Short questions stop the lesson to see whether an idea landed. If it did not, the tutor explains it again in a different way rather than repeating itself.',
+    desc: 'Short questions stop the lesson to see whether an idea landed. If it did not, the AI tutor explains it another way, or walks through a worked example, instead of repeating itself.',
   },
 ]
 
 const steps = [
   {
     n: '01',
-    title: 'Map how you like to learn',
-    desc: 'Answer 24 short statements about everyday behaviour. You get a profile across Howard Gardner’s eight intelligences: a picture of your learning preferences, not a verdict on ability.',
+    title: 'It gets to know you',
+    desc: 'A short conversation about what you want to learn, why it matters to you, your class or year, the time you have, and how you are feeling today. Skip anything you like.',
   },
   {
     n: '02',
-    title: 'Learn with Live Tutor',
-    desc: 'Work through lessons your tutors have written and approved, on the whiteboard, at your own pace. Pause, replay any step, and ask for another explanation when you need one.',
+    title: 'It finds where to start',
+    desc: 'A quick adaptive check of 8 to 15 questions. Each answer decides the next, and you tap how sure you were. You see what you know now and what is next. No score, no label.',
   },
   {
     n: '03',
-    title: 'Put it to work in projects',
-    desc: 'Connect with your tutor using their code. They see your profile, set projects that suit how you work, and review what you submit. Approved projects move you up through the levels.',
+    title: 'It teaches at your level and pace',
+    desc: 'Lessons are written for you, with examples from your interests and your purpose, sized to your week. A short mastery check unlocks each next topic.',
   },
 ]
 
-const intelligences = [
-  { label: 'Linguistic', desc: 'Thinking in words; reading, writing, explaining.' },
-  { label: 'Logical–mathematical', desc: 'Reasoning, patterns, cause and effect.' },
-  { label: 'Spatial', desc: 'Visualising, mapping, design and form.' },
-  { label: 'Musical', desc: 'Rhythm, pitch and sensitivity to sound.' },
-  { label: 'Bodily–kinesthetic', desc: 'Learning by doing, movement and craft.' },
-  { label: 'Interpersonal', desc: 'Reading people and working in groups.' },
-  { label: 'Intrapersonal', desc: 'Reflection and self-knowledge.' },
-  { label: 'Naturalist', desc: 'Noticing and classifying the living world.' },
+const principles = [
+  { label: 'Prior knowledge first', desc: 'Teaching starts from what you can already do, not from your class level alone.' },
+  { label: 'No learning-style labels', desc: 'Research does not support matching lessons to a “style”, so we never sort you into one.' },
+  { label: 'Mastery before moving on', desc: 'Each topic ends with a short check; a miss leads to a review, not a penalty.' },
+  { label: 'How you feel counts', desc: 'Quick private check-ins let the tutor slow down, show an example or suggest a break.' },
 ]
-
-const exampleScores = {
-  spatial: 8,
-  logicalMathematical: 7,
-  intrapersonal: 7,
-  naturalist: 6,
-  linguistic: 5,
-  bodilyKinesthetic: 5,
-}
 
 export default function HomePage() {
   return (
@@ -69,14 +56,14 @@ export default function HomePage() {
         {/* Hero */}
         <section className="mx-auto grid max-w-[1120px] gap-12 px-5 pb-16 pt-12 md:px-8 md:pb-24 md:pt-20 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:gap-16">
           <div>
-            <p className="mb-5 text-[13px] font-medium uppercase tracking-[0.08em] text-accent">Live Tutor · For students and tutors</p>
+            <p className="mb-5 text-[13px] font-medium uppercase tracking-[0.08em] text-accent">An AI tutor for one learner at a time</p>
             <h1 className="font-display text-[44px] leading-[1.04] text-ink sm:text-[56px] md:text-[68px]">
-              Learn the way your mind <em className="italic text-accent">already</em> works.
+              Start from what you know. Learn <em className="italic text-accent">what’s next.</em>
             </h1>
             <p className="mt-6 max-w-[34rem] text-[17px] leading-relaxed text-ink-2 md:text-lg">
-              GeniusMap teaches on a live whiteboard. Each idea is written out step by step, drawn as it is
-              explained and read aloud, with quick checks that explain it another way when it hasn&apos;t
-              landed. Tutors write and approve every lesson.
+              GeniusMap is an AI tutor. It asks what you want to learn, why, and how you&apos;re feeling, runs a
+              short adaptive check to find what you already know, then teaches you on a live whiteboard with a
+              natural voice and animations, at your level and your pace.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link href="/signup" className={buttonClass('primary', 'lg')}>
@@ -89,7 +76,7 @@ export default function HomePage() {
                 <Link href="/login" className={buttonClass('secondary', 'lg')}>I already have an account</Link>
               )}
             </div>
-            <p className="mt-5 text-sm text-muted">Free to use. Works on your phone.</p>
+            <p className="mt-5 text-sm text-muted">Works on your phone. Takes about five minutes to set up.</p>
           </div>
 
           <figure>
@@ -102,11 +89,12 @@ export default function HomePage() {
         <section className="border-y border-line bg-surface">
           <div className="mx-auto max-w-[1120px] px-5 py-16 md:px-8 md:py-24">
             <div className="max-w-2xl">
-              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">Live Tutor</p>
+              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">The lesson</p>
               <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">A lesson you can watch, hear and question.</h2>
               <p className="mt-5 text-[15px] leading-relaxed text-ink-2">
-                Live Tutor is built for understanding rather than memorising. It works for any subject a tutor can
-                explain at a board, from calculus to chemistry, and it is not tied to any one exam or curriculum.
+                Built for understanding rather than memorising, in subjects that can be taught at a board, from
+                quadratic equations to sizing a solar system. Every lesson is written by the AI for you; no one
+                else&apos;s syllabus decides your starting point.
               </p>
             </div>
             <ul className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2">
@@ -124,7 +112,7 @@ export default function HomePage() {
         <section className="mx-auto max-w-[1120px] px-5 py-16 md:px-8 md:py-24">
           <div className="max-w-2xl">
             <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">How it works</p>
-            <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">From how you think, to what you understand, to what you make.</h2>
+            <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">Know you, find your level, then teach.</h2>
           </div>
           <ol className="mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
             {steps.map(({ n, title, desc }) => (
@@ -137,31 +125,19 @@ export default function HomePage() {
           </ol>
         </section>
 
-        {/* The eight intelligences */}
-        <section className="mx-auto max-w-[1120px] px-5 py-16 md:px-8 md:py-24">
-          <div className="grid gap-10 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
+        {/* Principles */}
+        <section className="border-t border-line">
+          <div className="mx-auto grid max-w-[1120px] gap-10 px-5 py-16 md:px-8 md:py-24 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
             <div>
-              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">Your profile</p>
-              <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">A lens on how you learn, not a label.</h2>
+              <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">How it decides</p>
+              <h2 className="mt-3 font-display text-[34px] leading-tight md:text-[44px]">What you know, not what type you are.</h2>
               <p className="mt-5 text-[15px] leading-relaxed text-ink-2">
-                The model comes from Howard Gardner&apos;s <em>Frames of Mind</em> (1983). We treat your profile as a
-                set of learning preferences, not a diagnosis or a measure of ability. When you ask Live Tutor for
-                another explanation, it leans on your profile to choose the angle, and your tutor uses it when
-                choosing which projects to set you.
+                The intake and the adaptive check follow well-studied ideas: teach from prior knowledge, check mastery
+                before moving on, and pay attention to confidence and mood. <Link href="/about" className="font-medium text-accent underline-offset-4 hover:underline">Read how it works</Link>.
               </p>
-              <div className="mt-8 rounded-[14px] border border-line bg-surface p-5">
-                <div className="mb-4 flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Strongest preference</p>
-                    <p className="mt-1 font-display text-[24px] leading-tight">Spatial</p>
-                  </div>
-                  <span className="rounded-full border border-line bg-sunken px-2.5 py-1 text-[12px] text-muted">Example</span>
-                </div>
-                <ScoreBars scores={exampleScores} compact />
-              </div>
             </div>
             <dl className="grid grid-cols-1 border-t border-line sm:grid-cols-2">
-              {intelligences.map(({ label, desc }) => (
+              {principles.map(({ label, desc }) => (
                 <div key={label} className="border-b border-line py-4 sm:odd:pr-6 sm:even:border-l sm:even:pl-6">
                   <dt className="text-[15px] font-semibold">{label}</dt>
                   <dd className="mt-1 text-sm leading-relaxed text-muted">{desc}</dd>
@@ -171,16 +147,14 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* Tutors */}
+        {/* Start */}
         <section className="mx-auto max-w-[1120px] px-5 pb-16 md:px-8 md:pb-24">
           <div className="grid gap-8 rounded-[18px] bg-accent px-6 py-10 text-white md:grid-cols-[1.4fr_1fr] md:items-center md:px-12 md:py-14">
             <div>
-              <h2 className="font-display text-[30px] leading-tight md:text-[40px]">Teaching a group?</h2>
+              <h2 className="font-display text-[30px] leading-tight md:text-[40px]">Tell it what you want to learn.</h2>
               <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-white/80">
-                Set out your objectives and get a drafted lesson to edit, preview it on the whiteboard, and
-                approve it before any student sees it. Describe an animation and review the
-                rendered clip before it goes in. Your students connect with a short code, and you see their
-                profiles, assign projects and grade work from one place.
+                A few questions, a short check, and your first lesson is written for you. If you&apos;re under 18,
+                we ask a parent or guardian to agree first.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row md:justify-end">
@@ -188,7 +162,7 @@ export default function HomePage() {
                 href="/signup"
                 className="inline-flex h-12 items-center justify-center gap-2 rounded-[10px] bg-white px-6 text-[15px] font-medium text-accent transition-colors duration-150 hover:bg-[#F1EEE7]"
               >
-                Create a tutor account
+                Get started
                 <ArrowRight className="h-4 w-4" strokeWidth={2} />
               </Link>
             </div>

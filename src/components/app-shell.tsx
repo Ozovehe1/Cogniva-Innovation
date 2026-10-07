@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, ClipboardList, FolderKanban, LayoutGrid, LogOut, Plus, Presentation, Users, X } from 'lucide-react'
+import { BookOpen, LayoutGrid, LogOut, Target, X } from 'lucide-react'
 import { IdleTimeout } from './idle-timeout'
 import { Avatar, Logo, cx } from './ui'
 
@@ -11,19 +11,13 @@ export interface NavItem { href: string; icon: string; label: string }
 
 const icons: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
   home: LayoutGrid,
-  brain: ClipboardList,
-  assessment: ClipboardList,
-  list: FolderKanban,
-  users: Users,
-  plus: Plus,
   learn: BookOpen,
-  lessons: Presentation,
+  goal: Target,
 }
 
 /** Short labels for the mobile tab bar. */
 function shortLabel(label: string) {
-  if (label === 'My Projects') return 'Projects'
-  if (label === 'New Project') return 'New'
+  if (label === 'Your goal') return 'Goal'
   return label
 }
 

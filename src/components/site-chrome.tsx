@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { Logo, buttonClass } from '@/components/ui'
 
-/** The sample lesson at /learn/demo only exists outside production. */
-export const demoAvailable = process.env.VERCEL_ENV !== 'production'
+/** The sample lesson at /learn/demo (noindex) is public. */
+export const demoAvailable = true
 
 export function SiteHeader() {
   return (
@@ -38,7 +38,7 @@ export function SiteFooter() {
 }
 
 /**
- * A static picture of a Live Tutor lesson: the board, a line of the transcript
+ * A static picture of a lesson: the board, a line of the transcript
  * and a quick check. Illustration only; the real player is in components/whiteboard.
  */
 export function LessonIllustration() {

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { MAX_RENDER_ATTEMPTS, dispatchRender, renderTokenMatches, type ManimJob } from '@/lib/manim'
 import { fixManimCode, type ManimNarration } from '@/lib/lesson-ai'
 import { ensureNarration } from '@/lib/tts-server'
+import { attachReadyClips } from '@/lib/lesson-clip'
 
 export const maxDuration = 90
 
@@ -34,6 +35,11 @@ export async function POST(request: Request) {
   }
   if (status === 'done') {
     await admin.from('manim_jobs').update({ status: 'done', error: null }).eq('id', jobId)
+    // AI lessons: the finished clip goes straight into its section (no human approval step).
+    if ((job as ManimJob & { auto_insert?: boolean }).auto_insert && job.lesson_id) {
+      const lessonId = job.lesson_id
+      after(() => attachReadyClips(admin, lessonId).then(() => undefined).catch(err => console.warn('Clip placement failed:', err instanceof Error ? err.message : err)))
+    }
     return NextResponse.json({ ok: true })
   }
 

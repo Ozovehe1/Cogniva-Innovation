@@ -3,10 +3,12 @@ import { getSessionProfile } from '@/lib/auth'
 import { nextTutorSteps, type GenMeta, type StudentProfileLite, type TutorReason } from '@/lib/lesson-ai'
 import { validateScript, type CheckStep, type Step } from '@/lib/lesson-schema'
 import { warmTts } from '@/lib/tts-server'
+import { loadLearner, learnerLite } from '@/lib/learner'
+import { detectDistress } from '@/lib/safety'
 
 export const maxDuration = 60
 
-const REASONS: TutorReason[] = ['explain_differently', 'wrong_answer', 'continue']
+const REASONS: TutorReason[] = ['explain_differently', 'wrong_answer', 'continue', 'worked_example']
 
 /**
  * POST /api/tutor/step
@@ -30,7 +32,7 @@ export async function POST(request: Request) {
   const reason = REASONS.includes(body.reason as TutorReason) ? (body.reason as TutorReason) : null
   if (!lessonId || !reason) return NextResponse.json({ error: 'lessonId and reason are required' }, { status: 400 })
 
-  // RLS: students see approved lessons, tutors also see their own drafts.
+  // RLS: shared approved lessons, or the learner's own AI lessons.
   const { data: lesson } = await supabase
     .from('lessons').select('id, title, subject, objectives, status, tutor_id').eq('id', lessonId).maybeSingle()
   if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 })
@@ -40,6 +42,7 @@ export async function POST(request: Request) {
   // (validated with cues and variables; continuations may refer to both)
   const played: Step[] = playedCheck.steps
   // The client sends the script up to and including the check being answered.
+  // For a worked example the client sends the board up to the current step (it need not end in a check).
   const checkIndex = played.length - 1
   const checkStep = played[checkIndex]
   const check = checkStep?.type === 'check' ? (checkStep as CheckStep) : undefined
@@ -48,14 +51,16 @@ export async function POST(request: Request) {
     ? body.history.slice(-10).filter((h): h is { reason: string; answer?: string } => !!h && typeof (h as { reason?: unknown }).reason === 'string')
     : []
 
+  // A typed answer that shows distress pauses the lesson instead of being taught to.
+  if (answer && detectDistress(answer)) return NextResponse.json({ steps: [], safety: true })
+
+  // What the AI tutor knows about this learner: level, goal, confidence, examples (never a "type").
   let studentProfile: StudentProfileLite | null = null
-  if (profile.role === 'student') {
-    const { data } = await supabase
-      .from('intelligence_profiles')
-      .select('dominant_intelligence, intelligence_scores, study_tips, personality_insight')
-      .eq('student_id', profile.id)
-      .maybeSingle()
-    studentProfile = (data as StudentProfileLite | null) ?? null
+  const learner = await loadLearner(supabase, profile.id)
+  if (learner) {
+    const { data: c } = await supabase.from('learner_checkins').select('mood, confidence').eq('student_id', profile.id).order('created_at', { ascending: false }).limit(1)
+    const last = (c ?? [])[0] as { mood: number | null; confidence: number | null } | undefined
+    studentProfile = learnerLite(learner, last ? Math.min(last.mood ?? 5, last.confidence ?? 5) : null)
   }
 
   const l = lesson as { title: string; subject: string; objectives: string[] | null }

@@ -17,14 +17,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { id } = await params
   const { supabase, profile } = await getSessionProfile()
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (profile.role !== 'student') return NextResponse.json({ ok: true, skipped: 'not a student' })
-
+  
   const raw = await request.text().catch(() => '')
   if (raw.length > 60_000) return NextResponse.json({ error: 'Request too large' }, { status: 413 })
   let body: Record<string, unknown> = {}
   try { body = raw ? JSON.parse(raw) : {} } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
-  const { data: lesson } = await supabase.from('lessons').select('id').eq('id', id).eq('status', 'approved').maybeSingle()
+  // RLS decides: shared approved lessons, or the learner's own AI lessons.
+  const { data: lesson } = await supabase.from('lessons').select('id').eq('id', id).maybeSingle()
   if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 })
 
   const { data: existing } = await supabase

@@ -1,6 +1,11 @@
 'use client'
-import React, { useCallback, useEffect, useRef } from 'react'
-import { WhiteboardPlayer, type NeedStepsRequest, type PlayerEvent } from '@/components/whiteboard'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
+import { AnimatePresence, motion } from 'framer-motion'
+import { WhiteboardPlayer, type NeedStepsRequest, type PlayerControl, type PlayerEvent } from '@/components/whiteboard'
+import { detectDistress } from '@/lib/safety'
+import { SafetyPause } from './safety-pause'
+import { Spinner, buttonClass, cx } from './ui'
 import type { TranscriptAside } from '@/components/whiteboard/player'
 import type { Step } from '@/lib/lesson-schema'
 import type { Chapter } from '@/lib/lesson-sections'
@@ -10,6 +15,9 @@ export const BEFORE_SIGNOUT_EVENT = 'geniusmap:before-signout'
 
 /** Position saves are batched: at most one every few seconds, plus on leave/hide. */
 const SAVE_EVERY_MS = 4000
+/** A one-tap check-in after this much active lesson time (or after two wrong answers in a row). */
+const CHECKIN_EVERY_MS = 12 * 60_000
+const MOODS = ['😣', '🙁', '😐', '🙂', '😄']
 
 type Answer = { r: string; c?: boolean; a?: string }
 
@@ -29,6 +37,9 @@ export function LessonSession({
   furthest,
   mode,
   transcriptAside,
+  checkHref,
+  minor,
+  partial = false,
 }: {
   lessonId: string
   steps: Step[]
@@ -39,7 +50,33 @@ export function LessonSession({
   furthest?: number
   mode: 'student' | 'preview'
   transcriptAside?: TranscriptAside
+  /** The topic's mastery check (AI path lessons); also where a re-check of the basics starts. */
+  checkHref?: string
+  minor?: boolean | null
+  /** Later sections are still being written: reaching the end is not completing the lesson. */
+  partial?: boolean
 }) {
+  const [waitingForMore, setWaitingForMore] = useState(false)
+  const control = useRef<PlayerControl | null>(null)
+  const [checkin, setCheckin] = useState<null | { reason: 'time' | 'wrong' }>(null)
+  const [slow, setSlow] = useState(false)
+  const [safety, setSafety] = useState(false)
+  const wrongStreak = useRef(0)
+  const wrongTotal = useRef(0)
+  const [basicsOffer, setBasicsOffer] = useState(false)
+  const activeMs = useRef(0)
+
+  // Active time: counted only while the lesson is playing and the page is visible.
+  useEffect(() => {
+    if (mode !== 'student') return
+    const t = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !control.current?.isPlaying()) return
+      activeMs.current += 15_000
+      if (activeMs.current >= CHECKIN_EVERY_MS) { activeMs.current = 0; control.current?.pause(); setCheckin(c => c ?? { reason: 'time' }) }
+    }, 15_000)
+    return () => clearInterval(t)
+  }, [mode])
+
   const history = useRef<{ reason: string; answer?: string }[]>([])
   const url = `/api/lessons/${lessonId}/progress`
 
@@ -106,6 +143,12 @@ export function LessonSession({
       pending.current = { stepIndex: e.cursor, sectionIndex: e.section, furthest: e.furthest, scriptSteps: e.total }
       schedule()
     } else if (e.type === 'check') {
+      if (e.answer && detectDistress(e.answer)) { control.current?.pause(); setSafety(true) }
+      if (e.response === 'answer' && e.correct === false) {
+        wrongStreak.current++; wrongTotal.current++
+        if (wrongTotal.current >= 3 && checkHref) setBasicsOffer(true)
+        if (wrongStreak.current >= 2 && mode === 'student') { wrongStreak.current = 0; activeMs.current = 0; setCheckin(c => c ?? { reason: 'wrong' }) }
+      } else if (e.response === 'answer' && e.correct) wrongStreak.current = 0
       if (e.response === 'answer' || e.response === 'got_it' || e.response === 'continue' || e.response === 'differently' || e.response === 'again' || e.response === 'explain_wrong') {
         // got_it/continue/answer resolve the check; the others re-teach and ask again, so they are logged but not stored as answered.
         if (e.response === 'answer' || e.response === 'got_it' || e.response === 'continue') {
@@ -117,12 +160,15 @@ export function LessonSession({
       post({ event: { type: 'reteach', step: e.index, source: e.source, reason: e.reason } })
     } else if (e.type === 'restart') {
       if (e.scope === 'lesson') { pending.current = null; pendingAnswers.current = {}; post({ restart: true, stepIndex: 0, sectionIndex: 0, event: { type: 'restart' } }) }
+    } else if (e.type === 'complete' && partial) {
+      flush(false)
+      setWaitingForMore(true)
     } else if (e.type === 'complete') {
       pending.current = null
       pendingAnswers.current = {}
       post({ completed: true, event: { type: 'complete' } })
     }
-  }, [post, flush, schedule])
+  }, [post, flush, schedule, partial, checkHref, mode])
 
   const onNeedSteps = useCallback(async (req: NeedStepsRequest): Promise<Step[]> => {
     history.current.push({ reason: req.reason, answer: req.answer })
@@ -143,11 +189,28 @@ export function LessonSession({
     if (!res) return []
     if (!res.ok) return []
     const data = await res.json().catch(() => ({}))
+    if (data.safety) { control.current?.pause(); setSafety(true); return [] }
     return Array.isArray(data.steps) ? (data.steps as Step[]) : []
   }, [lessonId])
 
+  /** Low check-in: slow down and walk through one worked example of what is on the board. */
+  const workedExample = useCallback(async () => {
+    const played = control.current?.played() ?? []
+    const res = await fetch('/api/tutor/step', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lessonId, reason: 'worked_example', played, history: history.current }),
+      signal: AbortSignal.timeout(35_000),
+    }).catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => ({})) : {}
+    const steps = Array.isArray(data.steps) ? (data.steps as Step[]) : []
+    return steps.length > 0 && !!control.current?.insertNow(steps)
+  }, [lessonId])
+
   return (
+    <>
     <WhiteboardPlayer
+      controlRef={control}
+      slow={slow}
       steps={steps}
       chapters={chapters}
       title={title}
@@ -159,5 +222,118 @@ export function LessonSession({
       onEvent={onEvent}
       transcriptAside={transcriptAside}
     />
+    {waitingForMore && (
+      <div className="mt-4 rounded-[14px] border border-line bg-surface p-4 text-[15px] leading-relaxed text-ink-2">
+        That’s everything written so far. The next section is on its way; <button type="button" onClick={() => window.location.reload()} className="font-medium text-accent hover:underline underline-offset-4">reload</button> in a minute to continue.
+      </div>
+    )}
+    {basicsOffer && checkHref && (
+      <div className="mt-4 flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-4 sm:flex-row sm:items-center">
+        <p className="flex-1 text-[15px] leading-relaxed text-ink-2">A few answers haven’t landed. A two-minute check on the basics underneath this can find the gap.</p>
+        <Link href={`${checkHref}?recheck=1`} className={buttonClass('secondary', 'md')}>Check the basics</Link>
+      </div>
+    )}
+    <CheckIn
+      open={!!checkin}
+      reason={checkin?.reason ?? 'time'}
+      lessonId={lessonId}
+      onClose={(r) => {
+        setCheckin(null)
+        if (r.sustainedLow) { setSafety(true); return }
+        if (r.choice === 'worked') { setSlow(true); void workedExample().then(ok => { if (!ok) control.current?.resume() }) }
+        else if (r.choice === 'slow') { setSlow(true); control.current?.resume() }
+        else if (r.choice !== 'break') control.current?.resume()
+      }}
+    />
+    <SafetyPause open={safety} minor={minor ?? null} onContinue={() => setSafety(false)} />
+    </>
+  )
+}
+
+type CheckInResult = { choice: 'continue' | 'worked' | 'slow' | 'break'; sustainedLow?: boolean }
+
+/** One-tap mood and confidence check. Private; stored for 14 days. Low ratings offer a worked example, a slower pace or a break. */
+function CheckIn({ open, reason, lessonId, onClose }: { open: boolean; reason: 'time' | 'wrong'; lessonId: string; onClose: (r: CheckInResult) => void }) {
+  const [mood, setMood] = useState<number | null>(null)
+  const [conf, setConf] = useState<number | null>(null)
+  const [stage, setStage] = useState<'ask' | 'low' | 'break'>('ask')
+  const [busy, setBusy] = useState(false)
+  const [breakLeft, setBreakLeft] = useState(300)
+  const sustained = useRef(false)
+  useEffect(() => { if (open) { setMood(null); setConf(null); setStage('ask'); setBusy(false); sustained.current = false } }, [open])
+  useEffect(() => {
+    if (stage !== 'break') return
+    const t = setInterval(() => setBreakLeft(s => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(t)
+  }, [stage])
+
+  const submit = async () => {
+    setBusy(true)
+    const res = await fetch('/api/checkins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context: 'lesson', lessonId, mood, confidence: conf }) }).catch(() => null)
+    const data = res?.ok ? await res.json().catch(() => ({})) : {}
+    setBusy(false)
+    sustained.current = !!data.sustainedLow
+    const low = (mood ?? 3) <= 2 || (conf ?? 3) <= 2
+    if (data.sustainedLow) { onClose({ choice: 'continue', sustainedLow: true }); return }
+    if (low) setStage('low')
+    else onClose({ choice: 'continue' })
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-label="Check-in">
+          <motion.div className="absolute inset-0 bg-ink/30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
+          <motion.div className="pb-safe relative w-full max-w-md rounded-t-[18px] border border-line bg-surface p-6 shadow-[var(--shadow-raised)] sm:rounded-[18px]"
+            initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} transition={{ duration: 0.2 }}>
+            {stage === 'ask' && (
+              <>
+                <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Quick check-in</p>
+                <h2 className="mt-1.5 font-display text-[22px] leading-snug text-ink">{reason === 'wrong' ? 'That was a tricky bit. How’s it feeling?' : 'How’s this feeling so far?'}</h2>
+                <p className="mt-4 mb-2 text-[14px] font-medium text-ink-2">Mood</p>
+                <div className="grid grid-cols-5 gap-2">
+                  {MOODS.map((m, i) => (
+                    <button key={m} type="button" aria-label={`Mood ${i + 1} of 5`} aria-pressed={mood === i + 1} onClick={() => setMood(i + 1)}
+                      className={cx('flex h-12 items-center justify-center rounded-[12px] border text-[22px]', mood === i + 1 ? 'border-accent bg-accent-soft ring-1 ring-accent' : 'border-line')}>{m}</button>
+                  ))}
+                </div>
+                <p className="mt-4 mb-2 text-[14px] font-medium text-ink-2">How confident are you with this idea?</p>
+                <div className="grid grid-cols-5 gap-2">
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <button key={n} type="button" aria-label={`Confidence ${n} of 5`} aria-pressed={conf === n} onClick={() => setConf(n)}
+                      className={cx('tnum flex h-12 items-center justify-center rounded-[12px] border font-display text-[19px] text-ink', conf === n ? 'border-accent bg-accent-soft ring-1 ring-accent' : 'border-line')}>{n}</button>
+                  ))}
+                </div>
+                <div className="mt-2 flex justify-between text-[11px] text-faint"><span>Lost</span><span>I’ve got it</span></div>
+                <div className="mt-5 flex gap-2">
+                  <button type="button" disabled={busy || (mood === null && conf === null)} onClick={submit} className={buttonClass('primary', 'lg', 'flex-1')}>{busy ? <Spinner /> : 'Continue'}</button>
+                  <button type="button" onClick={() => onClose({ choice: 'continue' })} className={buttonClass('ghost', 'lg')}>Skip</button>
+                </div>
+                <p className="mt-3 text-[12px] text-faint">Only you see this. It’s deleted after two weeks.</p>
+              </>
+            )}
+            {stage === 'low' && (
+              <>
+                <h2 className="font-display text-[22px] leading-snug text-ink">Thanks for being honest. Let’s make this easier.</h2>
+                <p className="mt-2 text-[15px] leading-relaxed text-muted">I’ll slow down. What would help most?</p>
+                <div className="mt-5 grid gap-2">
+                  <button type="button" onClick={() => onClose({ choice: 'worked' })} className={buttonClass('primary', 'lg')}>Show me a worked example</button>
+                  <button type="button" onClick={() => setStage('break')} className={buttonClass('secondary', 'lg')}>Take a 5-minute break</button>
+                  <button type="button" onClick={() => onClose({ choice: 'slow' })} className={buttonClass('ghost', 'lg')}>Keep going, a bit slower</button>
+                </div>
+              </>
+            )}
+            {stage === 'break' && (
+              <>
+                <h2 className="font-display text-[22px] leading-snug text-ink">Take a breather.</h2>
+                <p className="mt-2 text-[15px] leading-relaxed text-muted">Stand up, stretch, get some water. Your place is saved.</p>
+                <p className="tnum mt-5 font-display text-[44px] leading-none text-ink">{Math.floor(breakLeft / 60)}:{String(breakLeft % 60).padStart(2, '0')}</p>
+                <button type="button" onClick={() => onClose({ choice: 'slow' })} className={buttonClass('primary', 'lg', 'mt-6 w-full')}>{breakLeft > 0 ? 'I’m ready, carry on' : 'Back to the lesson'}</button>
+              </>
+            )}
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   )
 }

@@ -123,3 +123,27 @@ export function boardStartBefore(steps: Step[], i: number): number {
   }
   return 0
 }
+
+/* ───────────── Show, don't tell ───────────── */
+
+const VISUAL = new Set(['draw', 'animate', 'move', 'transform', 'scale', 'color', 'camera', 'highlight', 'manim_clip', 'fade'])
+const TEXT = new Set(['write', 'math'])
+
+/**
+ * Animation, illustration and demonstration are the core of teaching: a section whose
+ * content steps are mostly text (write / math) is rejected. Returns null when the
+ * section is visual enough, otherwise a reason the drafter can fix.
+ */
+export function visualProblem(steps: Step[]): string | null {
+  const content = steps.filter(st => VISUAL.has(st.type) || TEXT.has(st.type))
+  if (content.length < 4) return null
+  const visual = content.filter(st => VISUAL.has(st.type)).length
+  const draws = steps.filter(st => st.type === 'draw' || st.type === 'manim_clip').length
+  const motion = steps.filter(st => ['animate', 'move', 'transform', 'scale', 'camera', 'manim_clip'].includes(st.type)).length
+  const textShare = (content.length - visual) / content.length
+  const problems: string[] = []
+  if (textShare > 0.5) problems.push(`${Math.round(textShare * 100)}% of the teaching steps are text only (write/math); at most half may be`)
+  if (draws < 2) problems.push('fewer than 2 diagrams are drawn (draw steps: axes, functions, points, lines, shapes)')
+  if (motion < 1) problems.push('nothing moves: add at least one animate / move / transform / scale demonstration')
+  return problems.length ? problems.join('; ') : null
+}

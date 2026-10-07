@@ -6,7 +6,7 @@ import { validateScript } from '@/lib/lesson-schema'
 import { LESSON_MAX_STEPS, estimateMs, formatDuration, normalizeChapters } from '@/lib/lesson-sections'
 import { Eyebrow } from '@/components/ui'
 import { LessonSession } from '@/components/lesson-session'
-import { StudentMaterials, type MaterialView } from '@/components/lesson-materials'
+import { LessonPreparing } from '@/components/lesson-preparing'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,10 +14,17 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
   const { id } = await params
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound()
   const { supabase, profile } = await getSessionProfile()
+  // RLS: shared approved lessons, or this learner's own AI lessons (no approval step).
   const { data: lesson } = await supabase
-    .from('lessons').select('id, title, subject, objectives, script, chapters').eq('id', id).eq('status', 'approved').maybeSingle()
+    .from('lessons').select('id, title, subject, objectives, script, chapters, status, owner_student_id, draft_status').eq('id', id).maybeSingle()
   if (!lesson) notFound()
-  const l = lesson as { id: string; title: string; subject: string; objectives: string[] | null; script: unknown; chapters: unknown }
+  const l = lesson as { id: string; title: string; subject: string; objectives: string[] | null; script: unknown; chapters: unknown; status: string; owner_student_id: string | null; draft_status: string }
+  const own = !!profile && l.owner_student_id === profile.id
+  if (!own && l.status !== 'approved') notFound()
+  const { data: topicRow } = own ? await supabase.from('path_topics').select('id').eq('lesson_id', id).maybeSingle() : { data: null }
+  const { data: lp } = own ? await supabase.from('learner_profiles').select('age_band').eq('student_id', profile!.id).maybeSingle() : { data: null }
+  const minor = lp ? ['under13', '13to17'].includes((lp as { age_band: string | null }).age_band ?? '') : null
+  const drafting = own && ['outlining', 'drafting', 'paused'].includes(l.draft_status)
   const { steps } = validateScript(l.script, { maxSteps: LESSON_MAX_STEPS })
   const chapters = normalizeChapters(l.chapters, steps.length, l.title, steps)
 
@@ -45,26 +52,33 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
   }
   const totalMs = estimateMs(steps)
 
-  // Class materials the tutor shared (RLS: linked students, approved lesson, shared + read files only).
-  const { data: mats } = await supabase
-    .from('lesson_materials').select('id, file_name, mime, size, page_count, created_at')
-    .eq('lesson_id', id).eq('visible_to_students', true).eq('status', 'ready').order('created_at', { ascending: true })
-  const materials = (mats ?? []) as MaterialView[]
 
   return (
     <div className="mx-auto max-w-[920px]">
       <Link href="/learn" className="-ml-1 mb-4 inline-flex h-9 items-center gap-1.5 rounded-md px-1 text-sm text-muted hover:text-ink">
         <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
-        All lessons
+        Your lessons
       </Link>
       <Eyebrow className="mb-2">{l.subject}</Eyebrow>
       <h1 className="font-display text-[28px] leading-[1.1] text-ink md:text-[36px]">{l.title}</h1>
       <p className="tnum mb-5 mt-2 text-[13px] text-muted md:mb-6">
-        About {formatDuration(totalMs)}{chapters.length > 1 ? ` · ${chapters.length} sections` : ''}
+        {steps.length ? <>About {formatDuration(totalMs)}{chapters.length > 1 ? ` · ${chapters.length} sections` : ''}</> : own ? 'Written for you by your AI tutor' : null}
       </p>
-      <LessonSession lessonId={l.id} steps={steps} chapters={chapters} title={l.title} resumeAt={resumeAt} answered={answered} furthest={furthest} mode="student"
-        transcriptAside={materials.length > 0 ? { label: 'Materials', count: materials.length, content: <StudentMaterials lessonId={l.id} materials={materials} /> } : undefined}
-      />
+      {steps.length === 0 ? (
+        <LessonPreparing lessonId={l.id} own={own} />
+      ) : (
+        <>
+          {drafting && <LessonPreparing lessonId={l.id} own={own} compact readySections={chapters.length} />}
+          <LessonSession lessonId={l.id} steps={steps} chapters={chapters} title={l.title} resumeAt={resumeAt} answered={answered} furthest={furthest} mode="student"
+            checkHref={topicRow ? `/learn/${l.id}/check` : undefined} minor={minor} partial={drafting} />
+        </>
+      )}
+      {topicRow && steps.length > 0 && (
+        <section className="mt-6 flex flex-col gap-3 rounded-[14px] border border-accent-line bg-accent-soft p-5 sm:flex-row sm:items-center">
+          <p className="flex-1 text-[15px] leading-relaxed text-ink">When you’ve finished, a four-question mastery check unlocks the next topic.</p>
+          <Link href={`/learn/${l.id}/check`} className="inline-flex h-10 items-center justify-center rounded-[10px] bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover">Mastery check</Link>
+        </section>
+      )}
       {l.objectives && l.objectives.length > 0 && (
         <section className="mt-8 border-t border-line pt-6">
           <h2 className="text-[15px] font-semibold text-ink">In this lesson</h2>

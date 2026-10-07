@@ -2,13 +2,12 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, GraduationCap, Mail, Presentation } from 'lucide-react'
-import { Alert, Spinner, buttonClass, cx, inputClass, labelClass } from '@/components/ui'
+import { Mail } from 'lucide-react'
+import { Alert, Spinner, buttonClass, inputClass, labelClass } from '@/components/ui'
 
 
 export default function SignupPage() {
-  const [role, setRole] = useState<'student' | 'tutor' | null>(null)
-  const [step, setStep] = useState<'role' | 'details'>('role')
+  const role = 'student' as const
   const [email, setEmail] = useState('')
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
@@ -16,7 +15,6 @@ export default function SignupPage() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (!role) return
     setPending(true)
     setError('')
 
@@ -51,7 +49,7 @@ export default function SignupPage() {
         p_email: emailVal,
         p_role: role,
       })
-      window.location.href = role === 'student' ? '/assessment' : '/tutor/dashboard'
+      window.location.href = '/start'
       return
     }
 
@@ -77,63 +75,12 @@ export default function SignupPage() {
     )
   }
 
-  if (step === 'role') {
-    return (
-      <div>
-        <div className="mb-8">
-          <p className="mb-2 text-[13px] font-medium text-muted">Step 1 of 2</p>
-          <h1 className="font-display text-[34px] leading-tight text-ink">Create your account</h1>
-          <p className="mt-2 text-[15px] text-muted">How will you use GeniusMap?</p>
-        </div>
-        <div role="radiogroup" aria-label="Account type" className="mb-6 space-y-3">
-          {([
-            { value: 'student', Icon: GraduationCap, title: 'I’m a student', desc: 'Take the assessment, see your profile and work on projects from your tutor.' },
-            { value: 'tutor', Icon: Presentation, title: 'I’m a tutor', desc: 'Connect with students, view their profiles, and create and grade projects.' },
-          ] as const).map(({ value, Icon, title, desc }) => {
-            const on = role === value
-            return (
-              <button key={value} onClick={() => setRole(value)} type="button" role="radio" aria-checked={on}
-                className={cx(
-                  'flex w-full items-start gap-4 rounded-[12px] border bg-surface p-4 text-left transition-colors duration-150',
-                  on ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-line-strong',
-                )}>
-                <span className={cx('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border', on ? 'border-accent-line bg-accent-soft text-accent' : 'border-line bg-sunken text-ink-2')}>
-                  <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-semibold text-ink">{title}</span>
-                  <span className="mt-1 block text-sm leading-relaxed text-muted">{desc}</span>
-                </span>
-                <span className={cx('mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2', on ? 'border-accent' : 'border-line-strong')}>
-                  {on && <span className="h-2.5 w-2.5 rounded-full bg-accent" />}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-        <button onClick={() => role && setStep('details')} disabled={!role} type="button" className={buttonClass('primary', 'lg', 'w-full')}>
-          Continue
-          <ArrowRight className="h-4 w-4" strokeWidth={2} />
-        </button>
-        <p className="mt-8 border-t border-line pt-6 text-center text-sm text-muted">
-          Already have an account?{' '}
-          <Link href="/login" className="font-medium text-accent underline-offset-4 hover:underline">Sign in</Link>
-        </p>
-      </div>
-    )
-  }
-
   return (
     <div>
       <div className="mb-8">
-        <button onClick={() => setStep('role')} type="button" className={buttonClass('ghost', 'sm', '-ml-3 mb-4')}>
-          <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
-          Back
-        </button>
-        <p className="mb-2 text-[13px] font-medium text-muted">Step 2 of 2</p>
-        <h1 className="font-display text-[34px] leading-tight text-ink">Your details</h1>
-        <p className="mt-2 text-[15px] text-muted">
-          Joining as a <span className="font-medium capitalize text-ink">{role}</span>.
+        <h1 className="font-display text-[34px] leading-tight text-ink">Create your account</h1>
+        <p className="mt-2 text-[15px] leading-relaxed text-muted">
+          Next, your AI tutor asks a few questions about what you want to learn, then runs a short check to find where to start.
         </p>
       </div>
 
@@ -155,10 +102,15 @@ export default function SignupPage() {
             className={inputClass} placeholder="At least 6 characters" />
         </div>
         {error && <Alert tone="danger">{error}</Alert>}
+        <p className="text-[13px] leading-relaxed text-muted">If you’re under 18, we’ll ask for a parent or guardian’s okay before saving your answers.</p>
         <button type="submit" disabled={pending} className={buttonClass('primary', 'lg', 'w-full')}>
           {pending ? (<><Spinner /> Creating account…</>) : 'Create account'}
         </button>
       </form>
+      <p className="mt-8 border-t border-line pt-6 text-center text-sm text-muted">
+        Already have an account?{' '}
+        <Link href="/login" className="font-medium text-accent underline-offset-4 hover:underline">Sign in</Link>
+      </p>
     </div>
   )
 }

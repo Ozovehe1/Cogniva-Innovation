@@ -52,8 +52,22 @@ export interface WhiteboardPlayerProps {
   answered?: number[]
   /** Furthest original position reached before; students can jump to any section up to it. */
   furthest?: number
-  /** A second tab beside the transcript (e.g. class materials). */
+  /** A second tab beside the transcript. */
   transcriptAside?: TranscriptAside
+  /** Imperative control for the lesson session (check-ins: pause, insert a worked example). */
+  controlRef?: React.MutableRefObject<PlayerControl | null>
+  /** Slower pacing: longer pauses between steps (after a low check-in). */
+  slow?: boolean
+}
+
+export interface PlayerControl {
+  pause: () => void
+  resume: () => void
+  /** Insert steps right after the current position and play them. False when a check is waiting. */
+  insertNow: (extra: Step[]) => boolean
+  /** Steps on the board since the last full clear, up to the current position. */
+  played: () => Step[]
+  isPlaying: () => boolean
 }
 
 export interface TranscriptAside { label: string; count?: number; content: React.ReactNode }
@@ -82,6 +96,8 @@ export function WhiteboardPlayer({
   answered,
   furthest: furthestProp = 0,
   transcriptAside,
+  controlRef,
+  slow = false,
 }: WhiteboardPlayerProps) {
   const reduced = !!useReducedMotion()
   const [steps, setSteps] = useState<Step[]>(initialSteps)
@@ -418,11 +434,11 @@ export function WhiteboardPlayer({
     if (cursor === 0) wait = 250
     else if (animIdx === cursor - 1) {
       if (doneId !== playId) return
-      wait = 40
-    } else wait = 300
+      wait = slow ? 900 : 40
+    } else wait = slow ? 900 : 300
     const t = setTimeout(() => goTo(cursor, true), wait)
     return () => clearTimeout(t)
-  }, [playing, blocked, hold, cursor, steps, animIdx, playId, doneId, goTo, emit])
+  }, [playing, blocked, hold, cursor, steps, animIdx, playId, doneId, goTo, emit, slow])
 
   const togglePlay = () => {
     unlockVoice()
@@ -543,6 +559,27 @@ export function WhiteboardPlayer({
     setResolved(r => new Set(r).add(index))
     continueFrom(index, list)
   }, [steps, onNeedSteps, insertAfter, continueFrom, emit, goTo])
+
+  // Imperative handle for check-ins (refreshed every render so it always sees current state).
+  useEffect(() => {
+    if (!controlRef) return
+    controlRef.current = {
+      pause: () => { if (playing) { setPlaying(false); setHold(animIdx === cursor - 1 && doneId !== playId) } },
+      resume: () => { setHold(false); setStarted(true); setPlaying(true) },
+      insertNow: (extra: Step[]) => {
+        if (pendingCheck !== null || !extra.length || cursor < 1) return false
+        insertAfter(cursor - 1, extra)
+        setHold(false); setStarted(true); setPlaying(true)
+        return true
+      },
+      played: () => {
+        let from = 0
+        for (let k = Math.min(cursor, steps.length) - 1; k >= 0; k--) { const st = steps[k]; if (st.type === 'clear' && !st.targets) { from = k; break } }
+        return steps.slice(from, cursor)
+      },
+      isPlaying: () => playing && !hold,
+    }
+  })
 
   const onCheck = useCallback((response: CheckResponse, detail?: { correct?: boolean; answer?: string }) => {
     if (pendingCheck === null) return

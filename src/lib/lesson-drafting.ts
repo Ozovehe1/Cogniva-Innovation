@@ -14,10 +14,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
 import { GeminiQuotaError } from './gemini'
 import { draftLessonOutline, draftLessonSection, type OutlineSection } from './lesson-ai'
-import { loadMaterialSources, outlineDigest, sectionExcerpts, type MaterialSource, type StyleNotes } from './materials'
 import { flattenSections, validateSection, type Chapter } from './lesson-sections'
 import type { Step } from './lesson-schema'
 import { pregenerateNarration } from './tts-server'
+import { attachReadyClips, queueLessonClip } from './lesson-clip'
 
 const LOCK_MS = 295_000
 /** Work budget of one invocation (routes run with maxDuration 300). */
@@ -56,11 +56,10 @@ interface LessonJobRow {
   draft_notes: string | null
   draft_retry_at: string | null
   draft_lock_until: string | null
-  draft_from_materials?: boolean
-  style_notes?: StyleNotes | null
+  generated_by?: string | null
 }
 
-const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, draft_from_materials, style_notes'
+const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, generated_by'
 
 /* ───────────── Internal auth for the self-chain ───────────── */
 
@@ -121,7 +120,7 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 async function chain(origin: string | undefined, lessonId: string) {
   if (!origin) return
   try {
-    await fetch(`${origin}/api/tutor/lessons/${lessonId}/draft/run`, {
+    await fetch(`${origin}/api/lessons/${lessonId}/draft/run`, {
       method: 'POST',
       headers: { 'x-draft-key': draftKey(lessonId) },
       signal: AbortSignal.timeout(8000),
@@ -153,8 +152,6 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
   const t0 = Date.now()
   if (!(await claim(db, lessonId))) return 'busy'
   let handOver = false
-  // The tutor's class materials, loaded once per invocation when the draft follows them.
-  let sources: MaterialSource[] | null = null
   try {
     for (;;) {
       const { data } = await db.from('lessons').select(JOB_COLS).eq('id', lessonId).maybeSingle()
@@ -172,14 +169,11 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       if (lesson.draft_status !== 'outlining' && lesson.draft_status !== 'drafting') return lesson.draft_status
 
       const lite = { title: lesson.title, subject: lesson.subject, objectives: lesson.objectives ?? [] }
-      if (lesson.draft_from_materials && sources === null) sources = await loadMaterialSources(db, lessonId)
-      const useMaterials = !!lesson.draft_from_materials && !!sources && sources.length > 0
 
       if (lesson.draft_status === 'outlining') {
         let outline: OutlineSection[]
         try {
-          outline = await draftLessonOutline(lite, lesson.target_minutes ?? 15, lesson.draft_notes ?? undefined,
-            useMaterials ? { text: outlineDigest(sources!), style: lesson.style_notes } : undefined)
+          outline = await draftLessonOutline(lite, lesson.target_minutes ?? 15, lesson.draft_notes ?? undefined)
         } catch (err) {
           if (err instanceof GeminiQuotaError) {
             if (!err.daily && (err.retryAfterMs ?? 90_000) <= MAX_INLINE_WAIT_MS && Date.now() - t0 + MAX_INLINE_WAIT_MS < RUN_BUDGET_MS - 60_000) {
@@ -202,6 +196,8 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
           return 'failed'
         }
         await db.from('lessons').update({ draft_status: 'drafting', draft_error: null, script: [], chapters: [] }).eq('id', lessonId)
+        // AI lessons get one rendered animation for the opening idea (AI-written code, guarded and sandboxed).
+        if (lesson.generated_by === 'ai') void queueLessonClip(db, lessonId).catch(err => console.warn('Lesson clip not queued:', err instanceof Error ? err.message : err))
         continue
       }
 
@@ -218,14 +214,12 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
 
       await db.from('lesson_sections').update({ status: 'drafting', error: null }).eq('id', next.id)
       try {
-        const material = useMaterials
-          ? { text: sectionExcerpts(sources!, [next.title, next.goal, ...(next.key_points ?? [])].join(' ')), style: lesson.style_notes }
-          : undefined
-        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes: next.notes ?? undefined, material })
+        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes: [lesson.draft_notes, next.notes].filter(Boolean).join('\n') || undefined })
         const v = validateSection(steps, next.position)
         if (!v.ok) throw new Error(v.errors.slice(0, 2).join('; '))
         await db.from('lesson_sections').update({ status: 'ready', steps: v.steps, error: null }).eq('id', next.id)
         await syncLessonScript(db, lessonId)
+        if (lesson.generated_by === 'ai') await attachReadyClips(db, lessonId).catch(() => false)
         // Voice the section in the background while the next one is drafted (unchanged lines are reused).
         void pregenerateNarration(v.steps, Math.max(20_000, RUN_BUDGET_MS - (Date.now() - t0))).catch(() => {})
       } catch (err) {
@@ -254,11 +248,10 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
 }
 
 /** Start a fresh draft (outline + all sections) for a lesson. */
-export async function restartDraft(db: SupabaseClient, lessonId: string, targetMinutes: number, notes?: string | null, fromMaterials?: boolean) {
+export async function restartDraft(db: SupabaseClient, lessonId: string, targetMinutes: number, notes?: string | null) {
   await db.from('lesson_sections').delete().eq('lesson_id', lessonId)
   return db.from('lessons').update({
     status: 'draft', target_minutes: targetMinutes, draft_notes: notes ?? null,
-    ...(fromMaterials !== undefined ? { draft_from_materials: fromMaterials } : {}),
     draft_status: 'outlining', draft_error: null, draft_retry_at: null, script: [], chapters: [],
   }).eq('id', lessonId)
 }
