@@ -1,17 +1,9 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-
-const intelligenceMeta: Record<string, { label: string; emoji: string; hex: string }> = {
-  linguistic:          { label: 'Linguistic',    emoji: '📖', hex: '#3B82F6' },
-  logicalMathematical: { label: 'Logical-Math',  emoji: '🔢', hex: '#22C55E' },
-  spatial:             { label: 'Spatial',        emoji: '🗺️', hex: '#EAB308' },
-  musical:             { label: 'Musical',        emoji: '🎵', hex: '#EC4899' },
-  bodilyKinesthetic:   { label: 'Kinesthetic',   emoji: '🏃', hex: '#F97316' },
-  interpersonal:       { label: 'Interpersonal',  emoji: '🤝', hex: '#14B8A6' },
-  intrapersonal:       { label: 'Intrapersonal',  emoji: '🧘', hex: '#8B5CF6' },
-  naturalist:          { label: 'Naturalist',     emoji: '🌿', hex: '#10B981' },
-}
+import { ArrowLeft, Check, RotateCcw } from 'lucide-react'
+import { intelligenceLabel } from '@/components/intelligence'
+import { Card, Eyebrow, RadarChart, ScoreBars, Skeleton, buttonClass, cx } from '@/components/ui'
 
 type IntelProfile = {
   dominant_intelligence: string
@@ -23,111 +15,91 @@ type IntelProfile = {
   career_suggestions: string[]
 }
 
+const ease = [0.2, 0, 0, 1] as const
+
 function AssessmentResults({ profile }: { profile: IntelProfile }) {
-  const dominant = intelligenceMeta[profile.dominant_intelligence]
-  const sortedScores = Object.entries(profile.intelligence_scores).sort((a, b) => b[1] - a[1])
-  const top3 = sortedScores.slice(0, 3)
+  const studyTips = Array.isArray(profile.study_tips) ? profile.study_tips : []
+  const learningPath = Array.isArray(profile.learning_path) ? profile.learning_path : []
+  const careers = Array.isArray(profile.career_suggestions) ? profile.career_suggestions : []
 
   return (
-    <div className="space-y-6" style={{ maxWidth: 860 }}>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease }}
+      className="space-y-6 md:space-y-8"
+    >
+      {/* Summary */}
+      <header className="max-w-3xl">
+        <Eyebrow className="mb-3">Your profile · strongest in {intelligenceLabel(profile.dominant_intelligence)}</Eyebrow>
+        <h1 className="font-display text-[30px] leading-[1.15] text-ink md:text-[42px]">{profile.genius_statement}</h1>
+        {profile.personality_insight && (
+          <p className="mt-4 text-[16px] leading-relaxed text-ink-2 md:text-[17px]">{profile.personality_insight}</p>
+        )}
+      </header>
 
-      {/* Hero — full width gradient band */}
-      <div className="relative rounded-2xl overflow-hidden p-7"
-        style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(0,0,0,0) 70%)', border: '1px solid rgba(124,58,237,0.12)' }}>
-        <div className="absolute right-6 top-6 select-none pointer-events-none"
-          style={{ fontSize: 96, lineHeight: 1, opacity: 0.04 }}>{dominant?.emoji}</div>
-        <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#6D28D9' }}>{dominant?.label} Intelligence</p>
-        <h1 className="text-2xl font-bold text-white mb-3 leading-snug" style={{ maxWidth: 560 }}>
-          {profile.genius_statement}
-        </h1>
-        <p className="text-sm leading-relaxed" style={{ color: '#71717A', maxWidth: 540 }}>
-          {profile.personality_insight}
-        </p>
-      </div>
-
-      {/* Intelligence grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-
-        {/* All 8 bars */}
-        <div className="lg:col-span-3 rounded-2xl p-6" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <p className="text-xs uppercase tracking-widest mb-5" style={{ color: '#3F3F46' }}>All intelligences</p>
-          <div className="space-y-3">
-            {sortedScores.map(([key, val]) => {
-              const meta = intelligenceMeta[key]
-              const isDominant = key === profile.dominant_intelligence
-              return (
-                <div key={key} className="flex items-center gap-3">
-                  <span className="text-xs flex-shrink-0 text-right" style={{ width: 80, color: isDominant ? '#E4E4E7' : '#3F3F46' }}>
-                    {meta?.label}
-                  </span>
-                  <div className="flex-1 h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                    <div className="h-full rounded-full transition-all"
-                      style={{ width: `${val * 10}%`, background: isDominant ? meta?.hex : `${meta?.hex}55` }} />
-                  </div>
-                  <span className="text-xs tabular-nums flex-shrink-0"
-                    style={{ width: 18, color: isDominant ? meta?.hex : '#3F3F46' }}>{val}</span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Top 3 + study approach */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="rounded-2xl p-5" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <p className="text-xs uppercase tracking-widest mb-4" style={{ color: '#3F3F46' }}>Top strengths</p>
-            <div className="space-y-4">
-              {top3.map(([key, val], rank) => {
-                const meta = intelligenceMeta[key]
-                return (
-                  <div key={key}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono" style={{ color: '#3F3F46' }}>0{rank + 1}</span>
-                        <span className="text-sm font-medium text-white">{meta?.label}</span>
-                      </div>
-                      <span className="text-xs font-semibold" style={{ color: meta?.hex }}>{val}/10</span>
-                    </div>
-                    <div className="h-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                      <div className="h-full rounded-full" style={{ width: `${val * 10}%`, background: meta?.hex }} />
-                    </div>
-                  </div>
-                )
-              })}
+      {/* Scores */}
+      <Card padded={false}>
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+          <div className="border-b border-line p-5 md:p-8 lg:border-b-0 lg:border-r">
+            <Eyebrow className="mb-2">Shape of your profile</Eyebrow>
+            <div className="mx-auto max-w-[360px]">
+              <RadarChart scores={profile.intelligence_scores} />
             </div>
           </div>
+          <div className="p-5 md:p-8">
+            <Eyebrow className="mb-5">All eight intelligences</Eyebrow>
+            <ScoreBars scores={profile.intelligence_scores} highlight={profile.dominant_intelligence} showRank />
+          </div>
+        </div>
+      </Card>
 
-          <div className="rounded-2xl p-5" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#3F3F46' }}>How you learn</p>
-            <ol className="space-y-2.5">
-              {profile.study_tips.slice(0, 3).map((tip, i) => (
-                <li key={i} className="flex gap-2.5 text-xs leading-relaxed" style={{ color: '#71717A' }}>
-                  <span className="flex-shrink-0 font-mono" style={{ color: '#3F3F46' }}>{i + 1}.</span>
-                  {tip}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {studyTips.length > 0 && (
+          <Card>
+            <h2 className="mb-4 text-[15px] font-semibold text-ink">How you learn best</h2>
+            <ol className="space-y-3.5">
+              {studyTips.slice(0, 3).map((tip, i) => (
+                <li key={i} className="flex gap-3 text-[15px] leading-relaxed text-ink-2">
+                  <span className="tnum mt-[1px] font-display text-[15px] text-accent">{i + 1}.</span>
+                  <span>{tip}</span>
                 </li>
               ))}
             </ol>
+          </Card>
+        )}
+
+        {learningPath.length > 0 && (
+          <Card>
+            <h2 className="mb-4 text-[15px] font-semibold text-ink">Suggested learning path</h2>
+            <ol className="relative space-y-4 border-l border-line pl-5">
+              {learningPath.map((item, i) => (
+                <li key={i} className="relative text-[15px] leading-relaxed text-ink-2">
+                  <span className="absolute -left-[25px] top-[7px] h-2 w-2 rounded-full border-2 border-accent bg-surface" />
+                  {item}
+                </li>
+              ))}
+            </ol>
+          </Card>
+        )}
+      </div>
+
+      {careers.length > 0 && (
+        <section>
+          <div className="mb-3 flex items-baseline gap-2">
+            <h2 className="text-[15px] font-semibold text-ink">Career directions to explore</h2>
+            <span className="text-[13px] text-faint">Not exhaustive</span>
           </div>
-        </div>
-      </div>
-
-      {/* Career paths — chip grid */}
-      <div>
-        <div className="flex items-baseline gap-2 mb-3">
-          <p className="text-xs uppercase tracking-widest" style={{ color: '#3F3F46' }}>Possible career paths</p>
-          <p className="text-xs" style={{ color: '#27272A' }}>· not exhaustive</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {profile.career_suggestions.map((role, i) => (
-            <span key={i} className="px-3 py-1.5 rounded-lg text-sm"
-              style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.07)', color: '#A1A1AA' }}>
-              {role}
-            </span>
-          ))}
-        </div>
-      </div>
-
-    </div>
+          <ul className="flex flex-wrap gap-2">
+            {careers.map((role, i) => (
+              <li key={i} className="rounded-full border border-line bg-surface px-3.5 py-1.5 text-sm text-ink-2">
+                {role}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </motion.div>
   )
 }
 
@@ -183,39 +155,16 @@ const options = [
   { val: 5, label: 'Exactly me' },
 ]
 
+
 const analysisSteps = [
-  'Reading your response patterns...',
-  'Mapping cognitive strengths across 8 intelligences...',
-  'Identifying your dominant genius type...',
-  'Generating your personalised learning path...',
-  'Crafting your career alignment...',
-  'Writing your Genius Statement...',
-  'Finalising your GeniusMap...',
+  'Reading your responses',
+  'Weighing your strengths across eight intelligences',
+  'Identifying your strongest area',
+  'Drafting your learning path',
+  'Matching career directions',
+  'Writing your summary',
+  'Finalising your GeniusMap',
 ]
-
-const spring = { type: 'spring' as const, stiffness: 280, damping: 26 }
-
-function SkeletonLine({ width, delay = 0 }: { width: string; delay?: number }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ delay, duration: 0.4 }}
-      className="h-3 rounded-full overflow-hidden"
-      style={{ width, background: '#1E1E26' }}
-    >
-      <motion.div
-        className="h-full w-full"
-        style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(124,58,237,0.15) 50%, transparent 100%)',
-          backgroundSize: '200% 100%',
-        }}
-        animate={{ backgroundPosition: ['200% 0', '-200% 0'] }}
-        transition={{ duration: 1.8, repeat: Infinity, ease: 'linear' }}
-      />
-    </motion.div>
-  )
-}
 
 function AnalyzingScreen({ done }: { done: boolean }) {
   const [activeStep, setActiveStep] = useState(0)
@@ -243,93 +192,77 @@ function AnalyzingScreen({ done }: { done: boolean }) {
   return (
     <motion.div
       key="analyzing"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={spring}
-      className="max-w-xl mx-auto"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.2, ease }}
+      className="mx-auto max-w-xl pt-4 md:pt-12"
+      aria-live="polite"
+      aria-busy={!done}
     >
-      {/* Status line */}
-      <div className="mb-10">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <motion.div
-              className="w-2 h-2 rounded-full flex-shrink-0"
-              style={{ background: done ? '#22C55E' : '#7C3AED' }}
-              animate={done ? { scale: 1 } : { scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
-              transition={{ duration: 1.2, repeat: done ? 0 : Infinity }}
-            />
-            <AnimatePresence mode="wait">
-              <motion.p
-                key={done ? 'done' : activeStep}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.3 }}
-                className="text-sm font-medium"
-                style={{ color: done ? '#4ADE80' : '#A78BFA' }}
-              >
-                {done ? 'Your GeniusMap is ready ✓' : analysisSteps[activeStep]}
-              </motion.p>
-            </AnimatePresence>
-          </div>
-          <span className="text-sm font-semibold tabular-nums" style={{ color: done ? '#4ADE80' : '#7C3AED' }}>
-            {Math.round(pct)}%
-          </span>
+      <Eyebrow className="mb-3">{done ? 'Done' : 'Building your profile'}</Eyebrow>
+      <h1 className="font-display text-[30px] leading-tight text-ink md:text-[38px]">
+        {done ? 'Your profile is ready.' : 'Finalising your GeniusMap…'}
+      </h1>
+      <p className="mt-3 text-[15px] leading-relaxed text-muted">
+        {done ? 'Taking you to your dashboard.' : 'This usually takes a few seconds. Please keep this page open.'}
+      </p>
+
+      <div className="mt-8">
+        <div className="mb-2 flex items-center justify-between text-[13px]">
+          <span className="text-muted">Progress</span>
+          <span className="tnum font-medium text-ink">{Math.round(pct)}%</span>
         </div>
-        <div className="h-0.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="h-1.5 overflow-hidden rounded-full bg-sunken">
           <motion.div
-            className="h-full rounded-full"
-            style={{ background: done ? '#22C55E' : '#7C3AED' }}
+            className="h-full rounded-full bg-accent"
             animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
           />
         </div>
       </div>
 
-      {/* Skeleton profile card */}
-      <div className="p-6 rounded-2xl mb-4" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <SkeletonLine width="60%" delay={0.1} />
-        <div className="mt-4 space-y-2">
-          <SkeletonLine width="100%" delay={0.2} />
-          <SkeletonLine width="85%" delay={0.3} />
-          <SkeletonLine width="70%" delay={0.4} />
-        </div>
-      </div>
-
-      {/* Skeleton intelligence bars */}
-      <div className="p-6 rounded-2xl mb-4" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <SkeletonLine width="40%" delay={0.2} />
-        <div className="mt-4 space-y-4">
-          {[90, 75, 60, 50, 45, 38, 30, 20].map((w, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <div className="w-4 h-4 rounded" style={{ background: '#1E1E26' }} />
-              <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: '#1E1E26' }}>
-                <motion.div
-                  className="h-full rounded-full"
-                  style={{ background: 'rgba(124,58,237,0.3)' }}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${w}%` }}
-                  transition={{ ...spring, delay: 0.3 + i * 0.08 }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Skeleton cards row */}
-      <div className="grid grid-cols-2 gap-3">
-        {[0, 1].map(i => (
-          <div key={i} className="p-5 rounded-2xl space-y-2" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <SkeletonLine width="50%" delay={0.4 + i * 0.1} />
-            <SkeletonLine width="100%" delay={0.5 + i * 0.1} />
-            <SkeletonLine width="80%" delay={0.6 + i * 0.1} />
-          </div>
-        ))}
-      </div>
+      <Card className="mt-8" padded={false}>
+        <ol className="divide-y divide-line">
+          {analysisSteps.map((label, i) => {
+            const complete = done || i < activeStep
+            const current = !done && i === activeStep
+            return (
+              <li key={label} className="flex items-center gap-3 px-5 py-3.5">
+                <span
+                  className={cx(
+                    'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border transition-colors duration-200',
+                    complete ? 'border-accent bg-accent text-white' : current ? 'border-accent' : 'border-line-strong',
+                  )}
+                >
+                  {complete ? <Check className="h-3 w-3" strokeWidth={3} /> : current ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" /> : null}
+                </span>
+                <span className={cx('text-sm transition-colors duration-200', complete ? 'text-ink-2' : current ? 'font-medium text-ink' : 'text-faint')}>
+                  {label}
+                </span>
+              </li>
+            )
+          })}
+        </ol>
+      </Card>
     </motion.div>
   )
 }
+
+function CheckingSkeleton() {
+  return (
+    <div className="mx-auto max-w-2xl" aria-busy="true" aria-label="Loading">
+      <Skeleton className="mb-3 h-3 w-32" />
+      <Skeleton className="mb-10 h-1.5 w-full rounded-full" />
+      <Skeleton className="mb-3 h-7 w-full" />
+      <Skeleton className="mb-10 h-7 w-3/4" />
+      <div className="space-y-2.5">
+        {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} className="h-14 w-full rounded-[12px]" />)}
+      </div>
+    </div>
+  )
+}
+
+const typeLabel = (t: string) => intelligenceLabel(t)
 
 export default function AssessmentPage() {
   const [answers, setAnswers] = useState<Record<number, number>>({})
@@ -402,7 +335,27 @@ export default function AssessmentPage() {
     setTimeout(() => setStep(s => s - 1), 0)
   }
 
-  if (checking) return null
+  // Keyboard support: 1–5 answers, ← / Backspace goes back
+  useEffect(() => {
+    if (checking || existingProfile || analyzing || analysisError) return
+    function onKey(e: KeyboardEvent) {
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      const n = Number(e.key)
+      if (n >= 1 && n <= 5) {
+        e.preventDefault()
+        selectAnswer(n)
+      } else if ((e.key === 'ArrowLeft' || e.key === 'Backspace') && step > 0) {
+        e.preventDefault()
+        goBack()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  if (checking) return <CheckingSkeleton />
 
   if (existingProfile) return <AssessmentResults profile={existingProfile} />
 
@@ -410,120 +363,123 @@ export default function AssessmentPage() {
 
   if (analysisError) return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={spring}
-      className="max-w-sm mx-auto text-center pt-16"
+      transition={{ duration: 0.2, ease }}
+      className="mx-auto max-w-xl pt-4 md:pt-12"
     >
-      <div className="w-14 h-14 rounded-2xl mx-auto mb-6 flex items-center justify-center text-2xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>⚠</div>
-      <h2 className="text-white font-semibold mb-2">Something went wrong</h2>
-      <p className="text-zinc-500 text-sm mb-6 leading-relaxed">{analysisError}</p>
-      <button
-        onClick={() => submitAssessment(answers)}
-        className="px-6 py-3 rounded-xl text-sm font-semibold text-white transition"
-        style={{ background: '#7C3AED' }}
-      >
-        Try Again
-      </button>
+      <Eyebrow className="mb-3 text-danger">Something went wrong</Eyebrow>
+      <h1 className="font-display text-[30px] leading-tight text-ink md:text-[36px]">We couldn&apos;t finish your profile.</h1>
+      <div role="alert" className="mt-5 rounded-[12px] border border-danger-line bg-danger-soft px-4 py-3 text-sm leading-relaxed text-ink-2">
+        {analysisError}
+      </div>
+      <p className="mt-4 text-sm leading-relaxed text-muted">Your answers are still here. Retrying sends them again.</p>
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+        <button onClick={() => submitAssessment(answers)} className={buttonClass('primary', 'lg')}>
+          <RotateCcw className="h-4 w-4" strokeWidth={2} />
+          Retry
+        </button>
+        <button onClick={() => setAnalysisError('')} className={buttonClass('secondary', 'lg')}>
+          Review my answers
+        </button>
+      </div>
     </motion.div>
   )
 
-  const slideVariants = {
-    enter: (dir: number) => ({ x: dir > 0 ? 40 : -40, opacity: 0 }),
-    center: { x: 0, opacity: 1 },
-    exit: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
-  }
+  const answeredCount = Object.keys(answers).length
 
   return (
-    <div className="max-w-xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-white text-sm font-medium">Intelligence Assessment</span>
-          <span className="text-xs tabular-nums" style={{ color: '#52525B' }}>
-            {step + 1}<span style={{ color: '#3F3F46' }}> / {questions.length}</span>
-
+    <div className="mx-auto flex max-w-2xl flex-col md:pt-4">
+      {/* Progress */}
+      <div className="mb-8 md:mb-12">
+        <div className="mb-3 flex items-center justify-between gap-4 text-[13px]">
+          <span className="font-medium text-ink">Assessment</span>
+          <span className="tnum text-muted">
+            Question <span className="font-medium text-ink">{step + 1}</span> of {questions.length}
           </span>
         </div>
-        {/* Animated progress bar */}
-        <div className="h-0.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div
+          className="h-1.5 overflow-hidden rounded-full bg-sunken"
+          role="progressbar"
+          aria-label="Assessment progress"
+          aria-valuemin={0}
+          aria-valuemax={questions.length}
+          aria-valuenow={answeredCount}
+        >
           <motion.div
-            className="h-full rounded-full"
-            style={{ background: '#7C3AED' }}
+            className="h-full rounded-full bg-accent"
             animate={{ width: `${progress}%` }}
-            transition={{ ...spring }}
+            transition={{ duration: 0.25, ease }}
           />
         </div>
       </div>
 
-      {/* Sliding question */}
-      <div className="overflow-hidden mb-4">
-        <AnimatePresence mode="wait" custom={direction}>
-          <motion.div
-            key={step}
-            custom={direction}
-            variants={slideVariants}
-            initial="enter"
-            animate="center"
-            exit="exit"
-            transition={spring}
-            className="py-6"
-          >
-            <p className="text-xs mb-4 uppercase tracking-wider" style={{ color: '#3F3F46' }}>
-              {current.type.replace(/([A-Z])/g, ' $1').trim()}
-            </p>
-            <h2 className="text-white text-base font-medium leading-relaxed">{current.text}</h2>
-          </motion.div>
-        </AnimatePresence>
-      </div>
-
-      {/* Staggered options */}
-      <motion.div
-        key={`options-${step}`}
-        className="space-y-1.5"
-        initial="hidden"
-        animate="visible"
-        variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
-      >
-        {options.map(({ val, label }) => {
-          const selected = answers[current.id] === val
-          return (
-            <motion.button
-              key={val}
-              variants={{
-                hidden: { opacity: 0, y: 6 },
-                visible: { opacity: 1, y: 0, transition: spring },
-              }}
-              onClick={() => selectAnswer(val)}
-              className="w-full text-left px-4 py-2.5 rounded-lg text-sm transition-all"
-              style={{
-                background: selected ? 'rgba(124,58,237,0.1)' : 'transparent',
-                border: `1px solid ${selected ? 'rgba(124,58,237,0.35)' : 'rgba(255,255,255,0.06)'}`,
-                color: selected ? '#C4B5FD' : '#52525B',
-                fontWeight: selected ? 500 : 400,
-              }}
-              whileHover={{ color: '#A1A1AA', borderColor: 'rgba(255,255,255,0.12)' }}
-              whileTap={{ scale: 0.995 }}
-              transition={{ duration: 0.1 }}
-            >
-              {label}
-            </motion.button>
-          )
-        })}
-      </motion.div>
-
-      {step > 0 && (
-        <motion.button
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          onClick={goBack}
-          className="mt-5 text-xs transition"
-          style={{ color: '#3F3F46' }}
-          whileHover={{ color: '#71717A' }}
+      {/* Question */}
+      <AnimatePresence mode="wait" custom={direction} initial={false}>
+        <motion.div
+          key={step}
+          custom={direction}
+          initial={{ opacity: 0, x: direction > 0 ? 12 : -12 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: direction > 0 ? -12 : 12 }}
+          transition={{ duration: 0.18, ease }}
         >
-          ← Back
-        </motion.button>
-      )}
+          <fieldset>
+            <legend className="mb-8 w-full md:mb-10">
+              <span className="mb-3 block text-[12px] font-medium uppercase tracking-[0.08em] text-muted">
+                {typeLabel(current.type)}
+              </span>
+              <span className="block font-display text-[24px] leading-[1.3] text-ink md:text-[30px]">{current.text}</span>
+            </legend>
+
+            <div className="space-y-2.5" role="radiogroup" aria-label="How much does this sound like you?">
+              {options.map(({ val, label }) => {
+                const selected = answers[current.id] === val
+                return (
+                  <button
+                    key={val}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => selectAnswer(val)}
+                    className={cx(
+                      'flex min-h-14 w-full items-center gap-4 rounded-[12px] border px-4 text-left text-[15px] transition-colors duration-150',
+                      selected
+                        ? 'border-accent bg-accent-soft font-medium text-ink ring-1 ring-accent'
+                        : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:bg-[#FBFAF7] hover:text-ink',
+                    )}
+                  >
+                    <span
+                      className={cx(
+                        'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2',
+                        selected ? 'border-accent' : 'border-line-strong',
+                      )}
+                    >
+                      {selected && <span className="h-2.5 w-2.5 rounded-full bg-accent" />}
+                    </span>
+                    <span className="flex-1">{label}</span>
+                    <kbd className="hidden h-6 min-w-6 items-center justify-center rounded-[6px] border border-line bg-canvas px-1.5 font-sans text-[12px] text-muted md:inline-flex">
+                      {val}
+                    </kbd>
+                  </button>
+                )
+              })}
+            </div>
+          </fieldset>
+        </motion.div>
+      </AnimatePresence>
+
+      <div className="mt-6 flex min-h-10 items-center justify-between gap-4">
+        {step > 0 ? (
+          <button type="button" onClick={goBack} className={buttonClass('ghost', 'md', '-ml-3')}>
+            <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
+            Back
+          </button>
+        ) : <span />}
+        <p className="hidden text-[12px] text-faint md:block">
+          Press <kbd className="font-sans text-muted">1</kbd>–<kbd className="font-sans text-muted">5</kbd> to answer, <kbd className="font-sans text-muted">←</kbd> to go back
+        </p>
+      </div>
     </div>
   )
 }
