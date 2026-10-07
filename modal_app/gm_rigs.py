@@ -964,7 +964,7 @@ def flow_reactor(ctx, rig):
         g = VGroup()
         for j in range(n):
             u = (ph * 0.06 + j / n) % 1.0
-            x = x_in0 + 0.1 + u * (L - 0.2)
+            x = x_in0 + 0.4 + u * (L - 0.8)
             # lanes: in the can the stream spreads over the channels, in the pipes it is narrow
             spread = 1.0
             if x_c0 < x < x_c1:
@@ -973,7 +973,8 @@ def flow_reactor(ctx, rig):
             yy = yc + (lanes[lane] - yc) * spread
             sp = ins[j % len(ins)]
             if act > 0.5 and x > zone_mid:
-                sp = mp.get(sp, sp)
+                prod = [q.strip() for q in str(mp.get(sp, sp)).split("+") if q.strip()]  # 'CO2 + H2O': products take turns
+                sp = prod[(j // len(ins)) % len(prod)] if prod else sp
             g.add(_mol_at(sp, x, yy, sc, angle=(j * 1.3 + ph * 0.05 * (1 + j % 3)) % TAU))
         return g
     ctx.add("gas", live(gas), show=ctx.show_time(flow, sh(ctx, rig, "converter")), how="fade", kind="body", part=role(rig, "gas"), z=4, moving=True)
@@ -1425,7 +1426,7 @@ def _chart(ctx, it, box):
     fns = []
     for k, c in enumerate(it.get("curves", [])):
         syms = [X] + [sp.Symbol(p) for p in procs]
-        f = sp.lambdify(syms, sp.sympify(str(c["expr"]).replace("^", "**"), locals={p: sp.Symbol(p) for p in procs}), "math")
+        f = sp.lambdify(syms, chart_expr(c["expr"], procs), "math")
         cc = ctx.color_of(c.get("q"), col(c.get("color"), INK)) if c.get("q") else col(c.get("color"), [Q["navy"], Q["clay"], Q["green"]][k % 3])
         fns.append((c, f, cc))
 
@@ -1489,6 +1490,21 @@ def _chart(ctx, it, box):
         ctx.checks.append({"type": "equilibrium", "initial": [round(v, 3) for v in r0] if r0 else None, "final": [round(v, 3) for v in (solve(ctx.W(ctx.W.duration)) or [])]})
         if qx:
             ctx.W.quant.append((qx, [], lambda: 0.0))  # placeholder ids so readouts can bind (values come from solve)
+
+
+def chart_expr(expr, procs):
+    """'y = 10 - 0.5Q', 'P = 2 + q' -> sympy in x: the right-hand side, its one free variable renamed to x"""
+    import sympy as sp
+    from sympy.parsing.sympy_parser import implicit_multiplication_application, parse_expr, standard_transformations
+    e = str(expr).replace("^", "**")
+    if "=" in e:
+        e = e.split("=")[-1]
+    loc = {p: sp.Symbol(p) for p in procs}
+    ex = parse_expr(e, local_dict=loc, transformations=standard_transformations + (implicit_multiplication_application,))
+    free = [s_ for s_ in ex.free_symbols if str(s_) not in procs and str(s_) != "x"]
+    if len(free) == 1:
+        ex = ex.subs(free[0], sp.Symbol("x"))
+    return ex
 
 
 def _array(ctx, it, box):

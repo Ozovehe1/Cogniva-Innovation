@@ -519,6 +519,8 @@ def place_labels(ctx: Ctx, labels: list[dict], obstacles: list):
         edge = _edge_point(b, p)
         lead = Line(edge, p).set_stroke(MUTED, 1.6) if np.linalg.norm(edge - p) > 0.15 else VGroup()
         dot = Dot(p, radius=0.035, color=MUTED) if np.linalg.norm(edge - p) > 0.15 else VGroup()
+        L["_p"] = [round(float(p[0]), 3), round(float(p[1]), 3)]
+        L["_follow"] = follow
         g = VGroup(lead, dot, bg, t)
         if follow:  # a moving part: the label rides along at the same offset, no leader
             off = c - p
@@ -731,7 +733,8 @@ def analyze(S: dict, step=0.25) -> dict:
                     motion.setdefault(key, []).append((round(t, 3), round(d, 4)))
         frames.append({"t": round(t, 3), "items": items})
     st = [ctx.W(t) for t in times]
-    return {"duration": D, "frames": frames, "motion": motion, "checks": ctx.checks, "issues": ctx.issues, "world": st, "times": times}
+    labels = [{"id": L["id"], "part": L["part"], "show": L.get("show", 0.0), "p": L.get("_p"), "follow": L.get("_follow")} for L in S.get("labels", []) if L.get("_p")]
+    return {"duration": D, "frames": frames, "motion": motion, "checks": ctx.checks, "issues": ctx.issues, "world": st, "times": times, "labels": labels}
 
 
 def scene_code(S: dict) -> str:

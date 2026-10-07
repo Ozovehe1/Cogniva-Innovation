@@ -336,6 +336,7 @@ def _common_beats(sc: Scene, handle):
 
 
 def solve_fluid_link(sc: Scene):
+    sc.S["drawn"] = ["small piston", "large piston", "piston", "cylinder", "oil", "fluid", "tube", "pipe", "load", "force arrows", "pressure arrows", "travel distances", "area ratio", "areas"]  # what this solver always draws (completeness gate)
     G, P = sc.G, sc.G.get("params") or {}
     k = float(P.get("area_ratio") or next((r.get("k") for r in G.get("relations") or [] if r.get("rel") == "ratio" and r.get("k")), 10))
     F1 = _q(G, "F_in", 100.0)
@@ -386,6 +387,7 @@ def solve_fluid_link(sc: Scene):
 
 
 def solve_dissection(sc: Scene):
+    sc.S["drawn"] = ["circle", "disc", "wedges", "slices", "radius", "strip", "rectangle", "parallelogram", "circumference", "half circumference", "width", "height", "area"]  # what this solver always draws (completeness gate)
     S = sc.S
     st = {}
 
@@ -396,11 +398,7 @@ def solve_dissection(sc: Scene):
             sc.key("unroll", a, z, 1.0)
             st.setdefault("ghost", a)
         elif e == "refine":
-            n = len(sc.keys.get("n", []))
-            mid = (a + z) / 2
-            sc.key("n", a, mid - 0.1, n + 1)
-            if n < 1:
-                sc.key("n", mid, z, n + 2)
+            st.setdefault("refine", []).append((a, z))
         elif e in ("radius", "height"):
             st.setdefault(e, a)
         elif e in ("circumference", "width"):
@@ -410,6 +408,13 @@ def solve_dissection(sc: Scene):
     _common_beats(sc, h)
     if "unroll" not in sc.keys:
         sc.key("unroll", sc.D * 0.3, sc.D * 0.5, 1.0)
+    # thinner slices only make the strip look more like a rectangle once it is a strip: refine after the unroll
+    u_end = sc.keys["unroll"][-1][1]
+    wins = [(max(a, u_end + 0.2), max(z, u_end + 2.6)) for a, z in st.get("refine", [])] or [(u_end + 0.3, min(sc.D - 0.5, u_end + 3.0))]
+    a, z = wins[0]
+    mid = (a + z) / 2
+    sc.key("n", a, mid - 0.1, 1, replay=False)
+    sc.key("n", mid, z, 2, replay=False)
     sc.finish_procs(linear=("n",))
     sc.quantity("r", 1, "clay", "radius", "")
     sc.quantity("w", "pi", "navy", "half circumference", "")
@@ -427,6 +432,7 @@ def solve_dissection(sc: Scene):
 
 
 def solve_cable(sc: Scene):
+    sc.S["drawn"] = ["neuron", "cell body", "soma", "axon", "dendrites", "myelin", "nodes", "terminals", "membrane", "sodium channels", "potassium channels", "ions", "sodium", "potassium", "voltage", "membrane potential", "action potential", "spike", "signal", "resting potential"]  # what this solver always draws (completeness gate)
     S = sc.S
     N, dms = 6, 2.5
     total_ms = 10 + (N - 1) * dms + 2
@@ -471,6 +477,7 @@ def solve_cable(sc: Scene):
 
 
 def solve_binding(sc: Scene):
+    sc.S["drawn"] = ["enzyme", "active site", "pocket", "substrate", "reactants", "products", "bonds", "induced fit", "energy", "activation energy", "energy profile"]  # what this solver always draws (completeness gate)
     S, P = sc.S, sc.G.get("params") or {}
     st = {}
 
@@ -509,6 +516,7 @@ def solve_binding(sc: Scene):
 
 
 def solve_differential(sc: Scene):
+    sc.S["drawn"] = ["differential", "ring gear", "pinion", "drive shaft", "carrier", "spider gears", "side gears", "axles", "wheels", "inner wheel", "outer wheel", "car", "wheel speeds", "gears"]  # what this solver always draws (completeness gate)
     S, P = sc.S, sc.G.get("params") or {}
     tr = float(P.get("turn_ratio") or 0.25)
     w = 6.0
@@ -553,6 +561,7 @@ def solve_differential(sc: Scene):
 
 
 def solve_flow(sc: Scene):
+    sc.S["drawn"] = ["converter", "catalytic converter", "honeycomb", "channels", "monolith", "catalyst", "platinum", "rhodium", "surface", "molecules", "exhaust", "gas", "inlet", "outlet", "tailpipe"]  # what this solver always draws (completeness gate)
     S, P = sc.S, sc.G.get("params") or {}
     rx = [r for r in P.get("reactions") or [] if r.get("eq")]
     st = {}
@@ -597,6 +606,7 @@ def _chem_tex(eq):
 
 
 def solve_projectile(sc: Scene):
+    sc.S["drawn"] = ["ball", "cannon", "launcher", "ground", "trajectory", "parabola", "path", "launch angle", "angle", "theta", "velocity", "launch velocity", "components", "horizontal component", "vertical component", "gravity", "max height", "maximum height", "range", "time"]  # what this solver always draws (completeness gate)
     S = sc.S
     v0, th, g = _q(sc.G, "v0", 20.0), _q(sc.G, "theta", 45.0), _q(sc.G, "g", 9.81)
     st = {}
@@ -842,8 +852,32 @@ def gates(S: dict, G: dict, sents: list[dict]) -> dict:
     for it in (S["rigs"][0].get("items") or []) if S.get("rigs") else []:
         if it.get("type") == "chart" and (not it.get("x_label") or not it.get("y_label")):
             hard.append(f"chart {it['id']} lacks an axis label")
+    # a label must point at something drawn when it appears (its leader ends on a visible body)
+    report_delay = {}
+    for L in a.get("labels") or []:
+        if L.get("follow"):
+            continue
+        px, py = L["p"]
+        hit = None
+        for fr in a["frames"]:
+            if fr["t"] < L["show"] + 0.9:
+                continue
+            for it in fr["items"]:
+                if it["kind"] == "body":
+                    b = it["b"]
+                    if b[0] - 0.25 <= px <= b[2] + 0.25 and b[1] - 0.25 <= py <= b[3] + 0.25:
+                        hit = fr["t"]
+                        break
+            if hit is not None:
+                break
+        if hit is None:
+            hard.append(f"label {L['id']} points at nothing")
+            report_delay[L["id"]] = None
+        elif hit > L["show"] + 1.2:
+            soft.append(f"label {L['id']} appears before its part ({L['show']}s < {hit}s)")
+            report_delay[L["id"]] = hit
     # completeness: everything required is drawn and labelled somewhere
-    shown_text = " ".join([L["text"] for L in S["labels"]] + [r.get("tex", "") for r in S["readouts"]] + [x.get("tex", "") + " " + x.get("id", "") + " " + x.get("text", "") for x in S["annotations"]] +
+    shown_text = " ".join(list(S.get("drawn") or []) + [L["text"] for L in S["labels"]] + [r.get("tex", "") for r in S["readouts"]] + [x.get("tex", "") + " " + x.get("id", "") + " " + x.get("text", "") for x in S["annotations"]] +
                           [t.get("tex", "") for t in S["tex"]] + [str(g.get(k, "")) for g in S["graphs"] for k in ("x_label", "y_label")] +
                           [json.dumps(it) for r in S["rigs"] for it in r.get("items") or []] + [q.get("name", "") + " " + q["id"] for q in S["quantities"] if any(q["id"] == r["q"] for r in S["readouts"])] +
                           [json.dumps(S["rigs"][0].get("roles", {})) if S.get("rigs") else ""] + [p.get("name", "") for p in G.get("parts") or []] +
@@ -855,7 +889,7 @@ def gates(S: dict, G: dict, sents: list[dict]) -> dict:
             missing.append(req)
     if missing:
         soft.append("required but not shown: " + ", ".join(map(str, missing)))
-    return {"hard": hard, "soft": soft, "fill": round(fill, 3), "gaps": gaps, "checks": a["checks"], "issues": a["issues"], "missing": missing}
+    return {"hard": hard, "soft": soft, "fill": round(fill, 3), "gaps": gaps, "checks": a["checks"], "issues": a["issues"], "missing": missing, "label_delay": report_delay}
 
 
 def fill_still(S: dict, gaps: list) -> bool:
@@ -911,6 +945,14 @@ def _gap_target(S, t):
 def det_fix(S: dict, report: dict) -> bool:
     """deterministic repairs for gate findings: pull labels inward, stretch motion over still gaps; True if changed"""
     changed = False
+    for lid, t in (report.get("label_delay") or {}).items():
+        for L in list(S["labels"]):
+            if L["id"] == lid:
+                if t is None:
+                    S["labels"].remove(L)
+                else:
+                    L["show"] = round(t - 0.6, 3)
+                changed = True
     if report.get("gaps"):
         changed = fill_still(S, report["gaps"]) or changed
     for h in report["hard"]:
