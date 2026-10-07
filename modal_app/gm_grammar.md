@@ -57,6 +57,20 @@ guides, secondary labels) or "rule" (faint guides). Never use a quantity colour 
 - array {of: {object template, e.g. {"kind":"dot","r":0.06,"q":"w"}}, n, layout: "random"|"grid"|"circle"|"line",
          box: [x0,y0,x1,y1], cols?, points?: [[x,y],...]}   // particles, molecules, repeated parts
 - group {children: [ids]}        trace {target: dot id}  (draws the path a moving dot leaves)
+- gear {center, r (pitch radius), teeth (the REAL count), depth?, angle (deg, may be a tracker expression), hub?: 0.22}
+     Meshing gears: centres r1 + r2 apart, teeth proportional to radius, angle2 = -angle1 * teeth1 / teeth2 + half-tooth offset.
+- svg {svg: "<svg viewBox=...>...</svg>" you write from the structure plan, each part a <path id="part_name" d="..."/>,
+       or src: "https://upload.wikimedia.org/...svg" (open-licensed), center, w | h, keep_colors?, part_q?: {part_id: qid},
+       fallback: [ids of a primitive build of the same thing, used if the SVG fails]}
+     Each part becomes its own target "<svg id>.<part id>" (show / indicate / move / rotate / color it).
+- 3d mode only: cylinder {center, r, h, axis}, prism {center, size: [w,h,d]}, sphere {center, r}, cone, torus {r, r2}
+## Realism and motion fields (any object)
+- "color": a material for a body that is not a quantity: steel brass copper rubber tissue protein membrane blood bone water wood silicon leaf glass plastic skin
+- "shade": true with fill >= 0.5: sheen gradient, darker rim and a soft drop shadow (depth on a flat board)
+- "region": left | right | center | top | bottom (the layout engine fits each region into its own zone; never overlap regions)
+- "jiggle": amplitude (0.03-0.08) thermal wobble (molecules, particles)   "spin": degrees per second (steady rotation), "spin_about": [x,y]
+- trackers may be steady: {"id": "th", "value": 0, "rate": 90} advances 90 units per second for the whole clip (gears turn,
+  time flows); change the rate with the action speed {values: {"th": 30}}. Objects whose fields use "th" move continuously.
 Placement for text / tex / matrix / number / brace labels: "at": [x,y] | "next_to": [id, "up|down|left|right|ul|ur|dl|dr", optional term LaTeX or "start"|"end"|"mid"]
 | "edge": "UL"|"UR"|"DL"|"DR"|"UP"|"DOWN". Labels next to arrows sit at the arrow tip. "backdrop": true puts
 a paper-coloured card behind text that sits over a grid.
@@ -82,6 +96,7 @@ Example: {"cue": "slide", "dur": 3.5, "do": "set", "values": {"h": 0.05}, "rate"
 - camera {zoom, center: [x,y]} (2d) | {phi, theta, zoom} or {spin: degrees per second, 0 to stop} (3d)
 - indicate {targets}   circle {targets}   link {eq, term, target}  // ties an equation term to the object it describes
 - color {targets, q}   drift {targets: [array id], box: [x0,y0,x1,y1], fraction?}  // particles wander into the box
+- speed {values: {steadyTrackerId: new rate}}   // smoothly change how fast a steady tracker runs
 - wait {}
 Actions with the same cue run together. Objects appear only through a "show" action (nothing is visible before). Something should be moving whenever the voice is talking.
 
@@ -115,3 +130,45 @@ Actions with the same cue run together. Objects appear only through a "show" act
   {"cue": "slope", "dur": 1.2, "do": "link", "eq": "slope", "term": "m", "target": "sec"},
   {"cue": "shrink", "dur": 4.0, "do": "set", "values": {"h": 0.02}}
  ]}
+
+
+## Examples of good structure (hand-made, scored well). Learn the STRUCTURE (regions, live trackers, one colour per
+## quantity, linked terms, motion every sentence); do NOT copy their topics. Abbreviated: "..." marks omitted entries.
+Ex 1 - a matrix moves the plane (plane + basis vectors driven by one tracker s while the plane is transformed):
+{"quantities":[{"id":"i","name":"i hat","color":"green"},{"id":"j","name":"j hat","color":"clay"},{"id":"v","name":"v","color":"amber"}],
+ "trackers":[{"id":"s","value":0}],
+ "objects":[{"id":"plane","kind":"plane","x":[-7,7,1],"y":[-5,5,1],"size":[19.6,14],"center":[0,-1.3]},
+  {"id":"ih","kind":"vector","q":"i","from":[0,-1.3],"to":["1.4*lerp(1,2,s)","-1.3+1.4*lerp(0,1,s)"],"width":6},
+  {"id":"il","kind":"tex","tex":"\\hat{\\imath}","q":"i","next_to":["ih","dr"]},
+  {"id":"M","kind":"matrix","rows":[["2","-1"],["1","1"]],"col_q":["i","j"],"edge":"UL","backdrop":true},
+  {"id":"eq","kind":"tex","tex":"{{\\vec v}} = 1\\,{{\\hat{\\imath}}} + 2\\,{{\\hat{\\jmath}}}","terms":{"\\vec v":"v","\\hat{\\imath}":"i","\\hat{\\jmath}":"j"},"at":[4.6,3.15],"backdrop":true}, ...],
+ "timeline":[{"cue":"matrix","dur":2.2,"do":"show","targets":["plane"]}, {"cue":"green one","dur":0.9,"do":"show","targets":["ih","il"]}, ...,
+  {"cue":"apply","dur":3,"do":"matrix","targets":["plane"],"m":[[2,-1],[1,1]],"about":[0,-1.3]}, {"cue":"apply","dur":3,"do":"set","values":{"s":1}},
+  {"cue":"one green","dur":1,"do":"link","eq":"eq","term":"\\hat{\\imath}","target":"ih"}]}
+Ex 2 - secant to tangent (axes left, live formula + readouts right, camera zoom into the limit, match_tex to the derivative):
+{"trackers":[{"id":"h","value":2}],
+ "objects":[{"id":"ax","kind":"axes","region":"left","x":[-0.5,3.5,1],"y":[-0.5,5,1],"size":[6.2,5.8],"center":[-3.3,-0.4],"labels":["x","y"],"numbers":true},
+  {"id":"curve","kind":"graph","on":"ax","fn":"0.5*x^2","q":"f"},
+  {"id":"run","kind":"line","q":"h","on":"ax","from":[1,0.5],"to":["1+h",0.5]}, {"id":"hl","kind":"tex","tex":"h","q":"h","next_to":["run","down"]},
+  {"id":"sec","kind":"secant","on":"ax","graph":"curve","x":1,"h":"h","q":"m"}, {"id":"tan","kind":"tangent","on":"ax","graph":"curve","x":1,"length":4.6,"q":"d"},
+  {"id":"slope","kind":"tex","region":"right","tex":"{{m}} = \\frac{ {{f(1+h)-f(1)}} }{ {{h}} }","terms":{"m":"m","f(1+h)-f(1)":"r","h":"h"},"at":[3.7,2.3]},
+  {"id":"deriv","kind":"tex","region":"right","tex":"{{f'(1)}} = \\lim_{h\\to 0}\\frac{ {{f(1+h)-f(1)}} }{ {{h}} }","terms":{"f'(1)":"d","f(1+h)-f(1)":"r","h":"h"},"at":[3.7,2.3]},
+  {"id":"mval","kind":"number","region":"right","value":"1 + h/2","decimals":2,"prefix":"m =","q":"m","at":[3.7,-0.2]}, ...],
+ "timeline":[..., {"cue":"slide","dur":4.9,"do":"set","values":{"h":1},"exact":true}, {"cue":"closer","dur":2,"do":"set","values":{"h":0.001}},
+  {"cue":"limit","dur":1.4,"do":"camera","zoom":2.4,"center":[1,0.5],"on":"ax"}, {"cue":"the tangent","dur":0.9,"do":"morph","from":"sec","to":"tan"},
+  {"cue":"its slope","dur":1.2,"do":"camera","zoom":1,"center":[0,0]}, {"cue":"derivative","dur":1.2,"do":"match_tex","from":"slope","to":"deriv"}]}
+Ex 3 - a thrown ball (stage left driven by real physics, live readouts, two graphs right drawn as time advances):
+{"params":{"v0":12,"g":9.8},"trackers":[{"id":"t","value":0}],
+ "objects":[{"id":"ground","kind":"line","region":"left","from":[-6.4,-2.6],"to":[-2.8,-2.6],"color":"muted"},
+  {"id":"ballm","kind":"dot","region":"left","at":[-4.6,"-2.42+0.75*(v0*t-0.5*g*t^2)"],"r":0.18},
+  {"id":"varrow","kind":"arrow","region":"left","q":"v","from":[-4.6,"-2.42+0.75*(v0*t-0.5*g*t^2)"],"to":[-4.6,"-2.42+0.75*(v0*t-0.5*g*t^2)+0.08*(v0-g*t)"]},
+  {"id":"vnum","kind":"number","region":"center","value":"v0 - g*t","decimals":1,"prefix":"v =","suffix":"\\mathrm{m/s}","q":"v","at":[-1.3,2.55]},
+  {"id":"eq","kind":"tex","region":"center","tex":"{{v}} = {{v_0}} - {{g}}\\,{{t}}","terms":{"v":"v","v_0":"v","g":"g","t":"t"},"at":[-1.3,0.7]},
+  {"id":"ax","kind":"axes","region":"right","x":[0,2.5,0.5],"y":[-15,15,5],"size":[5.2,2.9],"center":[3.8,-2],"labels":["t\\,(\\mathrm{s})","v"],"numbers":true},
+  {"id":"vline","kind":"graph","on":"ax","fn":"v0 - g*x","x":[0,"max(t,0.002)"],"q":"v"}, {"id":"vdot","kind":"dot","on":"ax","at":["t","v0 - g*t"],"q":"v"}, ...],
+ "timeline":[..., {"cue":"nine point eight","dur":1.2,"do":"link","eq":"eq","term":"g","target":"garrow"},
+  {"cue":"from twelve","dur":1.75,"do":"set","values":{"t":1.0},"rate":"linear","exact":true}, {"cue":"so the velocity","dur":4.6,"do":"set","values":{"t":2.449},"rate":"linear","exact":true}]}
+Ex 4 - a mechanism part (how to build a real object): two meshing steel gears, 20 and 10 teeth, turned by one steady tracker:
+ {"trackers":[{"id":"th","value":0,"rate":60}],
+  "objects":[{"id":"g1","kind":"gear","region":"left","center":[-4,0],"r":1.6,"teeth":20,"angle":"th","color":"steel","fill":0.7,"shade":true},
+   {"id":"g2","kind":"gear","region":"left","center":[-1.6,0],"r":0.8,"teeth":10,"angle":"-2*th + 18","color":"brass","fill":0.7,"shade":true}]}

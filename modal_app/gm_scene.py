@@ -52,6 +52,12 @@ QCOLORS = {
     "green": "#1F6B4A", "clay": "#B4532A", "navy": "#24508F", "amber": "#B7862C",
     "plum": "#7A3B78", "teal": "#17808A", "rose": "#B23A55", "olive": "#6E7A1E",
 }
+# Real-world materials for bodies that are not a quantity (steel gears, a protein, tissue): realism without breaking
+# the one-colour-per-quantity rule (quantity colours stay reserved for quantities).
+MATERIAL = {"steel": "#8A9099", "brass": "#B08D3C", "copper": "#B5653A", "rubber": "#3A3A40", "tissue": "#C9776F", "protein": "#9C86BE",
+            "membrane": "#D6B06A", "blood": "#A3243B", "bone": "#E6DCC3", "water": "#86B6DC", "wood": "#9C6B3E", "silicon": "#66727F",
+            "leaf": "#5E9A4C", "glass": "#B9D3DE", "plastic": "#4F6F8F", "skin": "#D9A37E"}
+NEUTRAL.update(MATERIAL)
 PALETTE = {**NEUTRAL, **QCOLORS}
 FRAME_W, FRAME_H = 14.222, 8.0
 HALF_W, HALF_H = FRAME_W / 2, FRAME_H / 2
@@ -123,9 +129,13 @@ class _Ctx:
         self.three_d = spec.get("mode") == "3d"
         self.params = {k: float(v) for k, v in (spec.get("params") or {}).items()}
         self.trackers: dict[str, ValueTracker] = {}
+        self.rates: dict[str, ValueTracker] = {}  # steady trackers: advance continuously (gears turn, time flows)
+        self.xf: dict[str, tuple] = {}  # region -> (scale, shift): the layout engine's fit of each region into its zone
         for t in spec.get("trackers") or []:
             tid, val = (t["id"], t.get("value", 0)) if isinstance(t, dict) else (t, 0)
             self.trackers[tid] = ValueTracker(float(self.ev(val)) if not isinstance(val, (int, float)) else float(val))
+            if isinstance(t, dict) and t.get("rate") not in (None, 0, "0"):
+                self.rates[tid] = ValueTracker(float(self.ev(t["rate"])))
         self.quantities = {}
         used = {}
         for q in spec.get("quantities") or []:
@@ -268,6 +278,19 @@ def _style(m, col, o, fill_default=0.0, width_default=3.5):
     fill = float(o.get("fill", fill_default))
     if fill > 0:
         m.set_fill(color=col, opacity=min(fill, 1.0))
+    if o.get("shade") and fill > 0 and not o.get("dashed"):
+        # depth: a sheen across the body, a soft drop shadow behind it, a darker rim
+        from manim import interpolate_color, ManimColor
+        col = ManimColor(col)
+        try:
+            m.set_fill([interpolate_color(col, ManimColor("#FFFFFF"), 0.45), col, interpolate_color(col, ManimColor("#000000"), 0.35)], opacity=min(max(fill, 0.6), 1.0))
+            m.set_sheen_direction(DR)
+        except Exception:  # noqa: BLE001
+            m.set_sheen(0.35, UL)
+        m.set_stroke(interpolate_color(col, ManimColor("#000000"), 0.35), width=width)
+        sh = m.copy().set_fill("#000000", opacity=0.13).set_stroke(width=0).shift(np.array([0.07, -0.09, 0]))
+        sh.set_z_index(-0.5)
+        return VGroup(sh, m)
     if o.get("dashed") and isinstance(m, VMobject) and not isinstance(m, DashedLine):
         m = DashedVMobject(m, num_dashes=int(o.get("dashes", 24)))
     return m
@@ -399,6 +422,85 @@ def _tex(ctx: _Ctx, o: dict):
     return m
 
 
+_SVG_CACHE: dict = {}
+_SHAPES = {"path", "rect", "circle", "ellipse", "polygon", "polyline", "line"}
+
+
+def _svg_parts(src: str, m) -> dict:
+    """Element id -> VGroup of the SVGMobject's leaf shapes, matched in document order (a <g id> collects its shapes)."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(src.encode() if isinstance(src, str) else src)
+    except Exception:  # noqa: BLE001
+        return {}
+    order: list[list[str]] = []
+
+    def walk(el, anc):
+        tag = el.tag.split("}")[-1]
+        if tag in ("defs", "clipPath", "mask", "symbol", "style", "title", "metadata"):
+            return
+        ids = anc + ([el.get("id")] if el.get("id") else [])
+        if tag in _SHAPES:
+            order.append(ids)
+        for ch in el:
+            walk(ch, ids)
+    walk(root, [])
+    leaves = [x for x in m.family_members_with_points()]
+    out: dict = {}
+    if len(leaves) != len(order):
+        return out
+    for ids, leaf in zip(order, leaves):
+        for i in ids:
+            out.setdefault(i, VGroup()).add(leaf)
+    return out
+
+
+def _svg(ctx: _Ctx, o: dict, col):
+    """Hybrid realism: an accurate vector reference (inline SVG the model wrote from its structure plan, or an
+    open-licensed file from upload.wikimedia.org), split into named parts (SVG element ids) that become addressable
+    objects "<id>.<part>" for show / indicate / move / rotate / color, with Manim shading and motion on top."""
+    import hashlib
+    import tempfile
+    from manim import SVGMobject
+    src = o.get("svg") or ""
+    url = o.get("src") or o.get("url")
+    if url:
+        if not re.match(r"^https://upload\.wikimedia\.org/.+\.svg$", str(url)):
+            raise SpecError(f"svg {o['id']}: src must be an https://upload.wikimedia.org/... .svg file")
+        if url not in _SVG_CACHE:
+            import urllib.request
+            req = urllib.request.Request(url, headers={"User-Agent": "GeniusMap-render/1.0 (educational animation)"})
+            _SVG_CACHE[url] = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace")
+        src = _SVG_CACHE[url]
+    if "<svg" not in src:
+        raise SpecError(f"svg {o['id']}: no SVG markup")
+    h = hashlib.sha1(src.encode()).hexdigest()[:12]
+    fp = os.path.join(tempfile.gettempdir(), f"gm-{h}.svg")
+    if not os.path.exists(fp):
+        with open(fp, "w") as f:
+            f.write(src)
+    keep = bool(o.get("keep_colors", True))
+    m = SVGMobject(fp, height=None if o.get("w") else float(ctx.ev(o.get("h", 3))), width=float(ctx.ev(o["w"])) if o.get("w") else None,
+                   stroke_width=float(o.get("width", 2)), should_center=True, use_svg_cache=False)
+    if not keep:
+        m.set_stroke(col, width=float(o.get("width", 2))).set_fill(col, opacity=float(o.get("fill", 0.25)))
+    m.move_to(ctx.pt(o.get("center", o.get("at", [0, 0])), o.get("on")))
+    parts = _svg_parts(src, m)
+    for pid, grp in parts.items():
+        if pid and not pid.startswith("numbered_group") and len(grp.submobjects):
+            ctx.mobs[f"{o['id']}.{pid}"] = grp
+            ctx.defs.setdefault(f"{o['id']}.{pid}", {"id": f"{o['id']}.{pid}", "kind": "polygon", "part_of": o["id"]})
+    for pid, q in (o.get("part_q") or {}).items():
+        g = parts.get(pid)
+        if g is not None and q in ctx.quantities:
+            g.set_color(QCOLORS[ctx.quantities[q]["color"]])
+    if o.get("shade"):
+        sh = m.copy().set_fill("#000000", opacity=0.12).set_stroke(width=0).shift(np.array([0.07, -0.09, 0]))
+        sh.set_z_index(-0.5)
+        m.add_to_back(sh)
+    return m
+
+
 def _places(r) -> int:
     """Decimals for axis numbers: none for whole-number ticks (1, 2, 3 rather than 1.0, 2.0)."""
     vals = [r[0] + k * r[2] for k in range(1 + int(max(0, (r[1] - r[0]) / (r[2] or 1))))] if len(r) > 2 and r[2] else r[:2]
@@ -463,6 +565,47 @@ def _build(ctx: _Ctx, o: dict):
         if "angle" in o:
             m.rotate(float(ctx.ev(o["angle"])) * DEGREES)
         return _style(m, col, o)
+    if k == "svg":
+        return _svg(ctx, o, col)
+    if k in ("cylinder", "prism", "sphere", "cone", "torus"):
+        from manim import Cylinder, Prism, Sphere, Cone, Torus
+        c = P("center") if "center" in o else ORIGIN
+        if k == "cylinder":
+            m = Cylinder(radius=float(ctx.ev(o.get("r", 1))), height=float(ctx.ev(o.get("h", 1))), direction=np.array(o.get("axis", [0, 0, 1]), dtype=float), resolution=(8, 24))
+        elif k == "prism":
+            m = Prism(dimensions=[float(ctx.ev(v)) for v in o.get("size", [1, 1, 1])])
+        elif k == "sphere":
+            m = Sphere(radius=float(ctx.ev(o.get("r", 1))), resolution=(16, 24))
+        elif k == "cone":
+            m = Cone(base_radius=float(ctx.ev(o.get("r", 1))), height=float(ctx.ev(o.get("h", 1))), direction=np.array(o.get("axis", [0, 0, 1]), dtype=float))
+        else:
+            m = Torus(major_radius=float(ctx.ev(o.get("r", 1))), minor_radius=float(ctx.ev(o.get("r2", 0.25))))
+        m.set_fill(col, opacity=float(o.get("fill", 0.85)))
+        m.set_stroke(col, width=0.3)
+        return m.move_to(c)
+    if k == "gear":
+        # involute-ish tooth profile: n teeth on pitch radius r, tooth depth d, rotated by `angle` degrees (may be a tracker expr)
+        c = P("center") if "center" in o else ORIGIN
+        r = float(ctx.ev(o.get("r", 1)))
+        n = max(4, int(ctx.ev(o.get("teeth", 12))))
+        d = float(ctx.ev(o.get("depth", min(0.25, r * 0.18))))
+        a0 = float(ctx.ev(o.get("angle", 0))) * DEGREES
+        pts = []
+        for i in range(n):
+            base = a0 + 2 * PI * i / n
+            step = 2 * PI / n
+            for frac, rad in ((0.0, r - d / 2), (0.18, r - d / 2), (0.32, r + d / 2), (0.68, r + d / 2), (0.82, r - d / 2)):
+                ang = base + frac * step
+                pts.append(c + rad * np.array([math.cos(ang), math.sin(ang), 0]))
+        m = Polygon(*pts)
+        m = _style(m, col, o)
+        hub = o.get("hub", 0.22)
+        if hub:
+            h = Circle(radius=r * float(hub)).move_to(c)
+            h.set_stroke(col, width=float(o.get("width", 3.5)))
+            spoke = Line(c, c + r * float(hub) * np.array([math.cos(a0), math.sin(a0), 0])).set_stroke(col, width=2.5)
+            m = VGroup(m, h, spoke)
+        return m
     if k == "polygon":
         pts = [ctx.pt(p, on) for p in o["points"]]
         return _style(Polygon(*pts), col, o)
@@ -737,21 +880,81 @@ def build_object(ctx: _Ctx, o: dict):
         raise SpecError(f"object {o.get('id')} ({o.get('kind')}): {type(exc).__name__}: {exc}") from exc
 
 
+TEXTY = ("text", "tex", "number", "matrix")
+DERIVED = ("graph", "area", "riemann", "tangent", "secant", "brace", "angle", "group", "trace", "surface")
+
+
+def is_root(o: dict) -> bool:
+    """Positioned in absolute frame coordinates (so the layout engine may move it): not on axes, not next to / at an edge."""
+    if o.get("on") or o.get("kind") in DERIVED or "next_to" in o or "edge" in o:
+        return False
+    if o.get("kind") in TEXTY:
+        return "at" in o
+    return True
+
+
+def _post(ctx: _Ctx, o: dict, m):
+    """Layout-engine fit of the object's region into its zone, then critic / resolver nudges (offset, scale_by)."""
+    x = ctx.xf.get(o.get("region"))
+    if x and is_root(o):
+        sc, d = x
+        if o["kind"] in TEXTY:
+            c = m.get_center()
+            m.scale(min(1.0, max(0.72, sc)))
+            m.move_to(c * sc + d)
+        else:
+            m.scale(sc, about_point=ORIGIN)
+            m.shift(d)
+    if o.get("scale_by"):
+        m.scale(float(o["scale_by"]))
+    if o.get("offset"):
+        off = [float(v) for v in o["offset"]][:2]
+        m.shift(np.array(off + [0.0]))
+    return m
+
+
 def _build_object(ctx: _Ctx, o: dict):
+    m = _build_object0(ctx, o)
+    if o.get("jiggle") and not ctx.three_d:
+        # thermal wobble (molecules, particles): each part wanders on its own small smooth orbit
+        amp = float(o["jiggle"])
+        parts = m.submobjects if ctx.defs.get(o["id"], {}).get("kind") == "array" else [m]
+        rng = random.Random(hash(o["id"]) & 0xFFFF)
+        for sm in parts:
+            st = {"t": 0.0, "last": np.zeros(3), "p": [rng.uniform(0, 6.3) for _ in range(2)], "w": [rng.uniform(2.2, 4.0), rng.uniform(2.2, 4.0)]}
+
+            def wob(mm, dt, st=st):
+                st["t"] += dt
+                new = amp * np.array([math.sin(st["w"][0] * st["t"] + st["p"][0]), math.sin(st["w"][1] * st["t"] + st["p"][1]), 0])
+                mm.shift(new - st["last"])
+                st["last"] = new
+            sm.add_updater(wob)
+    if o.get("spin") and not ctx.three_d:
+        # steady rotation in degrees per second about its own centre (or `spin_about`)
+        rate = float(ctx.ev(o["spin"])) * DEGREES
+        about = ctx.pt(o["spin_about"], o.get("on")) if o.get("spin_about") else None
+        if about is not None and ctx.xf.get(o.get("region")) and is_root(o):
+            sc, d = ctx.xf[o["region"]]
+            about = about * sc + d
+        m.add_updater(lambda mm, dt: mm.rotate(rate * dt, about_point=about if about is not None else mm.get_center()))
+    return m
+
+
+def _build_object0(ctx: _Ctx, o: dict):
     if ctx.is_dynamic(o):
         ctx.dynamic.add(o["id"])
         holder = {"last": None}
 
         def make():
             try:
-                m = _build(ctx, o)
+                m = _post(ctx, o, _build(ctx, o))
                 holder["last"] = m
                 return m
             except (ValueError, ZeroDivisionError, OverflowError, FloatingPointError):
                 return holder["last"].copy() if holder["last"] is not None else VGroup()
         m = always_redraw(make)
     else:
-        m = _build(ctx, o)
+        m = _post(ctx, o, _build(ctx, o))
         # a label riding on a dynamic object follows it
         nt = o.get("next_to")
         if isinstance(nt, list) and nt and nt[0] in ctx.dynamic:
@@ -846,7 +1049,7 @@ def _anim_show(ctx, mid, m, dur):
     return Create(m, run_time=dur)
 
 
-CONTINUOUS = {"set", "follow", "drift", "rotate", "matrix", "warp"}
+CONTINUOUS = {"set", "follow", "drift", "rotate", "matrix", "warp", "speed"}
 
 
 def run_spec(scene, spec: dict):
@@ -856,11 +1059,22 @@ def run_spec(scene, spec: dict):
         cam = spec.get("camera") or {}
         scene.set_camera_orientation(phi=float(cam.get("phi", 65)) * DEGREES, theta=float(cam.get("theta", -50)) * DEGREES, zoom=float(cam.get("zoom", 1)))
     # Build every object up front (hidden until shown) in order, so references resolve.
-    for o in spec.get("objects") or []:
-        if "id" not in o or "kind" not in o:
-            raise SpecError(f"object without id/kind: {o}")
-        ctx.mobs[o["id"]] = build_object(ctx, o)
+    def build_all():
+        ctx.dynamic = set()
+        for o in spec.get("objects") or []:
+            if "id" not in o or "kind" not in o:
+                raise SpecError(f"object without id/kind: {o}")
+            ctx.mobs[o["id"]] = build_object(ctx, o)
+    build_all()
+    if not ctx.three_d and layout_regions(ctx, spec):
+        build_all()  # rebuilt with each region fitted into its zone
+    if not ctx.three_d:
+        resolve_labels(ctx, spec)
     for tid, t in ctx.trackers.items():
+        r = ctx.rates.get(tid)
+        if r is not None:
+            t.add_updater(lambda m, dt, r=r: m.increment_value(r.get_value() * dt))
+            scene.add(r)
         scene.add(t)
 
     gate = {"frames": [], "issues": list(ctx.issues), "duration": 0.0}
@@ -887,7 +1101,7 @@ def run_spec(scene, spec: dict):
             dur = min(a["_dur"], window)
             if a.get("do") in CONTINUOUS and not a.get("exact") and window > dur and gi + 1 < len(groups):
                 # 3Blue1Brown keeps motion going while the voice talks: drives stretch into the gap (up to 3x)
-                dur = min(window, a["_dur"] * 3)
+                dur = min(window, a["_dur"] * 4)
             try:
                 got = [x for x in _action(ctx, scene, a, dur, visible, fixed, after) if x is not None]
                 anims += got
@@ -929,6 +1143,27 @@ def _pulse(ctx, mid, m, color, scale, dur):
     if ctx.defs.get(mid, {}).get("kind") in ("arrow", "vector") or mid in ctx.dynamic:
         return Circumscribe(m, color=color or PALETTE["amber"], run_time=dur, buff=0.08)
     return Indicate(m, color=color, scale_factor=scale, run_time=dur)
+
+
+def _map(ctx: _Ctx, a: dict, p, tid=None):
+    """An absolute action point (move to, rotate about, drift box corner, camera centre) in its region's fitted frame."""
+    if a.get("on"):
+        return p
+    o = ctx.defs.get(tid or "", {})
+    reg = o.get("region") if o and is_root(o) else a.get("region")
+    if reg is None and tid is None:
+        reg = _region_at(ctx, p)
+    x = ctx.xf.get(reg)
+    if not x:
+        return p
+    return np.array(p) * x[0] + x[1]
+
+
+def _region_at(ctx, p):
+    for reg, box in (ctx.spec.get("_src_boxes") or {}).items():
+        if box[0] <= p[0] <= box[2] and box[1] <= p[1] <= box[3]:
+            return reg
+    return None
 
 
 def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, after: list):
@@ -992,10 +1227,12 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
         for i in _ids(a):
             m = need(i)
             if "to" in a:
-                p = ctx.pt(a["to"], a.get("on"))
+                p = _map(ctx, a, ctx.pt(a["to"], a.get("on")), i)
                 out.append(m.animate(run_time=dur, rate_func=rate).move_to(p))
             elif "by" in a:
                 d = np.array([float(x) for x in ctx.ev(a["by"])] + [0.0] * (3 - len(a["by"])))
+                x = ctx.xf.get(ctx.defs.get(i, {}).get("region"))
+                d = d * (x[0] if x else 1.0)
                 out.append(m.animate(run_time=dur, rate_func=rate).shift(d))
             elif "next_to" in a:
                 ref, d = (a["next_to"] + ["up"])[:2]
@@ -1005,7 +1242,7 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
         out = []
         for i in _ids(a):
             m = need(i)
-            about = ctx.pt(a["about"], a.get("on")) if "about" in a else None
+            about = _map(ctx, a, ctx.pt(a["about"], a.get("on")), i) if "about" in a else None
             axis = OUT if not a.get("axis") else np.array(a["axis"], dtype=float)
             ang = ctx.ev(a.get("angle", 90))
             ang = ang[0] if isinstance(ang, list) else ang
@@ -1022,7 +1259,8 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
         return [MoveAlongPath(need(i), path, run_time=dur, rate_func=rate if a.get("rate") else linear) for i in _ids(a)]
     if do == "matrix":
         mat = np.array([[float(ctx.ev(x)) for x in row] for row in a["m"]])
-        about = ctx.pt(a["about"], None) if "about" in a else ORIGIN
+        tg = (_ids(a) or [None])[0]
+        about = _map(ctx, a, ctx.pt(a["about"], None), tg) if "about" in a else _map(ctx, a, np.array(ORIGIN), tg)
         return [ApplyMatrix(mat, need(i), about_point=about, run_time=dur, rate_func=rate) for i in _ids(a)]
     if do == "warp":
         f = ctx.fn(a["fn"], ["x", "y"])
@@ -1059,7 +1297,7 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
         if "zoom" in a:
             an = an.set(width=FRAME_W / float(a["zoom"]))
         if "center" in a:
-            an = an.move_to(ctx.pt(a["center"], a.get("on")))
+            an = an.move_to(_map(ctx, a, ctx.pt(a["center"], a.get("on"))))
         elif "follow" in a:
             an = an.move_to(need(a["follow"]).get_center())
         return [an]
@@ -1086,6 +1324,9 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
     if do == "drift":
         out = []
         box = [float(ctx.ev(v)) for v in a.get("box", [-3, -2, 3, 2])]
+        tg = (_ids(a) or [None])[0]
+        lo, hi = _map(ctx, a, np.array([box[0], box[1], 0.0]), tg), _map(ctx, a, np.array([box[2], box[3], 0.0]), tg)
+        box = [lo[0], lo[1], hi[0], hi[1]]
         rng = random.Random(int(a.get("seed", 3)))
         frac = float(a.get("fraction", 1.0))
         for i in _ids(a):
@@ -1098,6 +1339,14 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
                 mid = (p0 + p1) / 2 + np.array([rng.uniform(-0.6, 0.6), rng.uniform(-0.6, 0.6), 0])
                 path = VMobject().set_points_smoothly([p0, mid, p1])
                 out.append(MoveAlongPath(sm, path, run_time=dur * rng.uniform(0.75, 1.0), rate_func=smooth))
+        return out
+    if do == "speed":
+        # change a steady tracker's rate smoothly (the differential's outer wheel speeds up while the inner slows)
+        out = []
+        for tid, val in (a.get("values") or {}).items():
+            if tid not in ctx.rates:
+                raise SpecError(f"speed: {tid!r} is not a steady tracker (give it a rate)")
+            out.append(ctx.rates[tid].animate(run_time=dur, rate_func=rate).set_value(float(ctx.ev(val))))
         return out
     if do == "wait":
         return []
@@ -1195,3 +1444,275 @@ def _checks(ctx: _Ctx, gate: dict):
         if q not in used:
             issues.append({"type": "unused_quantity", "id": q})
     return issues
+
+
+# ───────────── Layout engine (deterministic) ─────────────
+MARGIN_X, MARGIN_Y = 6.8, 3.75
+
+
+def zones(used) -> dict:
+    """Frame zones for the regions a plan uses: an equation band on top, an optional caption band at the bottom,
+    and up to three columns (left stage, centre, right graph) sharing the rest. Deterministic, so the composer can be
+    told the exact boxes before it writes coordinates, and the renderer fits each region into the same box."""
+    used = set(used or [])
+    top, bottom = "top" in used, "bottom" in used
+    y1 = 2.3 if top else MARGIN_Y
+    y0 = -2.75 if bottom else -MARGIN_Y
+    Z = {}
+    if top:
+        Z["top"] = [-MARGIN_X, 2.55, MARGIN_X, MARGIN_Y]
+    if bottom:
+        Z["bottom"] = [-MARGIN_X, -MARGIN_Y, MARGIN_X, -2.95]
+    cols = [r for r in ("left", "center", "right") if r in used]
+    if len(cols) == 3:
+        xs = {"left": (-MARGIN_X, -2.45), "center": (-2.25, 2.25), "right": (2.45, MARGIN_X)}
+    elif len(cols) == 2:
+        a, b = cols
+        xs = {a: (-MARGIN_X, -0.25), b: (0.25, MARGIN_X)}
+    elif len(cols) == 1:
+        xs = {cols[0]: (-MARGIN_X, MARGIN_X)}
+    else:
+        xs = {}
+    for r, (xa, xb) in xs.items():
+        Z[r] = [xa, y0, xb, y1]
+    Z["full"] = [-MARGIN_X, y0, MARGIN_X, y1]
+    return Z
+
+
+def _union(boxes):
+    boxes = [b for b in boxes if b]
+    if not boxes:
+        return None
+    return [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
+
+
+def _shown_ids(spec) -> set:
+    out = set()
+    for a in spec.get("timeline") or []:
+        if a.get("do") == "show":
+            out |= set(a.get("targets") or [])
+        if a.get("do") in ("morph", "match_tex") and a.get("to"):
+            out.add(a["to"])
+    return out
+
+
+def _tracker_states(ctx, spec):
+    """Initial tracker values plus each value the timeline drives them to, in order (the extents a live object reaches)."""
+    cur = {k: t.get_value() for k, t in ctx.trackers.items()}
+    states = [dict(cur)]
+    for a in schedule(spec):
+        if a.get("do") == "set":
+            for k, v in (a.get("values") or {}).items():
+                if k in cur:
+                    try:
+                        cur[k] = float(ctx.ev(v))
+                    except Exception:  # noqa: BLE001
+                        pass
+            states.append(dict(cur))
+    for k, r in ctx.rates.items():  # a steady tracker sweeps rate * clip length
+        end = total_duration(spec) or 10
+        for st in list(states[-1:]):
+            states.append({**st, k: st.get(k, 0) + r.get_value() * end})
+            states.append({**st, k: st.get(k, 0) + r.get_value() * end / 4})
+    return states[:10]
+
+
+def layout_regions(ctx: _Ctx, spec: dict) -> bool:
+    """Fit each region's objects (as the composer placed them) into that region's zone: one uniform scale + shift per
+    region, so relative geometry inside a region (meshing gears, a molecule in a pocket) is untouched while regions can
+    no longer collide and the whole frame is used. Returns True when anything moved."""
+    defs = spec.get("objects") or []
+    regs = {o.get("region") for o in defs if o.get("region")} - {"full", "free", None}
+    if not regs:
+        return False
+    Z = zones(regs)
+    shown = _shown_ids(spec)
+    boxes: dict[str, list] = {}
+    for o in defs:
+        r = o.get("region")
+        if r not in Z or r == "full" or not is_root(o) or o["id"] not in shown or o["kind"] in ("plane", "field"):
+            continue
+        b = _bbox(ctx.mobs[o["id"]])
+        if b:
+            boxes.setdefault(r, []).append(b)
+    # live objects: their extents over the tracker states the timeline reaches
+    states = _tracker_states(ctx, spec) if ctx.trackers else []
+    saved = {k: t.get_value() for k, t in ctx.trackers.items()}
+    for st in states[1:]:
+        for k, v in st.items():
+            ctx.trackers[k].set_value(v)
+        for o in defs:
+            r = o.get("region")
+            if r in Z and r != "full" and o["id"] in ctx.dynamic and is_root(o) and o["id"] in shown:
+                try:
+                    boxes.setdefault(r, []).append(_bbox(_build(ctx, o)))
+                except Exception:  # noqa: BLE001
+                    pass
+    for k, v in saved.items():
+        ctx.trackers[k].set_value(v)
+    # moves add their destinations
+    for a in spec.get("timeline") or []:
+        if a.get("do") == "move" and "to" in a and not a.get("on"):
+            for i in a.get("targets") or []:
+                o = ctx.defs.get(i, {})
+                if o.get("region") in boxes and is_root(o):
+                    b = _bbox(ctx.mobs[i])
+                    try:
+                        p = ctx.pt(a["to"])
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if b:
+                        w, h = (b[2] - b[0]) / 2, (b[3] - b[1]) / 2
+                        boxes[o["region"]].append([p[0] - w, p[1] - h, p[0] + w, p[1] + h])
+    changed = False
+    src = {}
+    for r, bl in boxes.items():
+        b = _union(bl)
+        if not b:
+            continue
+        src[r] = b
+        z = Z[r]
+        bw, bh = max(b[2] - b[0], 0.3), max(b[3] - b[1], 0.3)
+        zw, zh = (z[2] - z[0]) * 0.96, (z[3] - z[1]) * 0.96
+        sc = max(0.4, min(zw / bw, zh / bh, 1.35))
+        if r == "top":
+            sc = min(sc, 1.0)
+        bc = np.array([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2, 0])
+        zc = np.array([(z[0] + z[2]) / 2, (z[1] + z[3]) / 2, 0])
+        d = zc - bc * sc
+        if abs(sc - 1) > 0.02 or np.linalg.norm(d) > 0.05:
+            changed = True
+        ctx.xf[r] = (sc, d)
+    spec["_src_boxes"] = src
+    ctx.issues.append(f"layout: {', '.join(f'{r} x{v[0]:.2f}' for r, v in ctx.xf.items())}")
+    return changed
+
+
+def _visibility(spec) -> dict:
+    """Approximate [start, end) on-screen interval per object from the timeline."""
+    iv = {}
+    for a in schedule(spec):
+        t = a["_t0"]
+        if a.get("do") == "show":
+            for i in a.get("targets") or []:
+                iv.setdefault(i, [t, 1e9])
+        elif a.get("do") == "hide":
+            for i in a.get("targets") or []:
+                if i in iv:
+                    iv[i][1] = min(iv[i][1], t)
+        elif a.get("do") in ("morph", "match_tex"):
+            if a.get("from") in iv:
+                iv[a["from"]][1] = min(iv[a["from"]][1], t + a["_dur"])
+            if a.get("to"):
+                iv.setdefault(a["to"], [t, 1e9])
+    return iv
+
+
+def _obstacle_points(m, cap=600):
+    pts = []
+    for sm in m.family_members_with_points():
+        p = sm.points[:, :2]
+        if len(p) > 60:
+            p = p[:: max(1, len(p) // 60)]
+        pts.append(p)
+        if sum(len(x) for x in pts) > cap:
+            break
+    return np.concatenate(pts) if pts else np.zeros((0, 2))
+
+
+def resolve_labels(ctx: _Ctx, spec: dict):
+    """Labels never sit on other things: for each label (text / tex / number / matrix) that collides with another
+    on-screen object (strokes crossing it, a filled body under it, another label) or leaves the frame, try the other
+    sides of its owner (next_to) or nearby offsets (at), and keep the cleanest. Deterministic, render-time only."""
+    defs = {o["id"]: o for o in spec.get("objects") or []}
+    iv = _visibility(spec)
+    labels = [o for o in spec.get("objects") or [] if o["kind"] in TEXTY and o["id"] in iv]
+    moved = []
+
+    def together(a, b):
+        A, B = iv.get(a), iv.get(b)
+        return A and B and A[0] < B[1] - 0.05 and B[0] < A[1] - 0.05
+
+    def owners(o):
+        out = set()
+        nt = o.get("next_to")
+        if isinstance(nt, list) and nt:
+            out.add(nt[0])
+            ref = defs.get(nt[0], {})
+            for k in ("on", "target", "graph"):
+                if ref.get(k):
+                    out.add(ref[k])
+        if o.get("on"):
+            out.add(o["on"])
+        return out
+
+    def score(o, box):
+        sc = 0.0
+        cam = [-HALF_W + 0.15, -HALF_H + 0.12, HALF_W - 0.15, HALF_H - 0.12]
+        out = max(cam[0] - box[0], box[2] - cam[2], cam[1] - box[1], box[3] - cam[3], 0)
+        sc += out * 40
+        own = owners(o)
+        pad = 0.04
+        for oid, ob in defs.items():
+            if oid == o["id"] or oid in own or not together(oid, o["id"]) or oid not in ctx.mobs:
+                continue
+            k = ob.get("kind")
+            if k in ("plane", "field", "group", "trace"):
+                continue
+            m = ctx.mobs[oid]
+            b = _bbox(m)
+            if not b or b[2] < box[0] or b[0] > box[2] or b[3] < box[1] or b[1] > box[3]:
+                continue
+            if k in TEXTY:
+                sc += _overlap(box, b) * 30
+                continue
+            pts = _obstacle_points(m)
+            inside = ((pts[:, 0] > box[0] - pad) & (pts[:, 0] < box[2] + pad) & (pts[:, 1] > box[1] - pad) & (pts[:, 1] < box[3] + pad)).sum() if len(pts) else 0
+            sc += min(inside, 40) * 0.5
+            filled = float(ob.get("fill", 0) or 0) > 0.12 or k in ("dot", "area", "riemann", "gear")
+            if filled and k != "axes":
+                sc += _overlap(box, b) * 12 * (1 if (b[2] - b[0]) * (b[3] - b[1]) > 0.05 else 0.3)
+        return sc
+
+    for o in labels:
+        oid = o["id"]
+        m = ctx.mobs.get(oid)
+        b = _bbox(m) if m is not None else None
+        if not b:
+            continue
+        nt = o.get("next_to")
+        base = score(o, b)
+        if base < 1.0:
+            continue
+        w, h = b[2] - b[0], b[3] - b[1]
+        cands = []
+        if isinstance(nt, list) and nt and nt[0] in ctx.mobs and len(nt) < 3:
+            ref = ctx.mobs[nt[0]]
+            anchor = _anchor(ctx, nt[0], ref, nt)
+            for dname, dv in DIRS.items():
+                for buff in (0.2, 0.45):
+                    tmp = m.copy()
+                    tmp.next_to(anchor, dv, buff=buff)
+                    cands.append((score(o, _bbox(tmp)), ("next_to", dname, buff)))
+        elif "at" in o or "edge" in o:
+            for rr in (0.35, 0.7, 1.1, 1.6):
+                for ang in range(0, 360, 45):
+                    dx, dy = rr * math.cos(math.radians(ang)), rr * math.sin(math.radians(ang))
+                    nb = [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy]
+                    cands.append((score(o, nb) + rr * 0.6, ("shift", dx, dy)))
+        if not cands:
+            continue
+        best = min(cands, key=lambda c: c[0])
+        if best[0] < base * 0.7:
+            if best[1][0] == "next_to":
+                o["next_to"] = [nt[0], best[1][1]]
+                o["buff"] = best[1][2]
+            else:
+                off = o.get("offset") or [0, 0]
+                o["offset"] = [float(off[0]) + best[1][1], float(off[1]) + best[1][2]]
+            ctx.defs[oid] = o
+            ctx.mobs[oid] = build_object(ctx, o)
+            moved.append(f"{oid}:{best[1][0]}")
+    if moved:
+        ctx.issues.append("labels moved: " + ", ".join(moved))
+    spec.setdefault("_layout", {})["labels_moved"] = moved

@@ -55,7 +55,7 @@ def beats(narr: dict | None) -> str:
 
 # ───────────── Prompts ─────────────
 PLAN_PROMPT = """You are the visual designer of a 3Blue1Brown-style animated explanation, drawn on a light paper board.
-Decompose the concept before anything is drawn. Concept / request:
+Before anything is drawn, work out what physically exists and how it works. Concept / request:
 \"\"\"{desc}\"\"\"
 {context}
 {beats}
@@ -63,19 +63,34 @@ Decompose the concept before anything is drawn. Concept / request:
 Return JSON:
 {{
  "idea": "the one visual insight the clip must make obvious",
+ "structure": [   // REQUIRED for every real object the clip draws (an enzyme, a differential, a heart, a transistor, a cell...)
+   {{"object": "name",
+     "reference": "the real reference features a viewer recognises it by: silhouette, landmarks, proportions, real colours",
+     "parts": [{{"name": "real part name", "shape": "its true shape (e.g. bevel gear with 10 teeth seen edge-on; folded protein with a cleft)",
+                "size": "size relative to the others (real proportions/counts)", "connects": "what it meshes / bonds / attaches to and where",
+                "position": "where it sits relative to the other parts"}}],
+     "states": ["state 1 (e.g. enzyme open, substrate free)", "state 2 ...", "..."],
+     "transitions": [{{"from": "state", "to": "state", "cause": "what physically causes the change", "visible_as": "what moves / reshapes / recolours on screen"}}],
+     "linked_quantities": ["quantity ids whose values follow these states (e.g. reaction progress drives the dot on the energy curve)"],
+     "render": "primitives" or "svg" (svg only when fine real-life detail matters and you can write a clean SVG with an id per part) or "3d" (only if depth is essential)}}
+ ],
  "quantities": [{{"id": "short id", "name": "...", "color": one of green clay navy amber plum teal rose olive (all different), "symbol": "LaTeX or null"}}],
  "params": {{"name": real number with units noted in the name}},   // real values, physically accurate
- "objects": [{{"id": "...", "what": "what it is", "build": "how it is drawn from primitives (point, line, arc, circle, ellipse, rect, polygon, path, bezier, curve, axes, plane, axes3d, graph, area, riemann, tangent, secant, surface, field, text, tex, matrix, number, brace, angle, array, trace), with sizes and positions in frame units (x -7..7, y -4..4)", "quantity": "quantity id or null"}}],
+ "objects": [{{"id": "...", "what": "what it is (a part from structure, or a graph / equation / readout)", "build": "how it is drawn from primitives (dot, line, arrow, arc, circle, ellipse, rect, polygon, path smooth, bezier, curve, gear (tooth generator), axes, plane, graph, area, riemann, tangent, secant, field, text, tex, matrix, number, brace, angle, array, group, svg), with sizes in frame units", "quantity": "quantity id or null", "material": "steel/brass/protein/tissue/... for a non-quantity body, or null", "region": "left|right|center|top|bottom"}}],
  "changes": [{{"when": "narration words", "what": "what moves / morphs / grows, driven by which tracker through which formula"}}],
+ "motion_per_sentence": ["for EACH narration sentence in order: the continuous change on screen during it (a tracker drive, morph, follow, drift, spin)"],
  "equations": [{{"tex": "LaTeX with {{{{term}}}} groups", "terms": {{"term": "quantity id"}}, "linked_to": "object ids"}}],
- "layout": "where each group sits in the frame (e.g. device left x -6..-1, graph right x 0.5..6.5, equation top right); use the whole 16:9 frame, nothing crammed in one corner",
- "mode": "2d" or "3d" (3d only if depth is essential)
+ "mode": "2d" or "3d"
 }}
-For a real-world object or device, design a simplified but recognisable construction from primitives (outline shapes, repeated parts as arrays, teeth/coils/waves as curves), name its 2-4 key parts only, and make the mechanism itself move (parts rotate, slide or flow at rates from the real relationship), not just arrows beside a box.
-For a process (biology, chemistry), show the actors as shapes that move and change state through the stages, not a flow chart of words.
-For an abstract idea, find the picture that makes it obvious (lengths, areas, grids, number lines, rotations) and let it evolve.
-Plan for 6-12 objects and 8-16 timeline actions so the clip is rich and something moves on every sentence.
-Craft: one colour per quantity everywhere; objects persist and evolve (morph, trackers) rather than being replaced; minimal text; accurate scale and motion from the real numbers; each equation term coloured like its object."""
+Regions (the layout engine gives each its own zone, so regions never overlap): "left" = the stage where the real object
+or mechanism lives, "right" = graph / diagram / readouts, "center" = a single main picture, "top" = the equation band,
+"bottom" = a short caption. Use 2-3 regions; the real object gets the biggest one. Every object belongs to one region.
+Structure first: build each part from its true shape (gear teeth as a gear with the real count, a protein as an irregular
+smooth closed path with a pocket complementary to the substrate, a molecule as atoms (dots) + bonds (lines), organs from
+bezier outlines with their landmarks). Never a placeholder box or a plain circle for something that has a shape.
+Mechanism: the states and the causal transitions must be animated in order (approach, bind, deform, change, release...),
+with a tracker for the progress that also drives the linked quantity (e.g. the dot on an energy curve).
+Plan 8-16 objects and 12-20 timeline actions; something moves continuously in every sentence. Minimal text."""
 
 COMPOSE_PROMPT = """Write the scene spec for this plan, in the grammar below. Return ONLY the JSON spec.
 
@@ -84,8 +99,15 @@ Plan:
 
 {beats}
 
+Zones (frame units) for the regions this plan uses; give every object "region" and keep its coordinates inside its zone:
+{zones}
+
 Timing: every action has "cue" = an exact word or 2-3 word phrase from the narration (in order) where it starts, and "dur"
-(seconds) until the next idea; the clip lasts as long as the narration. Keep something moving while the voice talks.
+(seconds) until the next idea; the clip lasts as long as the narration. Every sentence needs a continuous change
+(set / speed / follow / drift / morph / match_tex / rotate) and every mechanism part that moves in reality must move here
+(steady trackers with "rate" for things that keep turning or flowing; "jiggle" for molecules).
+Build every structural part from the plan as its own object (so it can be highlighted and animated) and group them.
+Labels: "next_to" their owner, short, never on top of another shape.
 
 {grammar}
 """
@@ -103,27 +125,36 @@ Grammar reminder (follow it exactly):
 
 CRITIC_PROMPT = """You are a strict reviewer of key frames (in time order, left to right, top to bottom) of a 3Blue1Brown-style educational animation drawn on a light board.
 Intended idea: {idea}
+Real objects and how they work (structure plan): {structure}
 Quantities and their colours: {quantities}
-Planned objects: {objects}
 Planned changes: {changes}
 Planned equations: {equations}
-A planned key element (object, equation or change) that never appears in any frame is a defect.
-Check only for real defects a learner would notice: text or labels overlapping each other or a drawing so they cannot be read;
-things cut off by the frame edge; an empty or nearly empty frame where the idea should be visible; unreadable/tiny text;
-raw LaTeX code shown as text; a quantity drawn in two different colours; a drawing that does not resemble what it should be.
-Return JSON: {{"pass": true|false, "score": 1-10 for clarity, completeness and beauty, "issues": ["specific defect and which object / where"], "fixes": ["concrete spec change"]}}
-pass is true only if score >= 7 and there is no defect above."""
+Scene objects you may reference in ops (id kind region): {ids}
+Score each axis 1-10, harshly and honestly (7 = acceptable, 9 = a viewer instantly recognises the real thing):
+ structure: does each real object look like the real thing (silhouette, the right parts, counts and proportions, parts connected / meshed correctly)? Blobs, plain circles or boxes standing in for a shaped object score <= 4.
+ mechanism: are the states and causal transitions shown in the right order and physically right (gears turn at the ratio, molecules bind then change...)?
+ layout: nothing overlapping or cut off, labels beside (not on) what they name, the frame used and balanced.
+ motion: frames show the scene evolving (positions/shapes differ between frames), not a static picture.
+ tex: maths typeset correctly (no raw code, no broken subscripts like v_o uter), colours match quantities.
+Return JSON: {{"scores": {{"structure": n, "mechanism": n, "layout": n, "motion": n, "tex": n}}, "score": overall 1-10,
+ "issues": ["specific defect, which object, which frame"],
+ "ops": [concrete deterministic fixes using the ids above, any of:
+   {{"op": "move", "id": "...", "by": [dx, dy]}}, {{"op": "resize", "id": "...", "factor": 0.8}},
+   {{"op": "region", "id": "...", "region": "left|right|center|top|bottom"}}, {{"op": "recolor", "id": "...", "q": "quantity id"}},
+   {{"op": "add_motion", "id": "...", "motion": "spin|jiggle", "rate": deg_per_s_or_amplitude}}, {{"op": "drop", "id": "..."}}],
+ "rebuild": ["object or part that must be redrawn by the composer because it does not look like the real thing / the mechanism is wrong"]}}"""
 
 
 # ───────────── Deterministic repairs ─────────────
 QC = ["green", "clay", "navy", "amber", "plum", "teal", "rose", "olive"]
-NEUTRALS = {"ink", "muted", "rule"}
+NEUTRALS = {"ink", "muted", "rule", "steel", "brass", "copper", "rubber", "tissue", "protein", "membrane", "blood", "bone", "water", "wood", "silicon", "leaf", "glass", "plastic", "skin"}
 OBJ_KINDS = {"dot", "point", "line", "arrow", "vector", "arc", "circle", "ellipse", "rect", "polygon", "path", "bezier", "curve", "axes", "plane", "axes3d",
-             "graph", "area", "riemann", "tangent", "secant", "surface", "field", "text", "tex", "matrix", "number", "brace", "angle", "array", "group", "trace"}
-ACTIONS = {"show", "hide", "set", "morph", "match_tex", "move", "rotate", "scale", "follow", "matrix", "warp", "camera", "indicate", "circle", "link", "color", "drift", "wait"}
+             "graph", "area", "riemann", "tangent", "secant", "surface", "field", "text", "tex", "matrix", "number", "brace", "angle", "array", "group", "trace",
+             "gear", "svg", "cylinder", "prism", "sphere", "cone", "torus"}
+ACTIONS = {"speed", "show", "hide", "set", "morph", "match_tex", "move", "rotate", "scale", "follow", "matrix", "warp", "camera", "indicate", "circle", "link", "color", "drift", "wait"}
 ALIASES = {"square": "rect", "rectangle": "rect", "box": "rect", "label": "text", "math": "tex", "equation": "tex", "latex": "tex", "segment": "line",
            "point": "dot", "parametric": "curve", "function": "graph", "plot": "graph", "particles": "array", "copies": "array", "numberplane": "plane",
-           "triangle": "polygon", "spline": "path", "vectorfield": "field", "vector_field": "field", "streamlines": "field", "decimal": "number", "readout": "number"}
+           "triangle": "polygon", "spline": "path", "cog": "gear", "gearwheel": "gear", "image": "svg", "box3d": "prism", "cube": "prism", "vectorfield": "field", "vector_field": "field", "streamlines": "field", "decimal": "number", "readout": "number"}
 DO_ALIASES = {"create": "show", "draw": "show", "write": "show", "fade_in": "show", "fadein": "show", "grow": "show", "fade_out": "hide", "fadeout": "hide",
               "remove": "hide", "animate": "set", "transform": "morph", "replace": "morph", "transform_matching_tex": "match_tex", "shift": "move",
               "move_to": "move", "move_along": "follow", "move_along_path": "follow", "apply_matrix": "matrix", "apply_function": "warp", "highlight": "indicate",
@@ -131,7 +162,65 @@ DO_ALIASES = {"create": "show", "draw": "show", "write": "show", "fade_in": "sho
 
 
 def _has_latex(s: str) -> bool:
-    return bool(re.search(r"\\[a-zA-Z]+|[\^_]\{|\$", s))
+    return bool(re.search(r"\\[a-zA-Z]+|[\^_]\{|\$|[A-Za-z0-9][_^][A-Za-z0-9]", s))
+
+
+_TEXT_CMDS = ("\\text", "\\mathrm", "\\textbf", "\\mathbf", "\\operatorname", "\\mbox", "\\textit", "\\mathit")
+
+
+def tex_hygiene(t: str) -> str:
+    """Deterministic LaTeX clean-up: multi-character sub/superscripts get braces (v_outer -> v_{\\text{outer}},
+    x_ij -> x_{ij}, e^-x -> e^{-x}, 10^23 -> 10^{23}); bare words (4+ letters) in maths become \\text{...}."""
+    if not isinstance(t, str) or not t:
+        return t
+    t = t.replace("\u2212", "-").replace("\u00b7", "\\cdot ").replace("\u00d7", "\\times ").replace("\u00b0", "^\\circ").replace("\u0394", "\\Delta ")
+    # sub/superscripts without braces
+    def sub(m):
+        op, body = m.group(1), m.group(2)
+        if body.isalpha() and len(body) >= 3:
+            return f"{op}{{\\text{{{body}}}}}"
+        return f"{op}{{{body}}}"
+    t = re.sub(r"(?<!\\)([_^])(-?[A-Za-z]{2,}|-?[0-9]{2,}|-[A-Za-z0-9])(?![A-Za-z0-9{])", sub, t)
+    # bare words -> \text{}; skip commands and the arguments of text-like commands
+    out, i, n = [], 0, len(t)
+    while i < n:
+        if t[i] == "\\":
+            m = re.match(r"\\[A-Za-z]+", t[i:])
+            if m:
+                cmd = m.group(0)
+                out.append(cmd)
+                i += len(cmd)
+                if cmd in _TEXT_CMDS and i < n and t[i] == "{":
+                    depth, j = 0, i
+                    while j < n:
+                        depth += t[j] == "{"
+                        depth -= t[j] == "}"
+                        j += 1
+                        if depth == 0:
+                            break
+                    out.append(t[i:j])
+                    i = j
+                continue
+            out.append(t[i : i + 2])
+            i += 2
+            continue
+        m = re.match(r"[A-Za-z]+(?:\s+[A-Za-z]+)*", t[i:])
+        if m and (i == 0 or t[i - 1] not in "_^"):
+            run = m.group(0)
+            words = run.split()
+            if any(len(w) >= 4 for w in words):
+                if all(len(w) >= 2 for w in words):
+                    out.append("\\text{" + run + "}")
+                else:
+                    out.append(" ".join("\\text{" + w + "}" if len(w) >= 4 else w for w in words))
+                i += len(run)
+                continue
+            out.append(run)
+            i += len(run)
+            continue
+        out.append(t[i])
+        i += 1
+    return "".join(out)
 
 
 def normalize(spec, notes: list[str]) -> dict:
@@ -200,11 +289,26 @@ def normalize(spec, notes: list[str]) -> dict:
             if "$" in str(t) and not (t.strip().startswith("$") and t.strip().endswith("$")):
                 # mixed words + maths: wrap words in \text{}
                 o["tex"] = _mixed_to_tex(t)
+        for key in ("label", "prefix", "suffix"):
+            if isinstance(o.get(key), str):
+                h = tex_hygiene(o[key])
+                if h != o[key]:
+                    notes.append(f"{o['id']}: {key} tex hygiene")
+                    o[key] = h
+        if o["kind"] == "axes" and isinstance(o.get("labels"), list):
+            o["labels"] = [tex_hygiene(str(x)) for x in o["labels"]]
+        if o["kind"] == "matrix" and isinstance(o.get("rows"), list):
+            o["rows"] = [[tex_hygiene(c) if isinstance(c, str) else c for c in r] for r in o["rows"] if isinstance(r, list)]
         if o["kind"] == "tex":
             o["tex"] = str(o.get("tex", "")).strip().strip("$")
             terms = o.get("terms") or {}
             if isinstance(terms, list):
                 terms = {str(x.get("tex", x.get("term", ""))): x.get("q") for x in terms if isinstance(x, dict)}
+            h = tex_hygiene(o["tex"])
+            if h != o["tex"]:
+                notes.append(f"{o['id']}: tex hygiene")
+                o["tex"] = h
+                terms = {tex_hygiene(k): v for k, v in terms.items()}
             fixed = {}
             for term, q in terms.items():
                 if q not in qids:
@@ -224,6 +328,13 @@ def normalize(spec, notes: list[str]) -> dict:
         ids.add(o["id"])
         objs.append(o)
     s["objects"] = objs
+    svg_ids = {o["id"] for o in objs if o["kind"] == "svg"}
+    for o in objs:  # a colour word given for a body: a material, else ink
+        if o.get("material") and not o.get("q") and "color" not in o:
+            o["color"] = o.pop("material")
+    for o in objs:
+        if o.get("color") is not None and o["color"] not in NEUTRALS:
+            o.pop("color")
     # actions
     acts = []
     for a in _flatten_actions(s["timeline"], notes):
@@ -238,7 +349,7 @@ def normalize(spec, notes: list[str]) -> dict:
         if isinstance(a.get("targets"), str):
             a["targets"] = [a["targets"]]
         if a.get("targets"):
-            keep = [t for t in a["targets"] if t in ids]
+            keep = [t for t in a["targets"] if t in ids or (isinstance(t, str) and "." in t and t.split(".")[0] in svg_ids)]
             if len(keep) != len(a["targets"]):
                 notes.append(f"{do}: unknown targets {set(a['targets']) - ids} dropped")
             if not keep and do not in ("wait", "camera"):
@@ -316,6 +427,144 @@ def _mixed_to_tex(t: str) -> str:
             continue
         out.append(part if i % 2 else "\\text{" + part.replace("{", "").replace("}", "") + "}")
     return "".join(out)
+
+
+# ───────────── Motion density (deterministic lint + fill) ─────────────
+MOVING = {"set", "speed", "follow", "drift", "rotate", "morph", "match_tex", "matrix", "warp", "move", "camera", "scale"}
+
+
+def motion_cover(spec: dict) -> tuple[list, float, float]:
+    """Intervals in which something on screen changes continuously, mirroring the renderer's grouping and stretching
+    (continuous drives fill the gap to the next cue up to 4x). Steady trackers and jiggle / spin count while their
+    objects are visible."""
+    import gm_scene
+    acts = [a for a in gm_scene.schedule(spec) if a.get("do") != "wait"]
+    end = gm_scene.total_duration(spec) or (max((a["_t0"] + a["_dur"] for a in acts), default=0))
+    starts = sorted({round(a["_t0"], 2) for a in acts})
+    cover = []
+    for a in acts:
+        if a.get("do") not in MOVING:
+            continue
+        nxt = next((t for t in starts if t > a["_t0"] + 0.12), end)
+        d = a["_dur"]
+        if a.get("do") in gm_scene.CONTINUOUS and not a.get("exact"):
+            d = min(nxt - a["_t0"], d * 4)
+        cover.append((a["_t0"], a["_t0"] + min(d, max(0.15, nxt - a["_t0"]))))
+    vis = gm_scene._visibility(spec)
+    steady = {t["id"] for t in spec.get("trackers") or [] if isinstance(t, dict) and t.get("rate")}
+    for o in spec.get("objects") or []:
+        live = o.get("jiggle") or o.get("spin") or (steady and gm_scene.names_in([v for k, v in o.items() if k not in ("id", "kind", "tex", "text")]) & steady)
+        if live and o["id"] in vis:
+            cover.append((vis[o["id"]][0], min(end, vis[o["id"]][1])))
+    first = min((a["_t0"] for a in acts if a.get("do") == "show"), default=0.0)
+    return sorted(cover), first, end
+
+
+def motion_gaps(spec: dict, longest=2.0) -> list[tuple[float, float]]:
+    cover, first, end = motion_cover(spec)
+    gaps, t = [], first + 1.0  # the opening draw-in counts as change
+    for a, b in cover:
+        if a > t + longest:
+            gaps.append((round(t, 2), round(a, 2)))
+        t = max(t, b)
+    if end - 0.6 > t + longest:
+        gaps.append((round(t, 2), round(end - 0.6, 2)))
+    return gaps
+
+
+def fill_motion(spec: dict, notes: list[str]) -> list[str]:
+    """Close static stretches deterministically: molecules/particles (arrays) jiggle; a steady tracker keeps turning;
+    otherwise the next continuous action is pulled forward into the gap (motion anticipates the words, as 3Blue1Brown
+    often does). Returns what still could not be filled."""
+    import gm_scene
+    for o in spec.get("objects") or []:
+        if o["kind"] == "array" and not o.get("jiggle") and (o.get("of") or {}).get("kind") in ("dot", "circle", "point", "ellipse", None):
+            o["jiggle"] = 0.04
+            notes.append(f"motion: {o['id']} jiggles")
+    left = []
+    for _ in range(6):
+        gaps = motion_gaps(spec)
+        if not gaps:
+            break
+        g0, g1 = gaps[0]
+        sched = gm_scene.schedule(spec)
+        nxt = next((a for a in sched if a.get("do") in MOVING and a["_t0"] >= g1 - 0.05), None)
+        if nxt is not None and nxt["_t0"] - g0 < 7:
+            src = spec["timeline"][nxt["_i"]]
+            src.pop("cue", None)
+            src["t"] = round(g0 + 0.2, 2)
+            src["dur"] = round(float(src.get("dur", 1)) + (nxt["_t0"] - g0 - 0.2), 2)
+            src.pop("exact", None)
+            notes.append(f"motion: {src['do']} pulled from {nxt['_t0']:.1f}s to {g0 + 0.2:.1f}s")
+            continue
+        prev = [a for a in sched if a.get("do") in ("set",) and a["_t0"] < g0]
+        if prev:
+            src = spec["timeline"][prev[-1]["_i"]]
+            src["dur"] = round(float(src.get("dur", 1)) + (g1 - g0), 2)
+            src.pop("exact", None)
+            notes.append(f"motion: {src['do']} at {prev[-1]['_t0']:.1f}s stretched over {g0:.1f}-{g1:.1f}s")
+            if any(abs(a - g0) < 0.01 for a, _ in motion_gaps(spec)):
+                left.append(f"{g0:.1f}-{g1:.1f}s")
+                break
+            continue
+        left.append(f"{g0:.1f}-{g1:.1f}s")
+        break
+    return left
+
+
+# ───────────── Critic ops (deterministic repair) ─────────────
+def _owner(spec, oid):
+    defs = {o["id"]: o for o in spec.get("objects") or []}
+    o = defs.get(oid)
+    seen = 0
+    while o and o.get("on") and seen < 4:
+        o = defs.get(o["on"])
+        seen += 1
+    return o
+
+
+def apply_ops(spec: dict, ops: list, notes: list[str]) -> int:
+    n = 0
+    qids = {q["id"] for q in spec.get("quantities") or []}
+    for op in ops or []:
+        if not isinstance(op, dict):
+            continue
+        kind, oid = op.get("op"), str(op.get("id", ""))
+        o = _owner(spec, oid) if kind in ("move", "resize") else next((x for x in spec.get("objects") or [] if x["id"] == oid), None)
+        if o is None:
+            continue
+        try:
+            if kind == "move":
+                by = op.get("by") or ([float(op["to"][0]) - float((o.get("at") or o.get("center") or [0, 0])[0]), float(op["to"][1]) - float((o.get("at") or o.get("center") or [0, 0])[1])] if op.get("to") else None)
+                if not by:
+                    continue
+                off = o.get("offset") or [0, 0]
+                o["offset"] = [float(off[0]) + float(by[0]), float(off[1]) + float(by[1])]
+            elif kind == "resize":
+                o["scale_by"] = float(o.get("scale_by", 1)) * max(0.4, min(1.8, float(op.get("factor", 1))))
+            elif kind == "region" and op.get("region") in ("left", "right", "center", "top", "bottom"):
+                o["region"] = op["region"]
+            elif kind == "recolor" and op.get("q") in qids:
+                o["q"] = op["q"]
+                o.pop("color", None)
+            elif kind == "add_motion":
+                if op.get("motion") == "spin":
+                    o["spin"] = float(op.get("rate", 40))
+                else:
+                    o["jiggle"] = min(0.12, float(op.get("rate", 0.05)))
+            elif kind == "drop":
+                spec["timeline"] = [a for a in spec["timeline"] if not (a.get("do") == "show" and a.get("targets") == [oid])]
+                for a in spec["timeline"]:
+                    if a.get("targets"):
+                        a["targets"] = [t for t in a["targets"] if t != oid]
+                spec["timeline"] = [a for a in spec["timeline"] if a.get("targets") != [] or a.get("do") not in ("show", "hide", "indicate", "circle", "move", "rotate", "scale")]
+            else:
+                continue
+            n += 1
+            notes.append(f"op {kind} {oid}")
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+    return n
 
 
 # ───────────── Validation (dry run: compiles every LaTeX snippet, evaluates every expression) ─────────────
@@ -507,19 +756,39 @@ def plan_gaps(plan: dict, spec: dict) -> list[str]:
     return out
 
 
-def critique(sheet: bytes, plan: dict, log: list) -> dict:
+AXES = ("structure", "mechanism", "layout", "motion", "tex")
+BAR = {"structure": 9, "overall": 8}
+
+
+def critique(sheet: bytes, plan: dict, spec: dict, log: list) -> dict:
     qs = ", ".join(f"{q.get('name', q.get('id'))}={q.get('color')}" for q in plan.get("quantities", []))
     try:
-        objs = "; ".join(f"{o.get('id')}: {o.get('what', '')}" for o in plan.get("objects", []))[:900]
+        st = json.dumps(plan.get("structure") or [], separators=(",", ":"))[:2200]
         chg = "; ".join(f"{c.get('when', '')}: {c.get('what', '')}" for c in plan.get("changes", []))[:900]
         eqs = "; ".join(str(e.get("tex", "")) for e in plan.get("equations", []))[:400] or "none"
-        out = ask_json(CRITIC_PROMPT.format(idea=plan.get("idea", ""), quantities=qs, objects=objs, changes=chg, equations=eqs), images=[sheet], temperature=0.2, timeout=45, log=log)
-        if isinstance(out, dict) and out.get("score") is not None and float(out.get("score", 10)) < 7:
-            out["pass"] = False
+        ids = ", ".join(f"{o['id']}({o['kind']},{o.get('region', '-')})" for o in spec.get("objects", []))[:1500]
+        out = ask_json(CRITIC_PROMPT.format(idea=plan.get("idea", ""), structure=st, quantities=qs, changes=chg, equations=eqs, ids=ids), images=[sheet], temperature=0.2, timeout=60, log=log)
+        if not isinstance(out, dict):
+            raise RuntimeError("critic returned no object")
+        sc = out.get("scores") or {}
+        out["scores"] = {k: float(sc.get(k, 0) or 0) for k in AXES}
+        out["score"] = float(out.get("score") or 0)
+        out["pass"] = out["score"] >= BAR["overall"] and out["scores"]["structure"] >= BAR["structure"] and min(out["scores"].values()) >= 7
         return out
     except Exception as exc:  # noqa: BLE001
         log.append(f"critique skipped: {exc}")
-        return {"pass": True, "skipped": True}
+        return {"pass": None, "skipped": True}
+
+
+def lint(spec: dict) -> list[str]:
+    """Deterministic issues the critic cannot fix by ops: static stretches left after fill, missing trackers."""
+    out = []
+    gaps = motion_gaps(spec)
+    if gaps:
+        out.append("static stretches with nothing moving: " + ", ".join(f"{a:.1f}-{b:.1f}s" for a, b in gaps) + "; add a continuous change (set / speed / follow / morph) in each")
+    if not spec.get("trackers"):
+        out.append("no tracker drives anything; the mechanism must be driven by a tracker through its real relation")
+    return out
 
 
 # ───────────── Pipeline ─────────────
@@ -531,7 +800,11 @@ def make_spec(desc: str, narr: dict | None, context: str, media_dir: str, log: l
     if plan is None:
         plan = ask_json(PLAN_PROMPT.format(desc=desc[:2500], context=context[:1500], beats=b), temperature=0.5, log=log)
     LAST["plan"] = plan
-    raw = ask_json(COMPOSE_PROMPT.format(plan=json.dumps(plan)[:6000], beats=b, grammar=GRAMMAR), temperature=0.3, timeout=90, log=log)
+    import gm_scene
+    regs = {str(o.get("region")) for o in plan.get("objects") or [] if isinstance(o, dict) and o.get("region")}
+    zs = gm_scene.zones(regs or {"left", "right", "top"})
+    ztxt = "\n".join(f"  {r}: x {z[0]:.2f}..{z[2]:.2f}, y {z[1]:.2f}..{z[3]:.2f}" for r, z in zs.items() if r != "full")
+    raw = ask_json(COMPOSE_PROMPT.format(plan=json.dumps(plan)[:9000], beats=b, zones=ztxt, grammar=GRAMMAR), temperature=0.3, timeout=120, log=log)
     LAST["raw"] = raw
     spec = prepare(raw, narr, media_dir, log, plan)
     return plan, spec
@@ -551,6 +824,19 @@ def prepare(raw: dict, narr: dict | None, media_dir: str, log: list, plan: dict 
 
     def check(sp, allow_remove):
         errs = validate(sp, media_dir)
+        for _ in range(2):  # an SVG reference that cannot be fetched / parsed falls back to its primitive build
+            bad = [o for o in sp["objects"] if o["kind"] == "svg" and any(f"object {o['id']} " in e or f"svg {o['id']}" in e for e in errs)]
+            if not bad:
+                break
+            for o in bad:
+                fb = [x for x in (o.get("fallback") or []) if isinstance(x, str)]
+                sp["objects"] = [x for x in sp["objects"] if x["id"] != o["id"]]
+                for act in sp["timeline"]:
+                    if act.get("targets") and any(t == o["id"] or str(t).startswith(o["id"] + ".") for t in act["targets"]):
+                        act["targets"] = [t for t in act["targets"] if not (t == o["id"] or str(t).startswith(o["id"] + "."))] + (fb if act.get("do") == "show" else [])
+                sp["timeline"] = [act for act in sp["timeline"] if act.get("targets") != []]
+                notes.append(f"svg {o['id']} failed; primitive fallback {fb}")
+            errs = validate(sp, media_dir)
         for _ in range(4):
             if not (errs and any("LaTeX" in e for e in errs)):
                 break
@@ -568,13 +854,27 @@ def prepare(raw: dict, narr: dict | None, media_dir: str, log: list, plan: dict 
         errs = check(spec, True)
         if errs:
             raise RuntimeError("spec invalid after repair: " + " | ".join(errs)[:800])
+    left = fill_motion(spec, notes)
+    if left:
+        notes.append("motion gaps left: " + ", ".join(left))
     if notes:
-        log.append("normalize: " + "; ".join(notes)[:600])
+        log.append("normalize: " + "; ".join(notes)[:900])
     return spec
 
 
-def compose_and_render(desc: str, narr: dict | None = None, context: str = "", workdir: str | None = None, vision: str = "auto", log: list | None = None) -> dict:
-    """Returns {ok, spec, video, pen, gate, issues, critique, timings, log}. Never more than 2 renders."""
+def _rank(c):
+    cr = c.get("critique") or {}
+    if cr.get("skipped") or cr.get("score") is None:
+        return (-1.0, -len(c["issues"]))
+    return (float(cr.get("score", 0)) + 0.5 * float((cr.get("scores") or {}).get("structure", 0)), -len(c["issues"]))
+
+
+def compose_and_render(desc: str, narr: dict | None = None, context: str = "", workdir: str | None = None, vision: str = "auto", log: list | None = None,
+                       max_renders: int = 3, budget_s: float = 780) -> dict:
+    """Returns {ok, spec, video, pen, gate, issues, critique, history, timings, log}.
+    render -> gate + critic (per-axis scores) -> critic ops applied deterministically (no LLM) when they cover the
+    defects -> else / then one LLM repair with the critic's findings (rebuild list for structure / mechanism).
+    At most max_renders renders (initial + 2 repairs); a failure mode is never retried more than twice."""
     log = [] if log is None else log
     workdir = workdir or tempfile.mkdtemp(prefix="gm-")
     media = os.path.join(workdir, "media-validate")
@@ -583,41 +883,69 @@ def compose_and_render(desc: str, narr: dict | None = None, context: str = "", w
     plan, spec = make_spec(desc, narr, context, media, log)
     timings["compose_s"] = round(time.time() - t0, 1)
     best = None
-    for attempt in range(2):
+    history = []
+    tries: dict[str, int] = {}
+    for attempt in range(max_renders):
         t1 = time.time()
         r = render_spec(spec, os.path.join(workdir, f"r{attempt}"))
         timings[f"render{attempt}_s"] = r["render_s"]
         if not r["ok"]:
             log.append(f"render {attempt} failed: {r['error'][-300:]}")
-            if attempt == 0:
-                raw = ask_json(REPAIR_PROMPT.format(why="to render", problems=r["error"][-2500:], spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log)
+            tries["render"] = tries.get("render", 0) + 1
+            if tries["render"] <= 2 and attempt < max_renders - 1:
+                raw = ask_json(REPAIR_PROMPT.format(why="to render", problems=r["error"][-2500:], spec=json.dumps(_clean(spec))[:16000], grammar=GRAMMAR), temperature=0.2, timeout=120, log=log)
                 spec = prepare(raw, narr, media, log, plan)
                 continue
             break
         t2 = time.time()
-        issues = heuristics(r, spec) + plan_gaps(plan, spec)
+        issues = heuristics(r, spec) + plan_gaps(plan, spec) + lint(spec)
         crit = None
-        if vision == "always" or (vision == "auto" and (issues or random.random() < VISION_SAMPLE)):
-            sheet = keyframes(r["video"], r["gate"], os.path.join(workdir, f"r{attempt}"))
+        if vision != "never":
+            sheet = keyframes(r["video"], r["gate"], os.path.join(workdir, f"r{attempt}"), n=6)
             if sheet:
-                crit = critique(sheet, plan, log)
-                if crit and not crit.get("pass", True):
-                    issues += [f"vision: {x}" for x in crit.get("issues", [])][:6]
+                crit = critique(sheet, plan, spec, log)
+                if crit and crit.get("pass") is False:
+                    issues += [f"vision: {x}" for x in crit.get("issues", [])][:8]
         timings[f"gate{attempt}_s"] = round(time.time() - t2, 1)
-        cand = {"spec": spec, "video": r["video"], "pen": r.get("pen"), "gate": r["gate"], "issues": issues, "critique": crit, "attempt": attempt}
-        if best is None or len(issues) < len(best["issues"]):
+        cand = {"spec": copy.deepcopy(spec), "video": r["video"], "pen": r.get("pen"), "gate": r["gate"], "issues": issues, "critique": crit, "attempt": attempt}
+        history.append({"attempt": attempt, "scores": (crit or {}).get("scores"), "score": (crit or {}).get("score"), "issues": issues[:10], "ops": (crit or {}).get("ops"), "rebuild": (crit or {}).get("rebuild")})
+        if best is None or _rank(cand) > _rank(best):
             best = cand
-        if not issues or attempt == 1:
+        ok = (crit or {}).get("pass") if crit and not crit.get("skipped") else not issues
+        if ok or attempt == max_renders - 1 or time.time() - t0 > budget_s:
             break
-        # one repair round with the gate's findings
-        try:
-            fixes = (crit or {}).get("fixes") or []
-            raw = ask_json(REPAIR_PROMPT.format(why="the quality check after rendering", problems="\n".join(issues + [f"suggested: {f}" for f in fixes]), spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log)
-            spec = prepare(raw, narr, media, log, plan)
-        except Exception as exc:  # noqa: BLE001
-            log.append(f"repair skipped: {exc}")
+        # which failure modes remain (a mode is retried at most twice)
+        sc = (crit or {}).get("scores") or {}
+        modes = [k for k in AXES if sc.get(k, 10) < (BAR["structure"] if k == "structure" else 8)] or ["general"]
+        for m in modes:
+            tries[m] = tries.get(m, 0) + 1
+        if all(tries[m] > 2 for m in modes):
+            log.append(f"stop: {modes} already repaired twice")
+            break
+        notes: list[str] = []
+        rebuild = [x for x in (crit or {}).get("rebuild") or [] if x]
+        needs_llm = bool(rebuild) or any(m in ("structure", "mechanism") for m in modes) or any("static stretches" in x or "never appears" in x for x in issues)
+        nops = apply_ops(spec, (crit or {}).get("ops") or [], notes)
+        if notes:
+            log.append("ops: " + "; ".join(notes)[:500])
+        if needs_llm:
+            try:
+                problems = issues + [f"rebuild so it looks like the real thing / works like it: {x}" for x in rebuild]
+                problems += [f"axis scores {sc}: structure must reach 9 (real silhouette, real parts and counts, shading, parts connected), every axis 8"]
+                raw = ask_json(REPAIR_PROMPT.format(why="the quality check after rendering", problems="\n".join(problems), spec=json.dumps(_clean(spec))[:16000],
+                                                    grammar=GRAMMAR + "\nStructure plan to match:\n" + json.dumps(plan.get("structure") or [])[:3000]), temperature=0.25, timeout=120, log=log)
+                spec = prepare(raw, narr, media, log, plan)
+            except Exception as exc:  # noqa: BLE001
+                log.append(f"repair skipped: {exc}")
+                if not nops:
+                    break
+        elif not nops:
             break
     timings["total_s"] = round(time.time() - t0, 1)
     if best is None:
-        return {"ok": False, "plan": plan, "spec": spec, "timings": timings, "log": log}
-    return {"ok": True, "plan": plan, **best, "timings": timings, "log": log}
+        return {"ok": False, "plan": plan, "spec": spec, "timings": timings, "log": log, "history": history}
+    return {"ok": True, "plan": plan, **best, "history": history, "timings": timings, "log": log}
+
+
+def _clean(spec):
+    return {k: v for k, v in spec.items() if k not in ("narration", "_src_boxes", "_layout")}
