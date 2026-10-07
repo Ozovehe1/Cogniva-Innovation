@@ -165,8 +165,8 @@ Return {"steps": [...]} only.`
 
 export interface OutlineSection { title: string; goal: string; minutes: number; keyPoints: string[] }
 
-/** Roughly how many steps fill a minute of lesson (narrated steps run ~8-12 s each). */
-export const STEPS_PER_MINUTE = 5.5
+/** Roughly how many steps fill a minute of lesson (narrated steps average ~7 s; checks take longer). */
+export const STEPS_PER_MINUTE = 8
 
 export function sectionStepTarget(minutes: number) {
   const n = Math.round(minutes * STEPS_PER_MINUTE)
@@ -288,7 +288,7 @@ ${SCRIPT_SCHEMA_PROMPT}
 ${LAYOUT_RULES}
 - The board is EMPTY when this section starts. ${position > 0 ? 'The first step must be {"type":"clear"}. ' : ''}Then write the section title (write, id "title", size lg, x 40, y 30) with a "say" that introduces the section.
 - Only refer to ids created in this section.
-- ${min} to ${max} steps.
+- At least ${min} and at most ${max} steps: this section must fill about ${section.minutes} minutes of teaching, so go step by step with worked examples, not a summary.
 - After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach".
 Return {"steps": [...]} only.`
   const steps = await generateSteps(prompt, { maxSteps: SECTION_MAX_STEPS, timeoutMs: 120_000, primaryTimeoutMs: 100_000, meta: input.meta })
