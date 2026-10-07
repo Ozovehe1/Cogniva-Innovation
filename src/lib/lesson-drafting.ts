@@ -37,6 +37,13 @@ const BEAT_RESERVE_MS = 85_000
 const BEAT_DEADLINE_MS = 75_000
 /** Short rate-limit waits are slept through inside the worker instead of pausing. */
 const MAX_INLINE_WAIT_MS = 65_000
+/**
+ * Beats are written far faster than they play (a few seconds each vs about a minute), so after
+ * a small head start the worker spaces its calls: at most ~8 a minute per lesson keeps one lesson
+ * well under the free-tier per-minute limits and leaves room for other lessons and instances.
+ */
+const BEAT_SPACING_MS = 7_500
+const HEAD_START_BEATS = 3
 /** A beat that fails this many times is dropped (later beats never wait on it). */
 const BEAT_ATTEMPTS = 3
 export type DraftStatus = 'idle' | 'outlining' | 'drafting' | 'paused' | 'ready' | 'partial' | 'failed'
@@ -189,6 +196,7 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
   const hardEnd = t0 + HARD_END_MS
   if (!(await claim(db, lessonId))) return 'busy'
   let handOver = false
+  let lastBeatAt = 0
   /** Narration being voiced in the background while later beats are written. */
   const voicing: Promise<unknown>[] = []
   const voice = (steps: Step[], budget: number) => { voicing.push(pregenerateNarration(steps, budget).catch(() => null)) }
@@ -321,6 +329,11 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       }
       const recentSay = sayOf(before.slice(-2).flatMap(r => r.steps)).slice(-600)
 
+      if (ready.length >= HEAD_START_BEATS) {
+        const wait = lastBeatAt + BEAT_SPACING_MS - Date.now()
+        if (wait > 0) await sleep(wait)
+      }
+      lastBeatAt = Date.now()
       await db.from('lesson_sections').update({ status: 'drafting', error: null }).eq('id', next.id)
       const meta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
       try {
