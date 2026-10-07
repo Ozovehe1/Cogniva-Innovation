@@ -14,7 +14,7 @@ import KNOWN_GETTERS from './manim-getters.json'
 /** Concise v0.19 API sheet for the code-writing and auto-fix prompts. */
 export const MANIM_API_SHEET = `Manim Community v0.19 API sheet (use exactly these forms):
 - Header: \`from manim import *\` (numpy as np and math are allowed). Exactly one Scene subclass. Use MovingCameraScene if you touch self.camera.frame.
-- Axes: \`ax = Axes(x_range=[-3, 3, 1], y_range=[-1, 9, 1], x_length=7, y_length=5, axis_config={"color": INK, "include_numbers": True, "decimal_number_config": {"color": INK}})\` (axis numbers default to white, invisible on the light background, so always set their colour). Do not also call add_coordinates() when include_numbers is set.
+- Axes: \`ax = Axes(x_range=[-3, 3, 1], y_range=[-1, 9, 1], x_length=7, y_length=5, axis_config={"color": INK, "include_numbers": True, "decimal_number_config": {"color": INK, "num_decimal_places": 0}})\` (axis numbers default to white, invisible on the light background, so always set their colour; num_decimal_places 0 for integer steps, 1 for 0.5 steps). Do not also call add_coordinates() when include_numbers is set.
 - Framing: keep every element inside the 16:9 frame (x within ±6.5, y within ±3.6). Prefer a plain Scene and do not zoom or move the camera. Lines that extend past the axes should be clipped with x_range or a short .scale().
 - Curves: \`graph = ax.plot(lambda x: x**2, x_range=[-3, 3], color=NAVY)\`. A straight line through the plane: \`ax.plot(lambda x: m*x + b, x_range=[a, b], color=CLAY)\` or \`Line(ax.c2p(x1, y1), ax.c2p(x2, y2), color=CLAY)\`; extend a Line with \`.scale(k)\`.
 - Points: \`ax.c2p(x, y)\` (coords_to_point), \`ax.i2gp(x, graph)\` (input_to_graph_point), \`ax.p2c(point)\`.
