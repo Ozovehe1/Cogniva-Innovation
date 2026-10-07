@@ -18,6 +18,8 @@ export interface GenerateOptions {
   temperature?: number
   /** 'minimal' trades depth for latency (live tutoring); default 'low'. */
   thinking?: 'minimal' | 'low'
+  /** Collects short notes on models that failed before one succeeded (diagnostics). */
+  trace?: string[]
 }
 
 /** Which model produced the last successful response (for diagnostics). */
@@ -45,6 +47,7 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
       return response.text ?? ''
     } catch (err) {
       lastErr = err
+      opts.trace?.push(`${model}${opts.thinking === 'minimal' ? '/minimal' : ''}: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`)
       // Not every model accepts the minimal thinking level: retry the same call at the default level.
       if (opts.thinking === 'minimal' && /thinking|INVALID_ARGUMENT|\b400\b/i.test(err instanceof Error ? err.message : String(err))) {
         return generateText(prompt, { ...opts, thinking: 'low' })

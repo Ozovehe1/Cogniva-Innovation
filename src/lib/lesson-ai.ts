@@ -52,7 +52,7 @@ function representationHint(p: StudentProfileLite | null | undefined) {
   return map[k] ?? 'Switch representation: if the first explanation was symbolic, go visual; if visual, use a concrete numeric example.'
 }
 
-export interface GenMeta { ms: number; repaired: boolean; model: string | null; dropped: number }
+export interface GenMeta { ms: number; repaired: boolean; model: string | null; dropped: number; trace?: string[] }
 
 async function generateSteps(
   prompt: string,
@@ -61,7 +61,8 @@ async function generateSteps(
   const t0 = Date.now()
   const meta = opts.meta ?? { ms: 0, repaired: false, model: null, dropped: 0 }
   const done = (steps: Step[]) => { meta.ms = Date.now() - t0; meta.model = lastGeminiModel; return steps }
-  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, thinking: opts.thinking }
+  meta.trace = []
+  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, thinking: opts.thinking, trace: meta.trace }
   let raw: unknown
   try {
     raw = await generateStructuredJson(prompt, gen)
