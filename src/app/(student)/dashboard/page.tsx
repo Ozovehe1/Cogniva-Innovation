@@ -7,6 +7,7 @@ import { learnerForPath } from '@/lib/learner'
 import { VoiceWarm } from '@/components/voice-warm'
 import { Card, Eyebrow, PageHeader, ProgressBar, SectionTitle, buttonClass, cx } from '@/components/ui'
 import { TopicStart } from '@/components/topic-start'
+import { HandPreload } from '@/components/whiteboard/hand-preload'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,6 +53,7 @@ export default async function Dashboard() {
 
   return (
     <div>
+      <HandPreload />
       <VoiceWarm lessonId={next?.lesson_id && !nextLessonDone ? next.lesson_id : null} lines={lines} />
       <PageHeader eyebrow="Home" title={<>Hello, {firstName}</>}
         actions={<Link href="/start?new=1" className={buttonClass('secondary', 'md')}><Plus className="h-4 w-4" strokeWidth={2} />Learn something new</Link>} />

@@ -35,13 +35,30 @@ interface Job {
   cancelled: boolean
 }
 
-interface HandView {
+/** Where the hand is this frame (overlay-local px) and how it is moving. */
+export interface HandState {
+  /** Marker tip position. */
+  x: number
+  y: number
+  /** 0 = pen on the board, 1 = lifted. */
+  lift: number
+  /** Wrist angle in the board plane (deg). */
+  rot: number
+  /** 0..1 while strokes are being drawn (drives finger and wrist motion). */
+  writing: number
+  /** 0..1 opacity / presence. */
+  visible: number
+  /** Board size in px. */
+  w: number
+  h: number
+  now: number
+}
+
+export interface HandView {
   root: HTMLElement
-  hand: HTMLElement
-  shadow: HTMLElement
-  /** Rendered hand size in px and the marker tip inside it (fractions). */
+  /** Rendered hand size in px (used for the resting spot). */
   size: () => { w: number; h: number }
-  tip: { x: number; y: number }
+  render: (s: HandState) => void
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -176,15 +193,7 @@ export class PenEngine {
     // Wrist angle follows where on the board the hand is; fingers flex a little while writing.
     const xf = this.pos.x / rr.width - 0.5
     const wobble = this.writing * (Math.sin(now / 1000 * Math.PI * 2 * 4.2) * 1.3 + Math.sin(now / 1000 * Math.PI * 2 * 1.7) * 0.6)
-    const rot = -4 + xf * 9 + wobble
-    const l = this.lift
-    const tx = this.pos.x - v.tip.x * hw + l * 7
-    const ty = this.pos.y - v.tip.y * hh - l * 11
-    const sc = 1 + l * 0.035
-    v.hand.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) rotate(${rot.toFixed(2)}deg) scale(${sc.toFixed(3)})`
-    v.shadow.style.transform = `translate3d(${(tx + 6 + l * 16).toFixed(1)}px, ${(ty + 9 + l * 20).toFixed(1)}px, 0) rotate(${rot.toFixed(2)}deg) scale(${sc.toFixed(3)})`
-    v.shadow.style.opacity = String((0.34 - l * 0.14) * this.visible)
-    v.hand.style.opacity = String(this.visible)
+    v.render({ x: this.pos.x, y: this.pos.y, lift: this.lift, rot: -4 + xf * 9 + wobble, writing: this.writing, visible: this.visible, w: rr.width, h: rr.height, now })
   }
 
   dispose() {
@@ -206,51 +215,135 @@ export function usePen(): PenEngine {
   return useContext(PenContext) ?? standalonePen()
 }
 
-/** The marker tip inside the hand image (fractions of its width and height). */
+/** The marker tip inside the fallback hand image (fractions of its width and height). */
 const TIP = { x: 3.5 / 520, y: 341 / 344 }
 const HAND_RATIO = 344 / 520
 /** The sleeve is cut at the image edge: fade it out towards the top right instead of showing a hard line. */
 const SLEEVE_FADE = 'radial-gradient(ellipse 118% 150% at 0% 100%, #000 66%, transparent 86%)'
 
+/** Hand width for a board of this width (px). */
+export function handWidth(boardW: number) {
+  return Math.max(120, Math.min(270, boardW * 0.34))
+}
+
 /**
- * The hand holding the marker: a pre-rendered, photographic sprite (right hand,
- * warm brown skin, off-white cuff) moved by the pen engine. Sized to the board.
+ * Whether to use the 3D hand: WebGL available, motion allowed, and the device not obviously low-end
+ * (little memory, few cores, data saver). `?hand=photo` / `?hand=3d` force either hand.
+ */
+function canUse3D(): boolean {
+  if (typeof window === 'undefined') return false
+  const q = window.location.search
+  if (/[?&]hand=photo\b/.test(q)) return false
+  if (!/[?&]hand=3d\b/.test(q)) {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false
+    const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } }
+    if ((nav.deviceMemory ?? 4) < 2 || (nav.hardwareConcurrency ?? 4) < 3 || nav.connection?.saveData) return false
+  }
+  try {
+    const c = document.createElement('canvas')
+    return !!(c.getContext('webgl2') || c.getContext('webgl'))
+  } catch { return false }
+}
+
+/**
+ * Warm the 3D hand (its code and compressed model) while the student is elsewhere, e.g. on the dashboard or the
+ * lesson list, so a lesson can swap it in at once. Does nothing where the 3D hand would not be used.
+ */
+export function preloadHand3D() {
+  if (!canUse3D()) return
+  import('./hand3d').then(m => m.loadHandModel()).catch(() => {})
+}
+
+/** The 3D hand falls back to the photo hand if drawing it takes longer than this per frame (median, ms). */
+const MAX_FRAME_MS = 12
+
+/**
+ * The hand holding the marker. Writing never waits for it: the photographic hand (a pre-rendered sprite moved
+ * with transforms) appears at once, and where WebGL is available the real-time 3D hand (three.js, lazy-loaded:
+ * a rigged glTF hand posed in a writing grip around a modelled marker, lit, casting a shadow on the board)
+ * takes over as soon as it has loaded. It hands back to the photo hand if the GPU loses its context or the
+ * device turns out too slow to draw it.
  */
 export function HandOverlay({ pen, hidden = false }: { pen: PenEngine; hidden?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const handRef = useRef<HTMLImageElement>(null)
   const shadowRef = useRef<HTMLImageElement>(null)
-  const widthRef = useRef(200)
+  const [mode, setMode] = useState<'photo' | '3d'>('photo')
   useEffect(() => {
-    const root = rootRef.current, hand = handRef.current, shadow = shadowRef.current
-    if (!root || !hand || !shadow || hidden) return
-    const size = () => {
-      const w = Math.max(120, Math.min(270, root.clientWidth * 0.34))
-      if (Math.abs(w - widthRef.current) > 0.5) {
-        widthRef.current = w
-        hand.style.width = shadow.style.width = `${w}px`
-      }
-      return { w, h: w * HAND_RATIO }
+    const root = rootRef.current
+    if (!root || hidden) return
+    let live = true
+    let dispose: (() => void) | null = null
+    const size = () => { const w = handWidth(root.clientWidth); return { w, h: w * HAND_RATIO } }
+    const photo = () => {
+      const hand = handRef.current, shadow = shadowRef.current
+      if (!hand || !shadow || !live) return
+      setMode('photo')
+      pen.attach({ root, size, render: st => renderPhoto(hand, shadow, st) })
     }
-    size()
-    pen.attach({ root, hand, shadow, size, tip: TIP })
-    return () => pen.attach(null)
+    const toPhoto = (why: string) => {
+      if (!live) return
+      console.warn(`3D hand: ${why}; using the photo hand.`)
+      dispose?.(); dispose = null
+      photo()
+    }
+    photo()
+    if (canUse3D()) {
+      const t0 = performance.now()
+      import('./hand3d')
+        .then(m => m.createHand3D(root, () => toPhoto('WebGL context lost')))
+        .then(h => {
+          if (!live) { h.dispose(); return }
+          dispose = h.dispose
+          root.dataset.handLoadMs = String(Math.round(performance.now() - t0))
+          // Draw cost per frame (CPU side, ms); the first frames include shader compilation and are skipped.
+          const costs: number[] = []
+          let frames = 0
+          const render = (st: HandState) => {
+            const a = performance.now()
+            h.render(st)
+            if (st.visible < 0.05 || ++frames <= 5) return
+            costs.push(performance.now() - a)
+            if (costs.length === 60) {
+              const med = costs.slice().sort((x, y) => x - y)[30]
+              root.dataset.handFrameMs = med.toFixed(2)
+              costs.length = 0
+              if (med > MAX_FRAME_MS) toPhoto(`drawing took ${med.toFixed(1)} ms a frame`)
+            }
+          }
+          setMode('3d')
+          pen.attach({ root, size, render })
+        })
+        .catch(err => toPhoto(`unavailable (${err instanceof Error ? err.message : String(err)})`))
+    }
+    return () => { live = false; pen.attach(null); dispose?.() }
   }, [pen, hidden])
+  const photoOn = mode === 'photo' && !hidden
   return (
-    <div ref={rootRef} aria-hidden className="pointer-events-none absolute inset-0 z-[15] overflow-hidden">
+    <div ref={rootRef} aria-hidden data-hand={hidden ? 'none' : mode} className="pointer-events-none absolute inset-0 z-[15] overflow-hidden">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img ref={shadowRef} src="/whiteboard/hand-shadow.webp" alt="" draggable={false} decoding="async"
-        className="absolute left-0 top-0 max-w-none select-none" style={{ width: 200, opacity: 0, transformOrigin: `${TIP.x * 100}% ${TIP.y * 100}%`, willChange: 'transform, opacity', WebkitMaskImage: SLEEVE_FADE, maskImage: SLEEVE_FADE }} />
+      <img ref={shadowRef} src={photoOn ? '/whiteboard/hand-shadow.webp' : undefined} alt="" draggable={false} decoding="async"
+        className="absolute left-0 top-0 max-w-none select-none" style={{ width: 200, opacity: 0, display: photoOn ? undefined : 'none', transformOrigin: `${TIP.x * 100}% ${TIP.y * 100}%`, willChange: 'transform, opacity', WebkitMaskImage: SLEEVE_FADE, maskImage: SLEEVE_FADE }} />
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img ref={handRef} src="/whiteboard/hand.webp" alt="" draggable={false} decoding="async"
+      <img ref={handRef} src={photoOn ? '/whiteboard/hand.webp' : undefined} alt="" draggable={false} decoding="async"
         className="absolute left-0 top-0 max-w-none select-none"
-        style={{
-          width: 200, opacity: 0, transformOrigin: `${TIP.x * 100}% ${TIP.y * 100}%`, willChange: 'transform, opacity',
-          WebkitMaskImage: SLEEVE_FADE,
-          maskImage: SLEEVE_FADE,
-        }} />
+        style={{ width: 200, opacity: 0, display: photoOn ? undefined : 'none', transformOrigin: `${TIP.x * 100}% ${TIP.y * 100}%`, willChange: 'transform, opacity', WebkitMaskImage: SLEEVE_FADE, maskImage: SLEEVE_FADE }} />
     </div>
   )
+}
+
+/** Fallback: move the photographic hand sprite (tip pinned to the pen point). */
+function renderPhoto(hand: HTMLElement, shadow: HTMLElement, st: HandState) {
+  const hw = handWidth(st.w), hh = hw * HAND_RATIO
+  if (hand.style.width !== `${hw}px`) hand.style.width = shadow.style.width = `${hw}px`
+  const l = st.lift
+  const tx = st.x - TIP.x * hw + l * 7
+  const ty = st.y - TIP.y * hh - l * 11
+  const sc = 1 + l * 0.035
+  hand.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) rotate(${st.rot.toFixed(2)}deg) scale(${sc.toFixed(3)})`
+  shadow.style.transform = `translate3d(${(tx + 6 + l * 16).toFixed(1)}px, ${(ty + 9 + l * 20).toFixed(1)}px, 0) rotate(${st.rot.toFixed(2)}deg) scale(${sc.toFixed(3)})`
+  shadow.style.opacity = String((0.34 - l * 0.14) * st.visible)
+  hand.style.opacity = String(st.visible)
 }
 
 /** A pen engine owned by one board. */

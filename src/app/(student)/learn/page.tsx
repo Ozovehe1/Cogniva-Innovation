@@ -4,6 +4,7 @@ import { getSessionProfile } from '@/lib/auth'
 import { loadPathView, openingLines, formatDue } from '@/lib/path-view'
 import { VoiceWarm } from '@/components/voice-warm'
 import { Badge, Card, EmptyState, PageHeader, buttonClass } from '@/components/ui'
+import { HandPreload } from '@/components/whiteboard/hand-preload'
 import { TopicStart } from '@/components/topic-start'
 import { FLAGSHIP_LESSON } from '@/lib/flagship-lesson'
 
@@ -21,6 +22,7 @@ export default async function LearnPage() {
   return (
     <div className="max-w-4xl">
       <VoiceWarm lessonId={nextLesson} lines={lines} />
+      <HandPreload />
       <PageHeader
         eyebrow="Learn"
         title={view?.path?.status === 'ready' && !many ? view.path.goal : 'Lessons'}
