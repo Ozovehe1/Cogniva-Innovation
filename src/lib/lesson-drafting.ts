@@ -163,7 +163,12 @@ function toPlan(r: SectionRow): BeatPlan {
 }
 
 function beatRow(lessonId: string, position: number, b: BeatPlan) {
-  return { lesson_id: lessonId, position, title: b.title, goal: b.points.join('; ').slice(0, 400), key_points: b.points, minutes: Math.round(b.seconds / 6) / 10, seconds: b.seconds, kind: b.kind, chapter: b.chapter, optional: b.optional, status: 'pending' }
+  // Every row carries every column: a bulk insert fills keys missing from some rows with null.
+  return {
+    lesson_id: lessonId, position, title: b.title, goal: b.points.join('; ').slice(0, 400), key_points: b.points, minutes: Math.round(b.seconds / 6) / 10,
+    seconds: b.seconds, kind: b.kind, chapter: b.chapter, optional: b.optional, status: 'pending' as string,
+    steps: [] as Step[], play_ms: null as number | null, draft_model: null as string | null, attempts: 0, error: null as string | null,
+  }
 }
 
 /** Which model wrote a beat, how long it took, and what failed first (diagnostics, in lesson_sections.draft_model). */
