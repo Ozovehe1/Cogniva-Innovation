@@ -1,8 +1,12 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 
-// Verified from production on 2026-10-07: 2.0-flash and 2.5-flash-lite are retired for this key (404);
-// the 3.x flash-lite models answer and have their own free-tier quotas.
-const MODEL_CHAIN = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'] as const
+// Verified from production on 2026-10-07: every model below answered (or was only rate-limited)
+// for this key, each with its own free-tier quota. 2.0-flash and 2.5-flash-lite are retired (404).
+const MODEL_CHAIN = [
+  'gemini-3.8-flash', 'gemini-2.5-flash',
+  'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
+  'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+] as const
 
 // Primary model first; fall back when Google returns overload/quota errors or the
 // model is not available to this key. The lite models have their own free-tier quotas.
