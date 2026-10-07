@@ -1,5 +1,7 @@
 'use client'
 import { useState } from 'react'
+import { Check, Copy, Pencil } from 'lucide-react'
+import { Card, Eyebrow, Spinner, buttonClass, inputClass } from '@/components/ui'
 
 export function TutorCodeEditor({ initial }: { initial: string }) {
   const [code, setCode] = useState(initial)
@@ -35,53 +37,53 @@ export function TutorCodeEditor({ initial }: { initial: string }) {
   }
 
   return (
-    <div className="rounded-xl p-4" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.06)' }}>
-      <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#3F3F46' }}>Your tutor code</p>
+    <Card>
+      <Eyebrow className="mb-3">Your tutor code</Eyebrow>
 
       {editing ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          <label htmlFor="tutor-code-edit" className="sr-only">Tutor code</label>
+          <input
+            id="tutor-code-edit"
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20))}
+            onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
+            placeholder="e.g. JOHNS or MATH-001"
+            autoCapitalize="characters"
+            autoComplete="off"
+            className={`${inputClass} font-mono tracking-[0.12em]`}
+          />
+          <p className="text-[12px] text-muted">Letters, numbers and hyphens · 3–20 characters</p>
+          {error && <p role="alert" className="text-sm text-danger">{error}</p>}
           <div className="flex gap-2">
-            <input
-              autoFocus
-              value={draft}
-              onChange={e => setDraft(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20))}
-              onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
-              placeholder="e.g. JOHNS or MATH-001"
-              className="flex-1 px-3 py-2 rounded-lg text-sm font-mono text-white placeholder-zinc-700 focus:outline-none"
-              style={{ background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }}
-            />
-            <button onClick={save} disabled={saving || !draft.trim()}
-              className="px-3 py-2 rounded-lg text-xs font-medium text-white disabled:opacity-40"
-              style={{ background: '#7C3AED' }}>
-              {saving ? '...' : 'Save'}
+            <button onClick={save} disabled={saving || !draft.trim()} className={buttonClass('primary', 'md')}>
+              {saving ? <><Spinner /> Saving…</> : 'Save'}
             </button>
-            <button onClick={() => { setEditing(false); setDraft(code); setError('') }}
-              className="px-3 py-2 rounded-lg text-xs"
-              style={{ color: '#52525B' }}>
+            <button onClick={() => { setEditing(false); setDraft(code); setError('') }} className={buttonClass('ghost', 'md')}>
               Cancel
             </button>
           </div>
-          <p className="text-xs" style={{ color: '#3F3F46' }}>Letters, numbers and hyphens · 3–20 characters</p>
-          {error && <p className="text-xs" style={{ color: '#EF4444' }}>{error}</p>}
         </div>
       ) : (
-        <div className="flex items-center gap-3">
-          <span className="text-xl font-mono font-bold tracking-widest" style={{ color: '#A78BFA' }}>{code}</span>
-          <button onClick={copy} className="text-xs px-2.5 py-1 rounded-md transition"
-            style={{ background: copied ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.05)', color: copied ? '#22C55E' : '#52525B' }}>
-            {copied ? 'Copied' : 'Copy'}
-          </button>
-          <button onClick={() => { setDraft(code); setEditing(true) }}
-            className="text-xs px-2.5 py-1 rounded-md transition"
-            style={{ background: 'rgba(255,255,255,0.05)', color: '#52525B' }}>
-            Edit
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="font-mono text-[24px] font-semibold tracking-[0.16em] text-ink">{code}</span>
+          <div className="flex gap-2">
+            <button onClick={copy} className={buttonClass('secondary', 'sm')} aria-live="polite">
+              {copied ? <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2.25} /> : <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button onClick={() => { setDraft(code); setEditing(true) }} className={buttonClass('ghost', 'sm')}>
+              <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
+              Edit
+            </button>
+          </div>
         </div>
       )}
 
-      <p className="text-xs mt-3" style={{ color: '#27272A' }}>
-        Share this code with students — they type it in to connect with you
+      <p className="mt-4 text-[13px] leading-relaxed text-muted">
+        Share this code with students. They enter it to connect with you.
       </p>
-    </div>
+    </Card>
   )
 }

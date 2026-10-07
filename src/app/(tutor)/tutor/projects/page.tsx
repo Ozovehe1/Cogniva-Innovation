@@ -2,12 +2,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Project } from '@/types'
-
-const difficultyConfig = {
-  beginner: { color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
-  intermediate: { color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
-  advanced: { color: '#EF4444', bg: 'rgba(239,68,68,0.1)' },
-}
+import { Clock, FolderKanban, Plus } from 'lucide-react'
+import { Badge, Card, DifficultyBadge, EmptyState, PageHeader, Skeleton, buttonClass } from '@/components/ui'
 
 export default function TutorProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -18,54 +14,63 @@ export default function TutorProjectsPage() {
   }, [])
 
   if (loading) return (
-    <div className="flex items-center gap-2 text-zinc-600 text-sm pt-8">
-      <span className="w-4 h-4 rounded-full border-2 border-zinc-700 border-t-zinc-400 animate-spin flex-shrink-0" />
-      Loading projects...
+    <div className="max-w-4xl" aria-busy="true" aria-label="Loading projects">
+      <Skeleton className="mb-3 h-3 w-20" />
+      <Skeleton className="mb-8 h-9 w-48" />
+      <div className="grid gap-3 md:grid-cols-2">
+        {[0, 1, 2, 3].map(i => (
+          <Card key={i}>
+            <Skeleton className="mb-3 h-4 w-3/4" />
+            <Skeleton className="mb-2 h-3 w-full" />
+            <Skeleton className="mb-4 h-3 w-2/3" />
+            <Skeleton className="h-6 w-24 rounded-full" />
+          </Card>
+        ))}
+      </div>
     </div>
   )
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Projects</h1>
-          <p className="text-zinc-500 text-sm mt-0.5">{projects.length} project{projects.length !== 1 ? 's' : ''} created</p>
-        </div>
-        <Link href="/tutor/projects/new" className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition" style={{ background: 'rgba(5,150,105,0.15)', color: '#34D399', border: '1px solid rgba(5,150,105,0.25)' }}>
-          + New Project
-        </Link>
-      </div>
+    <div className="max-w-4xl">
+      <PageHeader
+        eyebrow="Projects"
+        title="Your projects"
+        description={<span className="tnum">{projects.length} project{projects.length !== 1 ? 's' : ''} created</span>}
+        actions={
+          <Link href="/tutor/projects/new" className={buttonClass('primary', 'md')}>
+            <Plus className="h-4 w-4" strokeWidth={2} />
+            New project
+          </Link>
+        }
+      />
 
       {projects.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <div className="text-4xl mb-4">📋</div>
-          <p className="text-white font-medium mb-1">No projects yet</p>
-          <p className="text-zinc-500 text-sm">Create your first project for students</p>
-        </div>
+        <EmptyState
+          icon={<FolderKanban className="h-5 w-5" strokeWidth={1.75} />}
+          title="No projects yet"
+          action={<Link href="/tutor/projects/new" className={buttonClass('primary', 'md')}>Create your first project</Link>}
+        >
+          Create a project, then assign it to students from their profile page.
+        </EmptyState>
       ) : (
-        <div className="space-y-3">
-          {projects.map(p => {
-            const dc = difficultyConfig[p.difficulty as keyof typeof difficultyConfig] || difficultyConfig['beginner']
-            return (
-              <div key={p.id} className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="text-white font-semibold text-sm">{p.title}</h3>
-                      {p.ai_generated && <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(124,58,237,0.15)', color: '#A78BFA', border: '1px solid rgba(124,58,237,0.2)' }}>AI</span>}
-                    </div>
-                    <p className="text-zinc-500 text-xs mb-3 leading-relaxed">{p.description.slice(0, 100)}...</p>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-zinc-600">{p.subject}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: dc.bg, color: dc.color }}>{p.difficulty}</span>
-                      <span className="text-xs text-zinc-600">{p.estimated_hours}h</span>
-                    </div>
-                  </div>
+        <ul className="grid gap-3 md:grid-cols-2">
+          {projects.map(p => (
+            <li key={p.id}>
+              <Card className="h-full">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <DifficultyBadge difficulty={p.difficulty} />
+                  {p.ai_generated && <Badge className="border-navy-line bg-navy-soft text-navy">Generated</Badge>}
                 </div>
-              </div>
-            )
-          })}
-        </div>
+                <h3 className="text-[17px] font-semibold leading-snug text-ink">{p.title}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted">{p.description.slice(0, 100)}...</p>
+                <p className="tnum mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-muted">
+                  <span>{p.subject}</span>
+                  <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" strokeWidth={1.75} />{p.estimated_hours}h</span>
+                </p>
+              </Card>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )

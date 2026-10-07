@@ -1,17 +1,11 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Check, ChevronDown } from 'lucide-react'
+import { intelligenceMeta, intelligenceOrder } from '@/components/intelligence'
+import { Alert, Card, PageHeader, Spinner, buttonClass, cx, inputClass as baseInput, labelClass as baseLabel, textareaClass } from '@/components/ui'
 
-const intelligenceOptions = [
-  { key: 'linguistic',           label: 'Linguistic',    emoji: '📖' },
-  { key: 'logicalMathematical',  label: 'Logical-Math',  emoji: '🔢' },
-  { key: 'spatial',              label: 'Spatial',        emoji: '🗺️' },
-  { key: 'musical',              label: 'Musical',        emoji: '🎵' },
-  { key: 'bodilyKinesthetic',    label: 'Kinesthetic',   emoji: '🏃' },
-  { key: 'interpersonal',        label: 'Interpersonal', emoji: '🤝' },
-  { key: 'intrapersonal',        label: 'Intrapersonal', emoji: '🧘' },
-  { key: 'naturalist',           label: 'Naturalist',    emoji: '🌿' },
-]
+const intelligenceOptions = intelligenceOrder.map(key => ({ key, label: intelligenceMeta[key].label }))
 
 export default function NewProjectPage() {
   const [form, setForm] = useState({
@@ -47,116 +41,102 @@ export default function NewProjectPage() {
     else { const d = await res.json(); setError(d.error || 'Failed'); setLoading(false) }
   }
 
-  const inputClass = "w-full px-4 py-3 rounded-xl text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 transition"
-  const inputStyle = { background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }
-  const labelClass = "block text-xs font-medium text-zinc-400 mb-1.5"
+  const hint = 'font-normal text-faint'
 
   return (
     <div className="max-w-2xl">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Create Project</h1>
-        <p className="text-zinc-500 text-sm mt-1">Design a learning project for your students</p>
-      </div>
+      <PageHeader eyebrow="Projects" title="New project" description="Design a learning project you can assign to your students." />
 
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="p-6 rounded-2xl space-y-5" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h2 className="text-white text-sm font-semibold">Basic Info</h2>
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <Card className="space-y-5">
+          <h2 className="text-[15px] font-semibold text-ink">Basics</h2>
           <div>
-            <label className={labelClass}>Project Title *</label>
-            <input type="text" value={form.title} onChange={e => setForm({...form, title: e.target.value})} required
-              className={inputClass} style={inputStyle} placeholder="e.g. Build a mini weather app" />
+            <label htmlFor="title" className={baseLabel}>Title</label>
+            <input id="title" type="text" value={form.title} onChange={e => setForm({...form, title: e.target.value})} required
+              className={baseInput} placeholder="e.g. Build a mini weather app" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div>
-              <label className={labelClass}>Subject *</label>
-              <input type="text" value={form.subject} onChange={e => setForm({...form, subject: e.target.value})} required
-                className={inputClass} style={inputStyle} placeholder="e.g. Technology" />
+              <label htmlFor="subject" className={baseLabel}>Subject</label>
+              <input id="subject" type="text" value={form.subject} onChange={e => setForm({...form, subject: e.target.value})} required
+                className={baseInput} placeholder="e.g. Technology" />
             </div>
             <div>
-              <label className={labelClass}>Difficulty *</label>
-              <select value={form.difficulty} onChange={e => setForm({...form, difficulty: e.target.value})}
-                className={inputClass} style={{ ...inputStyle, colorScheme: 'dark' }}>
-                <option value="beginner">Beginner</option>
-                <option value="intermediate">Intermediate</option>
-                <option value="advanced">Advanced</option>
-              </select>
+              <label htmlFor="difficulty" className={baseLabel}>Difficulty</label>
+              <div className="relative">
+                <select id="difficulty" value={form.difficulty} onChange={e => setForm({...form, difficulty: e.target.value})}
+                  className={cx(baseInput, 'appearance-none pr-10')}>
+                  <option value="beginner">Beginner</option>
+                  <option value="intermediate">Intermediate</option>
+                  <option value="advanced">Advanced</option>
+                </select>
+                <ChevronDown aria-hidden className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" strokeWidth={1.75} />
+              </div>
             </div>
           </div>
           <div>
-            <label className={labelClass}>Description *</label>
-            <textarea value={form.description} onChange={e => setForm({...form, description: e.target.value})} required rows={4}
-              className={`${inputClass} resize-none`} style={inputStyle}
-              placeholder="Describe what students will do and learn..." />
+            <label htmlFor="description" className={baseLabel}>Description</label>
+            <textarea id="description" value={form.description} onChange={e => setForm({...form, description: e.target.value})} required rows={4}
+              className={textareaClass} placeholder="What will students do, and what will they learn?" />
           </div>
-        </div>
+        </Card>
 
-        <div className="p-6 rounded-2xl space-y-5" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <h2 className="text-white text-sm font-semibold">Details</h2>
+        <Card className="space-y-5">
+          <h2 className="text-[15px] font-semibold text-ink">Details</h2>
           <div>
-            <label className={labelClass}>Learning Objectives <span className="text-zinc-600">(one per line)</span></label>
-            <textarea value={form.objectives} onChange={e => setForm({...form, objectives: e.target.value})} rows={3}
-              className={`${inputClass} resize-none`} style={inputStyle}
+            <label htmlFor="objectives" className={baseLabel}>Learning objectives <span className={hint}>· one per line</span></label>
+            <textarea id="objectives" value={form.objectives} onChange={e => setForm({...form, objectives: e.target.value})} rows={3}
+              className={textareaClass}
               placeholder={"Understand core concepts\nApply knowledge practically\nPresent findings clearly"} />
           </div>
           <div>
-            <label className={labelClass}>Steps <span className="text-zinc-600">(one per line)</span></label>
-            <textarea value={form.steps} onChange={e => setForm({...form, steps: e.target.value})} rows={4}
-              className={`${inputClass} resize-none`} style={inputStyle}
+            <label htmlFor="steps" className={baseLabel}>Steps <span className={hint}>· one per line</span></label>
+            <textarea id="steps" value={form.steps} onChange={e => setForm({...form, steps: e.target.value})} rows={4}
+              className={textareaClass}
               placeholder={"Step 1: Research the topic\nStep 2: Plan your approach\nStep 3: Execute\nStep 4: Review"} />
           </div>
           <div>
-            <label className={labelClass}>Deliverables <span className="text-zinc-600">(one per line)</span></label>
-            <textarea value={form.deliverables} onChange={e => setForm({...form, deliverables: e.target.value})} rows={2}
-              className={`${inputClass} resize-none`} style={inputStyle}
+            <label htmlFor="deliverables" className={baseLabel}>Deliverables <span className={hint}>· one per line</span></label>
+            <textarea id="deliverables" value={form.deliverables} onChange={e => setForm({...form, deliverables: e.target.value})} rows={2}
+              className={textareaClass}
               placeholder={"Written report\nPresentation slides"} />
           </div>
-          <div className="w-32">
-            <label className={labelClass}>Estimated Hours</label>
-            <input type="number" min="1" max="200" value={form.estimated_hours} onChange={e => setForm({...form, estimated_hours: +e.target.value})}
-              className={inputClass} style={inputStyle} />
+          <div className="w-36">
+            <label htmlFor="hours" className={baseLabel}>Estimated hours</label>
+            <input id="hours" type="number" inputMode="numeric" min="1" max="200" value={form.estimated_hours} onChange={e => setForm({...form, estimated_hours: +e.target.value})}
+              className={cx(baseInput, 'tnum')} />
           </div>
-          <div>
-            <label className={labelClass}>
-              Intelligences Activated
-              <span className="text-zinc-600 font-normal ml-1">(selecting these grows student scores on completion)</span>
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
-              {intelligenceOptions.map(({ key, label, emoji }) => {
+          <fieldset>
+            <legend className={baseLabel}>Intelligences this project develops</legend>
+            <p className="-mt-0.5 mb-3 text-[13px] text-muted">Selected intelligences grow in a student&apos;s profile when the project is approved.</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {intelligenceOptions.map(({ key, label }) => {
                 const on = activated.includes(key)
                 return (
-                  <button key={key} type="button" onClick={() => toggleIntelligence(key)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition text-left"
-                    style={{
-                      background: on ? 'rgba(124,58,237,0.15)' : '#18181B',
-                      border: `1px solid ${on ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                      color: on ? '#C4B5FD' : '#71717A',
-                    }}>
-                    <span>{emoji}</span>
-                    <span>{label}</span>
+                  <button key={key} type="button" onClick={() => toggleIntelligence(key)} aria-pressed={on}
+                    className={cx(
+                      'flex h-11 items-center gap-3 rounded-[10px] border px-3 text-left text-sm transition-colors duration-150',
+                      on ? 'border-accent bg-accent-soft font-medium text-ink' : 'border-line bg-surface text-ink-2 hover:border-line-strong',
+                    )}>
+                    <span className={cx('flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[5px] border', on ? 'border-accent bg-accent text-white' : 'border-line-strong bg-surface')}>
+                      {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                    </span>
+                    {label}
                   </button>
                 )
               })}
             </div>
-          </div>
-        </div>
+          </fieldset>
+        </Card>
 
-        {error && (
-          <div className="px-4 py-3 rounded-xl text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
-            {error}
-          </div>
-        )}
+        {error && <Alert tone="danger">{error}</Alert>}
 
-        <div className="flex gap-3">
-          <button type="button" onClick={() => router.back()} className="px-5 py-3 rounded-xl text-sm font-medium text-zinc-400 hover:text-white transition" style={{ background: '#18181B', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button type="button" onClick={() => router.back()} className={buttonClass('secondary', 'lg')}>
             Cancel
           </button>
-          <button type="submit" disabled={loading} className="flex-1 py-3 rounded-xl text-sm font-semibold text-white transition disabled:opacity-50" style={{ background: '#059669' }}>
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="w-4 h-4 rounded-full border-2 border-emerald-300 border-t-white animate-spin" />
-                Creating...
-              </span>
-            ) : 'Create Project'}
+          <button type="submit" disabled={loading} className={buttonClass('primary', 'lg', 'sm:min-w-44')}>
+            {loading ? <><Spinner /> Creating…</> : 'Create project'}
           </button>
         </div>
       </form>
