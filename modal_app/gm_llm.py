@@ -14,6 +14,7 @@ import time
 
 MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-2.5-flash"]
 _skip: dict[str, float] = {}
+_why: dict[str, str] = {}  # last refusal per model (status + quota id), for the error message
 
 
 def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, temperature=0.4, timeout=60, log=None) -> str:
@@ -69,6 +70,8 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
                     log.append(f"gemini {model} ok")
                 return text
             last = f"{model}: {r.status_code} {r.text[:160]}"
+            qid = re.findall(r'"quotaId":\s*"([^"]+)"', r.text)
+            _why[model] = f"{r.status_code} {','.join(sorted(set(qid)))[:120]}"
             if log is not None:
                 log.append(f"gemini {model}: {r.status_code}")
             if r.status_code == 429:
@@ -82,7 +85,7 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
         soon = [t for t in (_skip.get(m, 0) for m in MODELS) if t - time.time() < 60]
         time.sleep(max(3.0, min(45.0, wait_hint or 5.0)) if soon or attempt == 0 else 3.0)
         wait_hint = 0.0
-    raise RuntimeError(f"Gemini unavailable: {last}")
+    raise RuntimeError(f"Gemini unavailable: {last or ''} | " + "; ".join(f"{m}={_why.get(m, '?')} skip {max(0, int(_skip.get(m, 0) - time.time()))}s" for m in MODELS))
 
 
 def parse_json(text: str):
