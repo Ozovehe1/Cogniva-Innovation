@@ -9,13 +9,13 @@ import { EASE_SMOOTH, renderTex } from './elements'
 export type CheckResponse = 'got_it' | 'again' | 'differently' | 'continue' | 'answer' | 'explain_wrong'
 
 /** Renders inline $...$ math inside question text and options. */
-export function RichText({ text }: { text: string }) {
+export function RichText({ text, display = false }: { text: string; display?: boolean }) {
   const parts = text.split(/(\$[^$]+\$)/g)
   return (
     <>
       {parts.map((p, i) =>
         p.startsWith('$') && p.endsWith('$') && p.length > 2
-          ? <span key={i} dangerouslySetInnerHTML={{ __html: renderTex(p.slice(1, -1)) }} />
+          ? <span key={i} dangerouslySetInnerHTML={{ __html: renderTex(p.slice(1, -1), display) }} />
           : <React.Fragment key={i}>{p}</React.Fragment>,
       )}
     </>

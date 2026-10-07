@@ -595,10 +595,18 @@ function Transcript({ lines, currentIdx, reduced }: { lines: ReturnType<typeof s
   useEffect(() => {
     const box = boxRef.current, cur = curRef.current
     if (!box || !cur) return
-    // Keep the current line in view inside the transcript box without scrolling the page.
-    const top = cur.offsetTop // box is the offset parent
-    const target = Math.max(0, top - box.clientHeight + cur.offsetHeight + 12)
-    if (Math.abs(box.scrollTop - target) > 2) box.scrollTo({ top: target, behavior: reduced ? 'auto' : 'smooth' })
+    // The current lines are always the last ones: keep the end in view inside the
+    // transcript box (never scroll the page), but don't push the current line's
+    // start out of view when it is taller than the box.
+    const scroll = () => {
+      const end = box.scrollHeight - box.clientHeight
+      const target = Math.max(0, Math.min(end, cur.offsetTop - 12))
+      if (Math.abs(box.scrollTop - target) > 2) box.scrollTo({ top: target, behavior: reduced ? 'auto' : 'smooth' })
+    }
+    scroll()
+    // KaTeX and fonts can change line heights after the first paint.
+    const t = setTimeout(scroll, 250)
+    return () => clearTimeout(t)
   }, [lines.length, currentIdx, reduced])
   const firstCurrent = lines.findIndex(l => l.index === currentIdx)
   return (
@@ -629,7 +637,7 @@ function Transcript({ lines, currentIdx, reduced }: { lines: ReturnType<typeof s
                   )}
                 >
                   {l.kind === 'check' && <span className="mr-1.5 text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Question</span>}
-                  <RichText text={l.text} />
+                  <RichText text={l.text} display={l.kind === 'math'} />
                 </li>
               )
             })}

@@ -11,7 +11,9 @@ export function SiteHeader() {
         <Logo />
         <nav className="flex items-center gap-0.5 sm:gap-2" aria-label="Main">
           <Link href="/about" className={buttonClass('ghost', 'md')}>About</Link>
-          <Link href="/login" className={`${buttonClass('ghost', 'md')} hidden sm:inline-flex`}>Sign in</Link>
+          <span className="hidden sm:contents">
+            <Link href="/login" className={buttonClass('ghost', 'md')}>Sign in</Link>
+          </span>
           <Link href="/signup" className={buttonClass('primary', 'md')}>Get started</Link>
         </nav>
       </div>
@@ -51,20 +53,20 @@ export function LessonIllustration() {
     <div className="rounded-[18px] border border-line bg-surface p-3 shadow-[var(--shadow-raised)] sm:p-4">
       <div className="rounded-[12px] border border-line bg-[#FDFCF9] p-4 sm:p-5">
         <p className="font-display text-[22px] leading-tight text-ink">What is a derivative?</p>
-        <div className="mt-3 grid grid-cols-[1.25fr_1fr] items-center gap-3">
-          <svg viewBox="0 0 280 200" className="h-auto w-full" role="img" aria-label="The curve y equals x squared with its tangent line at the point P">
+        <div className="mt-3 grid items-center gap-3 sm:grid-cols-[1.25fr_1fr]">
+          <svg viewBox="0 0 280 200" className="mx-auto h-auto w-full max-w-[320px]" role="img" aria-label="The curve y equals x squared with its tangent line at the point P">
             <line x1={fx(-0.5)} y1={fy(0)} x2={fx(2.6)} y2={fy(0)} stroke="#66666F" strokeWidth="1.4" />
             <line x1={fx(0)} y1={fy(-0.5)} x2={fx(0)} y2={fy(6)} stroke="#66666F" strokeWidth="1.4" />
             <path d={curve} fill="none" stroke="#1F4D3A" strokeWidth="3" strokeLinecap="round" />
             <line x1={fx(0.25)} y1={fy(-0.5)} x2={fx(2.5)} y2={fy(4)} stroke="#23406A" strokeWidth="2.6" strokeLinecap="round" />
             <circle cx={fx(1)} cy={fy(1)} r="5" fill="#14141A" />
-            <text x={fx(1) - 12} y={fy(1) - 8} fontSize="17" fontStyle="italic" textAnchor="end" fill="#14141A" style={{ fontFamily: 'var(--font-serif)' }}>P</text>
-            <text x={fx(2.6)} y={fy(0) + 20} fontSize="15" fontStyle="italic" textAnchor="end" fill="#14141A" style={{ fontFamily: 'var(--font-serif)' }}>x</text>
+            <text x={fx(1) - 12} y={fy(1) - 8} fontSize="20" fontStyle="italic" textAnchor="end" fill="#14141A" style={{ fontFamily: 'var(--font-serif)' }}>P</text>
+            <text x={fx(2.6)} y={fy(0) + 20} fontSize="18" fontStyle="italic" textAnchor="end" fill="#14141A" style={{ fontFamily: 'var(--font-serif)' }}>x</text>
           </svg>
-          <div className="space-y-2 font-display text-ink">
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 font-display text-ink sm:block sm:space-y-2">
             <p className="text-[19px] text-accent">y = x²</p>
             <p className="text-[19px] text-[#23406A]">f′(1) = 2</p>
-            <p className="font-sans text-[13px] leading-snug text-ink-2">The derivative is the slope of the tangent line.</p>
+            <p className="w-full font-sans text-[14px] leading-snug text-ink-2">The derivative is the slope of the tangent line.</p>
           </div>
         </div>
       </div>
