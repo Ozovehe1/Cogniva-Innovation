@@ -81,7 +81,7 @@ export function coreBeatCount(targetMinutes: number) {
 }
 
 /** Plans beats 2..N of a lesson (beat 1, the opening hook, is written in parallel). One small call. */
-export async function planLessonBeats(lesson: LessonLite, targetMinutes: number, notes?: string, opts: { deadline?: number; onModel?: (m: string) => void } = {}): Promise<BeatPlan[]> {
+export async function planLessonBeats(lesson: LessonLite, targetMinutes: number, notes?: string, opts: { deadline?: number; onModel?: (m: string) => void; trace?: string[] } = {}): Promise<BeatPlan[]> {
   const core = coreBeatCount(targetMinutes)
   const chapters = Math.max(1, Math.min(8, Math.round(targetMinutes / 5)))
   const prompt = `Plan a whiteboard lesson of ${targetMinutes} minutes as a list of short BEATS. Each beat is about ${BEAT_MIN_S}-${BEAT_MAX_S} seconds of teaching and is written separately later, so plan precisely.
@@ -105,7 +105,8 @@ Rules:
 - Every objective is covered. Plan every point as something to SHOW (e.g. "animate the slope as the point slides"), never "define X".
 - Each beat: "chapter" (chapter title, under 50 characters), "title" (under 60 characters), "kind", "seconds" (${BEAT_MIN_S} to ${BEAT_MAX_S}), "points" (1 to 3 short phrases: exactly what this beat shows), "optional" (true/false).
 Return {"beats": [...]} only.`
-  const raw = await generateStructuredJson(prompt, { systemInstruction: TUTOR_VOICE, timeoutMs: 45_000, primaryTimeoutMs: 30_000, deadline: opts.deadline, onModel: opts.onModel })
+  // The plan is on the path to the first beat (the learner is waiting): fast models first, short timeouts.
+  const raw = await generateStructuredJson(prompt, { systemInstruction: TUTOR_VOICE, timeoutMs: 25_000, primaryTimeoutMs: 20_000, deadline: opts.deadline, onModel: opts.onModel, trace: opts.trace, preferFast: true })
   return cleanPlan(raw, targetMinutes)
 }
 
@@ -115,13 +116,16 @@ export function hookPlan(lesson: LessonLite): BeatPlan {
 }
 
 /** An extra practice beat added before the wrap when the lesson is running short. */
-export function extraBeat(plan: BeatPlan[], n: number, deficitS: number): BeatPlan {
+export const EXTRA_PREFIX = 'Extra: '
+
+export function extraBeat(plan: BeatPlan[], n: number, deficitS: number, chapter: string): BeatPlan {
   const teaching = plan.filter(b => b.kind === 'demo' || b.kind === 'example')
   const src = teaching[(teaching.length - 1 - (n % Math.max(1, teaching.length)) + teaching.length) % Math.max(1, teaching.length)]
   const kind: BeatKind = n % 2 === 0 ? 'example' : 'your_turn'
   return {
-    chapter: 'More practice',
-    title: (kind === 'example' ? `Another example: ${src?.title ?? 'the main idea'}` : `Your turn: ${src?.title ?? 'the main idea'}`).slice(0, 60),
+    // Same chapter as the closing beat: practice continues on its board, with no extra chapter break.
+    chapter,
+    title: `${EXTRA_PREFIX}${kind === 'example' ? 'another example' : 'your turn'}: ${src?.title ?? 'the main idea'}`.slice(0, 80),
     kind,
     seconds: clampS(Math.min(BEAT_TARGET_S, deficitS)),
     points: src?.points?.length ? src.points : ['apply the main idea to a new case'],
@@ -154,6 +158,15 @@ export interface BeatContext {
   chapterStart: boolean
   /** First beat of the whole lesson (written in parallel with the plan; the plan is not known yet). */
   opening?: boolean
+}
+
+/** Short summary of the models that failed before one answered, e.g. "gemini-3.8-flash 429, gemini-2.5-flash timeout". */
+export function traceSummary(trace: string[] | undefined): string {
+  return (trace ?? []).map(t => {
+    const model = t.split(':')[0]
+    const why = /429|RESOURCE_EXHAUSTED|quota/i.test(t) ? '429' : /timed? ?out|aborted|deadline/i.test(t) ? 'timeout' : /503|UNAVAILABLE|overloaded/i.test(t) ? '503' : /404|not found/i.test(t) ? '404' : 'error'
+    return `${model} ${why}`
+  }).join(', ')
 }
 
 /** Steps a beat of `seconds` should have, and its spoken words. */
@@ -241,7 +254,8 @@ ${SHOW_DONT_TELL}
 Length: this beat plays for about ${beat.seconds} seconds. Its "say" lines together are about ${words} spoken words (15 to 35 words per narrated step, while the board moves). Use ${min} to ${max} steps. Real teaching only: no filler, no recap of earlier beats, no empty praise.
 Return {"steps": [...]} only.`
   const known = ctx.chapterStart ? {} : { knownIds: ids, knownAxes: axes, knownVars: vars }
-  const gen = { ...known, maxSteps: 40, timeoutMs: 40_000, primaryTimeoutMs: 30_000, meta: ctx.meta, played: ctx.chapterStart ? undefined : ctx.board, layoutRepair: false, deadline: ctx.deadline }
+  // The opening beat is what the learner waits for: fast models first, short timeouts.
+  const gen = { ...known, maxSteps: 40, timeoutMs: ctx.opening ? 25_000 : 40_000, primaryTimeoutMs: ctx.opening ? 20_000 : 30_000, meta: ctx.meta, played: ctx.chapterStart ? undefined : ctx.board, layoutRepair: false, deadline: ctx.deadline, preferFast: !!ctx.opening }
   const boardHasDiagram = !ctx.chapterStart && ctx.board.some(s => s.type === 'draw')
   let steps = await generateSteps(prompt, gen)
   const problem = beatProblem(steps, beat.kind, boardHasDiagram)

@@ -21,7 +21,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
 import { GeminiQuotaError } from './gemini'
 import type { GenMeta } from './lesson-ai'
-import { HOOK_SECONDS, MAX_BEATS, MAX_EXTRA_BEATS, draftBeat, extraBeat, hookPlan, planLessonBeats, type BeatKind, type BeatPlan } from './lesson-beats'
+import { EXTRA_PREFIX, HOOK_SECONDS, MAX_BEATS, MAX_EXTRA_BEATS, draftBeat, extraBeat, hookPlan, planLessonBeats, traceSummary, type BeatKind, type BeatPlan } from './lesson-beats'
 import { flattenSections, type Chapter } from './lesson-sections'
 import type { Step } from './lesson-schema'
 import { lengthReport } from './lesson-timing'
@@ -166,6 +166,12 @@ function beatRow(lessonId: string, position: number, b: BeatPlan) {
   return { lesson_id: lessonId, position, title: b.title, goal: b.points.join('; ').slice(0, 400), key_points: b.points, minutes: Math.round(b.seconds / 6) / 10, seconds: b.seconds, kind: b.kind, chapter: b.chapter, optional: b.optional, status: 'pending' }
 }
 
+/** Which model wrote a beat, how long it took, and what failed first (diagnostics, in lesson_sections.draft_model). */
+const modelNote = (meta: GenMeta) => {
+  const failed = traceSummary(meta.trace)
+  return `${meta.model ?? 'unknown'} ${Math.round(meta.ms / 100) / 10}s${failed ? ` after ${failed}` : ''}`.slice(0, 200)
+}
+
 const sayOf = (steps: Step[]) => steps.map(s => s.say ?? '').filter(Boolean).join(' ')
 
 /**
@@ -216,9 +222,10 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         const hook = hookPlan(lite)
         const hookMeta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
         let planModel: string | null = null
+        const planTrace: string[] = []
         const deadline = Math.min(Date.now() + BEAT_DEADLINE_MS, hardEnd - 20_000)
         const [planR, hookR] = await Promise.allSettled([
-          planLessonBeats(lite, lesson.target_minutes ?? 15, notes, { deadline, onModel: m => { planModel = m } }),
+          planLessonBeats(lite, lesson.target_minutes ?? 15, notes, { deadline, onModel: m => { planModel = m }, trace: planTrace }),
           draftBeat({ lesson: lite, plan: [hook], index: 0, board: [], recentSay: '', notes, meta: hookMeta, deadline, chapterStart: true, opening: true }),
         ])
         if (planR.status === 'rejected') {
@@ -230,12 +237,12 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
           return 'failed'
         }
         const plan = planR.value
-        console.log(`Lesson ${lessonId}: plan of ${plan.length} beats by ${planModel}; opening beat ${hookR.status === 'fulfilled' ? `by ${hookMeta.model} in ${hookMeta.ms} ms` : `failed: ${hookR.reason instanceof Error ? hookR.reason.message.slice(0, 160) : hookR.reason}`}`)
+        console.log(`Lesson ${lessonId}: plan of ${plan.length} beats by ${planModel}${planTrace.length ? ` after ${traceSummary(planTrace)}` : ''}; opening beat ${hookR.status === 'fulfilled' ? `by ${hookMeta.model} in ${hookMeta.ms} ms` : `failed: ${hookR.reason instanceof Error ? hookR.reason.message.slice(0, 160) : hookR.reason}`}`)
         await db.from('lesson_sections').delete().eq('lesson_id', lessonId)
         const rows = [hook, ...plan].map((b, i) => beatRow(lessonId, i, b))
         if (hookR.status === 'fulfilled') {
           const len = lengthReport(hookR.value, hook.seconds / 60)
-          Object.assign(rows[0], { status: 'ready', steps: hookR.value, play_ms: Math.round(len.ms), draft_model: hookMeta.model, attempts: 1 })
+          Object.assign(rows[0], { status: 'ready', steps: hookR.value, play_ms: Math.round(len.ms), draft_model: modelNote(hookMeta), attempts: 1, error: `Opening beat at ${Math.round((Date.now() - t0) / 100) / 10}s; plan by ${planModel ?? '?'}${planTrace.length ? ` after ${traceSummary(planTrace)}` : ''}`.slice(0, 300) })
         }
         const { error } = await db.from('lesson_sections').insert(rows)
         if (error) {
@@ -275,11 +282,14 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       }
       // …and extra practice before the closing beat until the lesson reaches its target.
       if (next.kind === 'wrap' && next.status === 'pending') {
-        const extras = rows.filter(r => r.chapter === 'More practice').length
-        const wrapMs = (next.seconds ?? 60) * 1000
-        if (played + wrapMs < targetMs * 0.93 && extras < MAX_EXTRA_BEATS && rows.length < MAX_BEATS) {
-          const deficitS = Math.round((targetMs - played - wrapMs) / 1000)
-          const extra = extraBeat(rows.map(toPlan), extras, deficitS)
+        const extras = rows.filter(r => r.title.startsWith(EXTRA_PREFIX)).length
+        // Beats play shorter or longer than planned; expect the wrap to run like the beats so far.
+        const plannedReady = ready.reduce((a, r) => a + (r.seconds ?? 60) * 1000, 0)
+        const pace = plannedReady > 0 ? Math.min(1.3, Math.max(0.4, played / plannedReady)) : 1
+        const wrapMs = (next.seconds ?? 60) * 1000 * pace
+        if (played + wrapMs < targetMs * 0.97 && extras < MAX_EXTRA_BEATS && rows.length < MAX_BEATS) {
+          const deficitS = Math.round((targetMs - played - wrapMs) / 1000 / pace)
+          const extra = extraBeat(rows.map(toPlan), extras, deficitS, next.chapter ?? next.title)
           // Shift the wrap (and anything after it) down one place; nothing after it is published yet.
           for (const r of rows.filter(r => r.position >= next.position).sort((a, b) => b.position - a.position)) {
             await db.from('lesson_sections').update({ position: r.position + 1 }).eq('id', r.id)
@@ -311,7 +321,7 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         if (chapterStart && before.length > 0 && !(steps[0]?.type === 'clear' && !(steps[0] as { targets?: string[] }).targets)) steps = [{ type: 'clear' }, ...steps]
         const len = lengthReport(steps, (next.seconds ?? 60) / 60)
         await db.from('lesson_sections').update({
-          status: 'ready', steps, play_ms: Math.round(len.ms), draft_model: meta.model, attempts: (next.attempts ?? 0) + 1,
+          status: 'ready', steps, play_ms: Math.round(len.ms), draft_model: modelNote(meta), attempts: (next.attempts ?? 0) + 1,
           error: len.ratio < 0.6 ? `Plays ${Math.round(len.ms / 1000)} of ${next.seconds} s` : null,
         }).eq('id', next.id)
         // A finished clip goes into this beat before it is published (published beats never change).

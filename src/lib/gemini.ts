@@ -61,6 +61,8 @@ export interface GenerateOptions {
   deadline?: number
   /** Called with the model that answered (safe under concurrency, unlike lastGeminiModel). */
   onModel?: (model: string) => void
+  /** Latency first: try the flash-lite models (fast, 15 RPM / 500 RPD free) before the flash models. */
+  preferFast?: boolean
 }
 
 /* ───────────── Free-tier pacing ─────────────
@@ -118,6 +120,7 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
   const live = chain.filter(m => (skipUntil.get(m) ?? 0) <= now)
   // If everything is marked as skipped, try the whole chain anyway (quota may have reset).
   let order = opts.models ? [...chain] : live.length ? live : [...chain]
+  if (opts.preferFast) order = [...order.filter(m => /lite/.test(m)), ...order.filter(m => !/lite/.test(m))]
   // Spread calls under the free-tier per-minute limits: prefer models with a free slot,
   // and when none has one, wait for the first slot (bounded by the deadline).
   for (let waits = 0; waits < 3; waits++) {

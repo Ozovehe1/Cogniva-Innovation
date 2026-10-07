@@ -83,6 +83,8 @@ export async function generateSteps(
     layoutRepair?: boolean
     /** Absolute deadline for every model call this makes (see GenerateOptions.deadline). */
     deadline?: number
+    /** Try the fast flash-lite models first (see GenerateOptions.preferFast). */
+    preferFast?: boolean
   },
 ): Promise<Step[]> {
   const t0 = Date.now()
@@ -97,7 +99,7 @@ export async function generateSteps(
   }
   meta.trace = []
   let answered: string | null = null
-  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace, deadline: opts.deadline, onModel: (m: string) => { answered = m } }
+  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace, deadline: opts.deadline, preferFast: opts.preferFast, onModel: (m: string) => { answered = m } }
   let raw: unknown
   try {
     raw = await generateStructuredJson(prompt, gen)
