@@ -11,6 +11,7 @@ import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
 import { NATURAL_VOICE_WAIT_MS, getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
 import { buildTimeline, firedAt, varsAt, type StepTimeline } from './timeline'
 import { VarStore, VarsContext } from './live-vars'
+import { HandOverlay, PenProvider, usePenEngine } from './pen'
 import { cx } from '@/components/ui'
 import { chapterAt, estimateStepMs, formatDuration, type Chapter } from '@/lib/lesson-sections'
 
@@ -262,6 +263,9 @@ export function WhiteboardPlayer({
   }, [steps, blockersFor, emit])
 
   const blocked = pendingCheck !== null || clipIdx !== null || thinking
+
+  /** The pen that writes on the board and moves the hand (see ./pen). */
+  const pen = usePenEngine()
 
   /* ── Voice ── */
   const narratorRef = useRef<Narrator | null>(null)
@@ -787,6 +791,7 @@ export function WhiteboardPlayer({
       )}
 
       {/* Board */}
+      <PenProvider pen={pen}>
       <VarsContext.Provider value={varStore}>
       <BoardScale.Provider value={scale || 1}>
         <div
@@ -832,6 +837,9 @@ export function WhiteboardPlayer({
               )}
             </>
           ) : drawing}
+
+          {/* The hand holding the marker (hidden with reduced motion: writing then appears at once). */}
+          <HandOverlay pen={pen} hidden={reduced} />
 
           {/* Manim clip overlay */}
           <AnimatePresence>
@@ -899,6 +907,7 @@ export function WhiteboardPlayer({
         </div>
       </BoardScale.Provider>
       </VarsContext.Provider>
+      </PenProvider>
 
       {/* Controls */}
       <div className="mt-3 flex items-center gap-0.5 sm:gap-2">

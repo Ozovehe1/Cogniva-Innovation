@@ -1,5 +1,5 @@
 'use client'
-import React, { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import katex from 'katex'
 import type { Num, Shape, Vars } from '@/lib/lesson-schema'
@@ -21,6 +21,8 @@ import {
   type TextEl,
 } from './board-state'
 import { useLiveVars } from './live-vars'
+import { HandText, canHandwrite, useInkReveal } from './handwriting'
+import { usePen, type Pt } from './pen'
 
 const NO_VARS: Vars = {}
 
@@ -54,6 +56,24 @@ function Content({ kind, content }: { kind: TextEl['kind']; content: string }) {
   const html = useMemo(() => (kind === 'math' ? renderTex(content, true) : null), [kind, content])
   if (html !== null) return <span className="wb-math" dangerouslySetInnerHTML={{ __html: html }} />
   return <>{content}</>
+}
+
+/** Text in the handwriting font when it can be drawn with it, otherwise the regular rendering. */
+function Ink({ el, content, px, animate, reduced, duration, maxWidth }: {
+  el: TextEl; content: string; px: number; animate: boolean; reduced: boolean; duration?: number; maxWidth?: number
+}) {
+  const color = INK_HEX[el.color]
+  if (el.kind === 'text' && !el.dyn && canHandwrite(content)) {
+    return <HandText text={content} px={px} color={color} maxWidth={maxWidth} align={el.align ?? 'left'} animate={animate} reduced={reduced} duration={duration} />
+  }
+  return <Reveal kind={el.kind} content={content} px={px} animate={animate && !reduced} duration={duration} />
+}
+
+/** Maths and mixed text, written symbol by symbol when it first appears. */
+function Reveal({ kind, content, px, animate, duration }: { kind: TextEl['kind']; content: string; px: number; animate: boolean; duration?: number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useInkReveal(ref, animate, px, duration)
+  return <div ref={ref}><Content kind={kind} content={content} /></div>
 }
 
 /* ───────────── Text & math ───────────── */
@@ -133,32 +153,26 @@ function BoardText({ el, animate, reduced, registerRef, fontPx, duration }: {
               transition={{ duration: reduced ? 0.15 : morphS * 0.6, ease: EASE_SMOOTH }}
               style={{ whiteSpace: style.whiteSpace }}
             >
-              <Content kind={el.kind} content={el.prevContent} />
+              <Ink el={el} content={el.prevContent} px={fontPx} animate={false} reduced={reduced} maxWidth={el.maxWidth} />
             </motion.div>
             <motion.div
               initial={{ opacity: 0, y: reduced ? 0 : 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: reduced ? 0.15 : morphS * 0.65, delay: reduced ? 0 : morphS * 0.3, ease: EASE_SMOOTH }}
             >
-              <Content kind={el.kind} content={el.content} />
+              <Ink el={el} content={el.content} px={fontPx} animate={false} reduced={reduced} maxWidth={el.maxWidth} />
             </motion.div>
           </>
         ) : animate === 'enter' && !reduced ? (
-          // Handwriting-like reveal: a left-to-right wipe with a soft leading edge.
-          <motion.div
-            initial={{ clipPath: 'inset(-20% 100% -20% -2%)', opacity: 0.2 }}
-            animate={{ clipPath: 'inset(-20% -2% -20% -2%)', opacity: 1 }}
-            transition={{ duration: enterMs / 1000, ease: 'linear', opacity: { duration: 0.25 } }}
-          >
-            <Content kind={el.kind} content={el.content} />
-          </motion.div>
+          // Written by the pen: stroke by stroke (handwriting) or symbol by symbol (maths).
+          <Ink el={el} content={el.content} px={fontPx} animate reduced={reduced} duration={enterMs} maxWidth={el.maxWidth} />
         ) : (
           <motion.div
             initial={animate ? { opacity: 0 } : false}
             animate={{ opacity: 1 }}
             transition={{ duration: reduced ? 0.2 : 0.18 }}
           >
-            <Content kind={el.kind} content={el.content} />
+            <Ink el={el} content={el.content} px={fontPx} animate={false} reduced={reduced} maxWidth={el.maxWidth} />
           </motion.div>
         )}
       </div>
@@ -188,8 +202,22 @@ function FlowText({
   const markColor = mark ? INK_HEX[mark.color] : undefined
   const enterMs = duration ?? animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
   const morphing = animate === 'morph'
+  // Width the handwriting may wrap to (the notes column).
+  const outerRef = useRef<HTMLDivElement>(null)
+  const [avail, setAvail] = useState(0)
+  useLayoutEffect(() => {
+    const node = outerRef.current
+    if (!node) return
+    const read = () => setAvail(Math.max(80, node.clientWidth - (mark?.style === 'box' ? 18 : 2)))
+    read()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(read) : null
+    ro?.observe(node)
+    return () => ro?.disconnect()
+  }, [mark?.style])
+  const hand = el.kind === 'text' && !el.dyn && canHandwrite(el.content)
   return (
     <motion.div
+      ref={outerRef}
       layout={reduced ? false : 'position'}
       initial={animate === 'enter' ? { opacity: 0, y: reduced ? 0 : 6 } : false}
       animate={{ opacity: 1, y: 0 }}
@@ -219,12 +247,14 @@ function FlowText({
       >
         <motion.div
           key={morphing ? `m-${el.morphAct ?? el.content}` : 'c'}
-          initial={morphing ? { opacity: 0, y: reduced ? 0 : 6 } : animate === 'enter' && !reduced ? { clipPath: 'inset(-20% 100% -20% -2%)' } : false}
-          animate={{ opacity: 1, y: 0, clipPath: 'inset(-20% -2% -20% -2%)' }}
-          transition={{ duration: morphing ? (reduced ? 0.15 : 0.6) : reduced ? 0.2 : enterMs / 1000, ease: morphing ? EASE_SMOOTH : 'linear' }}
+          initial={morphing ? { opacity: 0, y: reduced ? 0 : 6 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: morphing ? (reduced ? 0.15 : 0.6) : 0.2, ease: EASE_SMOOTH }}
           className={el.kind === 'math' ? 'max-w-full overflow-x-auto overflow-y-hidden py-1' : undefined}
         >
-          <Content kind={el.kind} content={el.content} />
+          {hand && !avail ? null : (
+            <Ink el={el} content={el.content} px={px} animate={animate === 'enter'} reduced={reduced} duration={enterMs} maxWidth={hand ? avail : undefined} />
+          )}
         </motion.div>
       </div>
     </motion.div>
@@ -395,9 +425,57 @@ interface StrokeProps {
   maskId: string
 }
 
+/** cubic-bezier(x1, y1, x2, y2) as a function of time (same curve framer-motion uses). */
+function bezier([x1, y1, x2, y2]: [number, number, number, number]) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by
+  const sx = (t: number) => ((ax * t + bx) * t + cx) * t
+  const sy = (t: number) => ((ay * t + by) * t + cy) * t
+  const dx = (t: number) => (3 * ax * t + 2 * bx) * t + cx
+  return (x: number) => {
+    if (x <= 0) return 0
+    if (x >= 1) return 1
+    let t = x
+    for (let i = 0; i < 6; i++) { const e = sx(t) - x; const d = dx(t); if (Math.abs(e) < 1e-4 || !d) break; t -= e / d }
+    return sy(Math.min(1, Math.max(0, t)))
+  }
+}
+const easeSmooth = bezier(EASE_SMOOTH)
+
+/** Client position of a point at length `l` along a path inside the board's SVG (handles CSS scaling and group transforms). */
+function pathPoint(path: SVGPathElement, l: number): Pt | null {
+  const svg = path.ownerSVGElement
+  if (!svg) return null
+  const r = svg.getBoundingClientRect()
+  const w = svg.width.baseVal.value || svg.clientWidth
+  if (!r.width || !w) return null
+  let pt = path.getPointAtLength(l)
+  const m = path.getCTM()
+  if (m) pt = pt.matrixTransform(m)
+  const k = r.width / w
+  return { x: r.left + pt.x * k, y: r.top + pt.y * k }
+}
+
+/** Has the board's pen follow a path while framer-motion draws it on. */
+function usePenFollow(ref: React.RefObject<SVGPathElement | null>, active: boolean, duration: number, delay: number) {
+  const pen = usePen()
+  useEffect(() => {
+    const p = ref.current
+    if (!p || !active || duration <= 0) return
+    let len = 0
+    try { len = p.getTotalLength() } catch { return }
+    if (len < 2) return
+    return pen.run([{ start: delay * 1000, dur: duration * 1000, point: f => pathPoint(p, len * easeSmooth(f)) }])
+    // Once per mount of a newly drawn stroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active])
+}
+
 /** A path drawn on with a stroke animation. Dashed paths are revealed through a mask so the dashes survive. */
 function Stroke({ d, color, width, dashed, animate, reduced, duration, delay = 0, clipId, fill = 'none', maskId }: StrokeProps) {
   const draw = animate && !reduced
+  const pathRef = useRef<SVGPathElement>(null)
+  usePenFollow(pathRef, draw, duration, delay)
   const common = {
     fill,
     stroke: color,
@@ -425,12 +503,13 @@ function Stroke({ d, color, width, dashed, animate, reduced, duration, delay = 0
             </mask>
           </defs>
         )}
-        <path d={d} {...common} strokeDasharray={`${width * 3} ${width * 2.6}`} mask={draw ? `url(#${maskId})` : undefined} />
+        <path ref={pathRef} d={d} {...common} strokeDasharray={`${width * 3} ${width * 2.6}`} mask={draw ? `url(#${maskId})` : undefined} />
       </g>
     )
   }
   return (
     <motion.path
+      ref={pathRef}
       d={d}
       {...common}
       initial={draw ? { pathLength: 0, opacity: 0 } : animate ? { opacity: 0 } : false}
