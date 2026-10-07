@@ -21,7 +21,7 @@ export const FLAGSHIP_LESSON = {
 }
 
 /** Rendered once on the Modal Manim service (code: scripts/flagship-clip.py), timed to the clip's narration. */
-export const FLAGSHIP_CLIP_URL = 'https://tyessjnrwznyizficuyp.supabase.co/storage/v1/object/public/manim-clips/examples/ball-flight/1.mp4'
+export const FLAGSHIP_CLIP_URL = 'https://tyessjnrwznyizficuyp.supabase.co/storage/v1/object/public/manim-clips/examples/ball-flight/2.mp4'
 
 const H = '15*t - 4.9*t^2'
 const V = '15 - 9.8*t'
