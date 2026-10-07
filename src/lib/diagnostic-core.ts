@@ -82,8 +82,8 @@ export function topoOrder(g: DiagGraph): DiagNode[] {
   return out
 }
 
-/** Clean an AI-written graph: unique ids, known prereqs only, 2 valid items per node. */
-export function cleanGraph(raw: unknown, fallbackSubject: string): DiagGraph {
+/** Clean an AI-written graph: unique ids, known prereqs only, 2 valid items per node (none with noItems). */
+export function cleanGraph(raw: unknown, fallbackSubject: string, opts: { noItems?: boolean } = {}): DiagGraph {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const nodesRaw = Array.isArray(r.nodes) ? r.nodes : []
   const nodes: DiagNode[] = []
@@ -108,7 +108,8 @@ export function cleanGraph(raw: unknown, fallbackSubject: string): DiagGraph {
       const explain = (it as Record<string, unknown>).explain
       items.push({ q: q.trim().slice(0, 500), options: opts, answer: Math.floor(answer), explain: typeof explain === 'string' ? explain.slice(0, 400) : undefined })
     }
-    if (items.length === 0) continue
+    // A path planned without a check (learner new to the topic) has no question bank.
+    if (items.length === 0 && !opts.noItems) continue
     const level = o.level === 'below' || o.level === 'above' ? o.level : 'at'
     nodes.push({ id, title, summary: typeof o.summary === 'string' ? o.summary.trim().slice(0, 300) : '', prereqs: Array.isArray(o.prereqs) ? o.prereqs.filter((p): p is string => typeof p === 'string') : [], level, items: items.slice(0, 3) })
   }
@@ -219,6 +220,12 @@ export function readyToLearn(g: DiagGraph, st: DiagState): string[] {
   if (ready.length) return ready
   // Everything is known: the goal itself is the next step (practice and extension).
   return [g.goalNode]
+}
+
+/** A path planned without a check (new to the topic): the first few skills in learning order, from the very first. */
+export function firstSkills(g: DiagGraph, n = 3): string[] {
+  const onPath = new Set([...ancestors(g, g.goalNode), g.goalNode])
+  return topoOrder(g).filter(x => onPath.has(x.id)).slice(0, n).map(x => x.id)
 }
 
 /** Client-safe view of the current item (no answer). */

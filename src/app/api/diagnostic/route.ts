@@ -1,13 +1,14 @@
 import { NextResponse, after } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { buildGraph, diagnosticPath, learnerForPath, learnerSnapshot, listPaths, loadLearner, sameGoal, type PathRow } from '@/lib/learner'
+import { buildFoundationGraph, buildGraph, diagnosticPath, learnerForPath, learnerSnapshot, listPaths, loadLearner, sameGoal, type PathRow } from '@/lib/learner'
 import { buildPath } from '@/lib/path'
 import { GeminiQuotaError } from '@/lib/gemini'
 import { dropSpeculativeLesson, planSpeculation, type Speculation } from '@/lib/speculation'
 import { runDraftWork, selfOrigin } from '@/lib/lesson-drafting'
 import { warmServices } from '@/lib/warm'
-import { applyAnswer, emptyState, knownSkills, nextItem, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type Confidence, type DiagState } from '@/lib/diagnostic-core'
+import { priorKnowledge } from '@/lib/intake'
+import { applyAnswer, emptyState, firstSkills, knownSkills, nextItem, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type Confidence, type DiagState } from '@/lib/diagnostic-core'
 
 export const maxDuration = 300
 
@@ -29,8 +30,10 @@ function view(path: PathRow) {
     // Feedback on the previous answer: right or not, plus the one-line explanation.
     last: last ? { correct: last.correct, skipped: last.choice === null, explain: lastNode?.items[last.item]?.explain ?? null, answer: lastNode?.items[last.item]?.options[lastNode.items[last.item].answer] ?? null } : null,
     done: st.done,
+    /** The learner is new to the topic: no check, the path starts from the foundations. */
+    fresh: !!path.diagnostic?.fresh,
     known: st.done || path.status === 'ready' ? knownSkills(g, st).map(title) : undefined,
-    next: st.done || path.status === 'ready' ? readyToLearn(g, st).map(title) : undefined,
+    next: st.done || path.status === 'ready' ? (path.diagnostic?.fresh ? firstSkills(g) : readyToLearn(g, st)).map(title) : undefined,
   }
 }
 
@@ -49,7 +52,7 @@ async function finishPath(db: ReturnType<typeof createAdminClient>, request: Req
     const origin = selfOrigin(request)
     after(() => runDraftWork(r.firstLessonId!, { origin }).then(() => undefined).catch(err => console.error('First lesson draft failed:', err)))
   }
-  return { path: view({ ...r.path, diagnostic: { state: st } }), firstLessonId: r.firstLessonId, speculation: r.speculation }
+  return { path: view({ ...r.path, diagnostic: { ...path.diagnostic, state: st } }), firstLessonId: r.firstLessonId, speculation: r.speculation }
 }
 
 /** GET /api/diagnostic — the current diagnostic (resume) without answers. */
@@ -85,17 +88,32 @@ export async function POST(request: Request) {
     // the goal of a finished path opens that path; any other goal adds a new path. Only "Retake the
     // check" replaces a path (that one path, nothing else).
     const goal = learner.goal ?? learner.goal_text
+    // Completely new to the topic ("I’m completely new to this", or said so in their own words):
+    // no check. "Retake the check" (restart) always runs the real check.
+    const prior = priorKnowledge(learner.answers ?? {})
+    const fresh = prior.none && !body.restart
     if (!body.restart) {
-      if (path && path.status === 'diagnosing' && path.graph?.nodes && sameGoal(path.goal, goal)) return NextResponse.json({ path: view(path) })
+      if (path && path.status === 'diagnosing' && path.graph?.nodes && sameGoal(path.goal, goal)) {
+        // A fresh path whose build was cut short: build it now (no new skill map needed).
+        if (fresh && path.diagnostic?.fresh) {
+          try { return NextResponse.json(await finishPath(db, request, learner, path, (path.diagnostic.state ?? emptyState()) as DiagState)) }
+          catch (err) { return NextResponse.json({ error: 'Could not build your path. Please try again.', detail: (err instanceof Error ? err.message : String(err)).slice(0, 200) }, { status: 500 }) }
+        }
+        if (!fresh) return NextResponse.json({ path: view(path) })
+      }
       const existing = (await listPaths(db, profile.id)).find(p => p.status === 'ready' && sameGoal(p.goal, goal))
-      if (existing) return NextResponse.json({ path: view(existing) })
+      if (existing) {
+        const { data: t } = await db.from('path_topics').select('lesson_id').eq('path_id', existing.id).not('lesson_id', 'is', null).order('position').limit(1)
+        return NextResponse.json({ path: view(existing), firstLessonId: (t ?? [])[0]?.lesson_id ?? null })
+      }
     }
     const since = new Date(Date.now() - 86_400_000).toISOString()
     const { count } = await db.from('learning_paths').select('id', { count: 'exact', head: true }).eq('student_id', profile.id).gte('created_at', since)
     if ((count ?? 0) >= 6) return NextResponse.json({ error: 'You have started several new checks today. Try again tomorrow.' }, { status: 429 })
     let graph
+    const t0 = Date.now()
     try {
-      graph = await buildGraph(learner)
+      graph = fresh ? await buildFoundationGraph(learner) : await buildGraph(learner)
     } catch (err) {
       const quota = err instanceof GeminiQuotaError
       return NextResponse.json({ error: quota ? 'The AI is busy right now. Please try again in a minute.' : 'Could not prepare your check. Please try again.', detail: (err instanceof Error ? err.message : String(err)).slice(0, 200) }, { status: quota ? 503 : 502 })
@@ -106,13 +124,24 @@ export async function POST(request: Request) {
     // First lessons drafted ahead for checks that will never finish.
     for (const d of (dropped ?? []) as { speculation: Speculation | null }[]) if (d.speculation?.lessonId) after(() => dropSpeculativeLesson(db, d.speculation!.lessonId!).catch(() => undefined))
     const st = emptyState()
-    st.current = nextItem(graph, st)
+    if (fresh) st.done = true
+    else st.current = nextItem(graph, st)
     const { data, error } = await db.from('learning_paths').insert({
       student_id: profile.id, goal: goal ?? graph.subject, subject: graph.subject || learner.subject || '',
-      status: 'diagnosing', graph, diagnostic: { state: st }, learner_snapshot: { ...learnerSnapshot(learner), subject: graph.subject || learner.subject || null },
+      status: 'diagnosing', graph, diagnostic: fresh ? { state: st, fresh: true, freshReason: prior.reason } : { state: st }, learner_snapshot: { ...learnerSnapshot(learner), subject: graph.subject || learner.subject || null },
     }).select('*').single()
     if (error || !data) return NextResponse.json({ error: error?.message ?? 'Could not save' }, { status: 500 })
     if (graph.subject && !learner.subject) await db.from('learner_profiles').update({ subject: graph.subject }).eq('student_id', profile.id)
+    if (fresh) {
+      // No check: build the path from the foundations now and start drafting its first lesson in the
+      // background (finishPath), so the results screen opens with Start ready.
+      console.log(`Fresh start (${prior.reason}): skill map for path ${(data as PathRow).id} in ${Date.now() - t0} ms, no check`)
+      try {
+        return NextResponse.json(await finishPath(db, request, learner, data as PathRow, st))
+      } catch (err) {
+        return NextResponse.json({ error: 'Could not build your path. Please try again.', detail: (err instanceof Error ? err.message : String(err)).slice(0, 200) }, { status: 500 })
+      }
+    }
     return NextResponse.json({ path: view(data as PathRow) })
   }
 

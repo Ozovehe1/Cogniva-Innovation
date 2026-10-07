@@ -66,7 +66,7 @@ export async function buildPath(db: SupabaseClient, learner: LearnerRow, path: P
 }
 
 /** The lesson row for a topic's AI lesson (personalised notes, objectives, length). */
-export async function lessonFields(db: SupabaseClient, learner: LearnerRow, path: Pick<PathRow, 'graph' | 'known' | 'plan' | 'goal' | 'subject' | 'student_id' | 'learner_snapshot'>, topic: Pick<TopicRow, 'node_id' | 'title' | 'summary' | 'target_minutes'>, opts: { firstLesson?: boolean } = {}) {
+export async function lessonFields(db: SupabaseClient, learner: LearnerRow, path: Pick<PathRow, 'graph' | 'known' | 'plan' | 'goal' | 'subject' | 'student_id' | 'learner_snapshot'> & { diagnostic?: PathRow['diagnostic'] }, topic: Pick<TopicRow, 'node_id' | 'title' | 'summary' | 'target_minutes'>, opts: { firstLesson?: boolean } = {}) {
   learner = learnerForPath(learner, path)
   const lowMood = await recentLowMood(db, path.student_id)
   const notes = teachingNotes({ learner, path, nodeId: topic.node_id, firstLesson: !!opts.firstLesson, lowMood })
@@ -156,7 +156,8 @@ export function recheckItems(path: PathRow, topic: TopicRow): { node: string; it
   const pre = [...ancestors(g, topic.node_id)].filter(id => known.has(id))
   // Closest prerequisites first.
   const order = topoOrder(g).map(n => n.id).filter(id => pre.includes(id)).reverse().slice(0, 3)
-  return order.map(id => {
+  // Skills with no question bank (a path planned without a check) cannot be re-checked.
+  return order.filter(id => (g.nodes.find(x => x.id === id)?.items?.length ?? 0) > 0).map(id => {
     const n = g.nodes.find(x => x.id === id)!
     const used = new Set((st?.asked ?? []).filter(a => a.node === id).map(a => a.item))
     const fresh = n.items.findIndex((_, i) => !used.has(i))

@@ -21,6 +21,8 @@ interface DiagView {
   max: number
   item: { node: string; topic: string; item: number; q: string; options: string[]; number: number } | null
   done: boolean
+  /** New to the topic: no check was taken. */
+  fresh?: boolean
   known?: string[]
   next?: string[]
 }
@@ -44,6 +46,7 @@ export function IntakeFlow({
   initialPath,
   edit,
   startAt,
+  startFresh = false,
 }: {
   firstName: string
   initialAnswers: Answers
@@ -53,6 +56,8 @@ export function IntakeFlow({
   edit: boolean
   /** Item to open on (e.g. 'goal' when adding a new path). */
   startAt?: string
+  /** The finished intake says the learner is new to the topic: skip the check, build the path from the basics. */
+  startFresh?: boolean
 }) {
   const [answers, setAnswers] = useState<Answers>(initialAnswers)
   const items = useMemo(() => visibleItems(answers), [answers])
@@ -78,6 +83,8 @@ export function IntakeFlow({
   const [safety, setSafety] = useState(false)
   const [aiReflection, setAiReflection] = useState<string | null>(null)
   const [prevItem, setPrevItem] = useState<IntakeItem | null>(null)
+  const [fresh, setFresh] = useState(startFresh)
+  const autoStarted = useRef(false)
 
   const item = items[Math.min(idx, items.length - 1)]
   const minor = isMinor(answers)
@@ -117,9 +124,12 @@ export function IntakeFlow({
     if (nextItem) setIdx(pos + 1)
     else {
       setBusy(true)
-      const done = await post<{ error?: string }>('/api/intake', { complete: true })
+      const done = await post<{ error?: string; startFresh?: boolean }>('/api/intake', { complete: true })
       setBusy(false)
       if (!done.ok) { setError(done.data.error ?? 'Could not finish. Try again.'); return }
+      // New to the topic: no check. The path (and its first lesson's draft) is built straight away.
+      setFresh(!!done.data.startFresh)
+      autoStarted.current = false
       setPhase('ready')
     }
   }, [answers])
@@ -127,14 +137,6 @@ export function IntakeFlow({
   const back = () => { setError(null); setPrevItem(null); setAiReflection(null); setIdx(i => Math.max(0, i - 1)) }
 
   /* ── Diagnostic ── */
-  const startDiag = useCallback(async (restart = false) => {
-    setError(null); setPhase('building')
-    const r = await post<{ path?: DiagView; error?: string }>('/api/diagnostic', { action: 'start', restart })
-    if (!r.ok || !r.data.path) { setError(r.data.error ?? 'Could not prepare your check. Please try again.'); setPhase('ready'); return }
-    setDiag(r.data.path)
-    setPhase(r.data.path.done ? 'finishing' : 'diag')
-  }, [])
-
   /** Builds the path. With `inPlace` the results screen is already showing (it has what it needs) and only the Start button waits. */
   const finish = useCallback(async (inPlace = false) => {
     if (!inPlace) setPhase('finishing')
@@ -144,6 +146,27 @@ export function IntakeFlow({
     if (!r.ok || !r.data.path) { if (inPlace) setPhase('finishing'); setError(r.data.error ?? 'Could not build your path. Please try again.'); return }
     setDiag(r.data.path); setFirstLessonId(r.data.firstLessonId ?? null); setPhase('result')
   }, [])
+  const startDiag = useCallback(async (restart = false) => {
+    setError(null); setPhase('building')
+    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'start', restart })
+    if (!r.ok || !r.data.path) { setError(r.data.error ?? (restart || !fresh ? 'Could not prepare your check. Please try again.' : 'Could not plan your path. Please try again.')); setPhase('ready'); return }
+    setDiag(r.data.path)
+    if (r.data.path.status === 'ready') {
+      // A path built in this request (new to the topic) or already there for this goal: straight to the results.
+      setFirstLessonId(r.data.firstLessonId ?? null)
+      setPhase('result')
+      if (!r.data.firstLessonId) void finish(true)
+      return
+    }
+    setPhase(r.data.path.done ? 'finishing' : 'diag')
+  }, [fresh, finish])
+
+  useEffect(() => {
+    if (phase !== 'ready' || !fresh || autoStarted.current) return
+    autoStarted.current = true
+    void startDiag(false)
+  }, [phase, fresh, startDiag])
+
 
   const answerDiag = useCallback(async (choice: number | null, confidence: string | null) => {
     if (!diag?.item) return
@@ -227,6 +250,18 @@ export function IntakeFlow({
         {phase === 'ready' && (
           <section className="flex flex-1 flex-col">
             <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">Thanks, {firstName}</p>
+            {fresh ? (<>
+            <h1 className="mt-3 font-display text-[30px] leading-[1.12] text-ink sm:text-[38px]">We’ll start from the basics.</h1>
+            <p className="mt-4 text-[15px] leading-relaxed text-ink-2">
+              You said this is new to you, so there’s no check to take. I’ll lay out the ideas from the very first one up to your goal
+              and write your first lesson.
+            </p>
+            {error && <Alert tone="danger" className="mt-5">{error}</Alert>}
+            <div className="mt-auto flex flex-col gap-2 pt-10 sm:flex-row">
+              <button type="button" onClick={() => startDiag(false)} className={buttonClass('primary', 'lg', 'sm:flex-1')}>Build my path<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
+              <button type="button" onClick={() => { setPhase('intake'); setIdx(0); setPrevItem(null) }} className={buttonClass('secondary', 'lg')}>Change my answers</button>
+            </div>
+            </>) : (<>
             <h1 className="mt-3 font-display text-[30px] leading-[1.12] text-ink sm:text-[38px]">Now a short check, so we start in the right place.</h1>
             <p className="mt-4 text-[15px] leading-relaxed text-ink-2">
               It isn’t a test and there’s no score. I’ll map the skills between where you are and your goal, then ask 8 to 15 quick
@@ -241,6 +276,7 @@ export function IntakeFlow({
               <button type="button" onClick={() => startDiag(false)} className={buttonClass('primary', 'lg', 'sm:flex-1')}>Start the check<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
               <button type="button" onClick={() => { setPhase('intake'); setIdx(0); setPrevItem(null) }} className={buttonClass('secondary', 'lg')}>Change my answers</button>
             </div>
+            </>)}
           </section>
         )}
 
@@ -248,10 +284,12 @@ export function IntakeFlow({
           <section className="flex flex-1 flex-col items-start justify-center py-16">
             <Spinner className="h-6 w-6 text-accent" />
             <h1 className="mt-6 font-display text-[28px] leading-tight text-ink">
-              {phase === 'building' ? 'Mapping the skills to your goal…' : 'Building your learning path…'}
+              {phase === 'building' ? (fresh ? 'Planning your path from the basics…' : 'Mapping the skills to your goal…') : 'Building your learning path…'}
             </h1>
             <p className="mt-3 max-w-[32rem] text-[15px] leading-relaxed text-muted">
-              {phase === 'building'
+              {phase === 'building' && fresh
+                ? 'No check needed, since this is new to you. I’m laying out the ideas from the very first one up to your goal, and starting your first lesson.'
+                : phase === 'building'
                 ? 'I’m working out which ideas lead to your goal, starting just below your level. This usually takes under a minute.'
                 : 'Picking where to start, sizing lessons to your week, and writing your first lesson.'}
             </p>
@@ -275,12 +313,18 @@ export function IntakeFlow({
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
               <div className="rounded-[14px] border border-line bg-surface p-5">
                 <h2 className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">What you know now</h2>
-                {diag.known?.length ? (
+                {diag.fresh && !diag.known?.length ? (
+                  <>
+                    <p className="mt-3 font-display text-[20px] leading-snug text-ink">Starting fresh</p>
+                    <p className="mt-1.5 text-[15px] leading-relaxed text-muted">You said this is new to you, so there was no check. We start from the basics and build up one idea at a time.</p>
+                  </>
+                ) : diag.known?.length ? (
                   <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{diag.known.map(k => <li key={k} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
                 ) : <p className="mt-3 text-[15px] leading-relaxed text-muted">We’ll build the foundations together, from the first step.</p>}
               </div>
               <div className="rounded-[14px] border border-accent-line bg-accent-soft p-5">
                 <h2 className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">What’s next</h2>
+                {diag.fresh && !diag.known?.length && <p className="mt-3 text-[15px] font-medium text-ink">Starting from the basics:</p>}
                 <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{(diag.next ?? []).map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
               </div>
             </div>
@@ -296,7 +340,9 @@ export function IntakeFlow({
             <div className="mt-8 border-t border-line pt-5 text-[14px] text-muted">
               Want to learn something else too? <Link href="/start?new=1" className="font-medium text-accent hover:underline underline-offset-4">Add another goal</Link>
               {' · '}
-              <button type="button" onClick={() => startDiag(true)} className="font-medium text-accent hover:underline underline-offset-4">Retake the check</button>
+              {diag.fresh
+                ? <>Know some of this already? <button type="button" onClick={() => startDiag(true)} className="font-medium text-accent hover:underline underline-offset-4">Take the check</button></>
+                : <button type="button" onClick={() => startDiag(true)} className="font-medium text-accent hover:underline underline-offset-4">Retake the check</button>}
             </div>
           </section>
         )}
@@ -438,27 +484,30 @@ function GoalPick({ answers, busy, onAnswer, onSafety }: { answers: Answers; bus
   const own = typeof answers.goal?.v === 'string' ? (answers.goal.v as string) : ''
   const [goals, setGoals] = useState<{ goal: string; subject: string; stem: boolean }[] | null>(null)
   const [failed, setFailed] = useState(false)
+  // What their own words say about prior knowledge ('none' skips the check; see priorKnowledge).
+  const [prior, setPrior] = useState<string>('unclear')
   const asked = useRef(false)
   useEffect(() => {
     if (asked.current) return
     asked.current = true
     const level = answers.level?.v ? String(answers.level.v) : ''
     const goal = own || `I'm not sure what to learn yet. Suggest useful next goals for someone at ${level || 'my'} level.`
-    post<{ goals?: { goal: string; subject: string; stem: boolean }[]; safety?: boolean }>('/api/intake/ai', { kind: 'goals', goal }).then(r => {
+    post<{ goals?: { goal: string; subject: string; stem: boolean }[]; prior?: string; safety?: boolean }>('/api/intake/ai', { kind: 'goals', goal }).then(r => {
       if (r.data.safety) { onSafety(); return }
+      if (own && r.data.prior) setPrior(r.data.prior)
       if (r.ok && r.data.goals?.length) setGoals(r.data.goals)
       else setFailed(true)
     })
   }, [answers, own, onSafety])
 
-  const ownChoice = { goal: own, subject: '', stem: STEM_GUESS.test(own) }
+  const ownChoice = { goal: own, subject: '', stem: STEM_GUESS.test(own), prior }
   if (!goals && !failed) {
     return <div className="flex items-center gap-3 rounded-[12px] border border-line bg-surface px-4 py-4 text-[15px] text-muted"><Spinner className="text-accent" />Thinking about your goal…</div>
   }
   return (
     <div className="grid gap-2">
       {(goals ?? []).map(g => (
-        <button key={g.goal} type="button" disabled={busy} onClick={() => onAnswer({ v: g })}
+        <button key={g.goal} type="button" disabled={busy} onClick={() => onAnswer({ v: { ...g, prior } })}
           className="rounded-[12px] border border-line bg-surface px-4 py-3.5 text-left text-[15px] font-medium leading-snug text-ink transition-colors hover:border-accent">
           {g.goal}
           {g.subject && <span className="mt-0.5 block text-[12px] font-normal uppercase tracking-[0.06em] text-muted">{g.subject}</span>}

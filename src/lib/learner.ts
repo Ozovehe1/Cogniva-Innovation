@@ -46,7 +46,8 @@ export interface PathRow {
   subject: string
   status: 'diagnosing' | 'ready' | 'archived'
   graph: DiagGraph
-  diagnostic: { state?: DiagState; extra?: Record<string, DiagItem[]> }
+  /** fresh: the learner said they are completely new to the topic, so the check was skipped (see priorKnowledge). */
+  diagnostic: { state?: DiagState; extra?: Record<string, DiagItem[]>; fresh?: boolean; freshReason?: string | null }
   known: string[]
   ready: string[]
   plan: PathPlan
@@ -189,19 +190,21 @@ export function learnerLite(l: LearnerRow | null, mood?: number | null): Student
 
 /* ───────────── Intake AI: narrow the goal, reflect the why ───────────── */
 
-export async function suggestGoals(input: { goal: string; level: string }): Promise<{ goals: { goal: string; subject: string; stem: boolean }[]; reflection: string }> {
+export async function suggestGoals(input: { goal: string; level: string }): Promise<{ goals: { goal: string; subject: string; stem: boolean }[]; reflection: string; prior: 'none' | 'some' | 'unclear' }> {
   const prompt = `A learner (${input.level || 'level unknown'}) told an AI tutor what they want to learn, in their own words:
 """${input.goal.slice(0, 600)}"""
 Suggest 3 or 4 specific, achievable learning goals that are closest to what they meant, from narrow to broader. Each goal is one plain sentence starting with a verb ("Solve…", "Size…", "Explain…"), under 90 characters, at a level that suits them. Use neutral wording: do not assume an exam unless they said so.
 Also give "reflection": one warm sentence (under 25 words) reflecting back what they want, without praise or emoji.
-Return JSON: {"reflection": string, "goals": [{"goal": string, "subject": string (the school or field subject in 1-3 words, e.g. "Mathematics", "Solar PV", "Chemistry"), "stem": boolean (true for maths, physics, chemistry, engineering, computing, statistics)}]}`
+Also give "prior": what their words say about how much they already know of this topic: "none" ONLY when they clearly say they know nothing about it yet (e.g. "I have no idea about…", "never studied it", "complete beginner", "from scratch"); "some" when they say they know some of it or are studying it; otherwise "unclear".
+Return JSON: {"reflection": string, "prior": string, "goals": [{"goal": string, "subject": string (the school or field subject in 1-3 words, e.g. "Mathematics", "Solar PV", "Chemistry"), "stem": boolean (true for maths, physics, chemistry, engineering, computing, statistics)}]}`
   const raw = await generateStructuredJson(prompt, { timeoutMs: 25_000, primaryTimeoutMs: 15_000, thinking: 'minimal' }) as Record<string, unknown>
   const goals = (Array.isArray(raw?.goals) ? raw.goals : []).flatMap(g => {
     if (!g || typeof g !== 'object') return []
     const o = g as Record<string, unknown>
     return typeof o.goal === 'string' && o.goal.trim() ? [{ goal: o.goal.trim().slice(0, 140), subject: typeof o.subject === 'string' ? o.subject.trim().slice(0, 60) : '', stem: o.stem === true }] : []
   }).slice(0, 4)
-  return { goals, reflection: typeof raw?.reflection === 'string' ? raw.reflection.slice(0, 220) : '' }
+  const prior = raw?.prior === 'none' || raw?.prior === 'some' ? raw.prior : 'unclear'
+  return { goals, reflection: typeof raw?.reflection === 'string' ? raw.reflection.slice(0, 220) : '', prior }
 }
 
 export async function reflectWhy(input: { why: string; goal: string }): Promise<{ reflection: string; valueType: string }> {
@@ -238,6 +241,31 @@ Neutral, global wording; examples may use Nigerian context. Return JSON {"subjec
   const raw = await generateStructuredJson(prompt, { timeoutMs: 110_000, primaryTimeoutMs: 80_000, temperature: 0.4 })
   await gateGraphItems(raw)
   return cleanGraph(raw, l.subject ?? '')
+}
+
+/**
+ * The skill map for a learner who is completely new to the topic (no check, so no question bank):
+ * from the very first idea of the topic, assuming only what their education level gives them, up
+ * to the goal. One small call on the fast models, so the path (and the first lesson's draft) starts
+ * within seconds of the intake.
+ */
+export async function buildFoundationGraph(l: LearnerRow): Promise<DiagGraph> {
+  const goal = l.goal ?? l.goal_text ?? 'the topic'
+  const prompt = `A learner is COMPLETELY NEW to this topic: they have never studied it and know nothing about it yet.
+Learner: ${levelLine(l) || 'level unknown'}.
+Goal: ${goal}${l.subject ? ` (subject: ${l.subject})` : ''}. Purpose: ${l.purpose ?? 'unknown'}.
+
+Plan a learning path of 6 to 9 skills that takes them from the very first idea of this topic up to the goal. Assume only the general knowledge typical of their education level (everyday arithmetic and reading for their age), and no prior study of this topic: the first 1 or 2 skills introduce what the topic is about and its most basic ideas and words. Each skill is one teachable idea (one lesson), pitched at their level, e.g. "What voltage and current are", "Factorise simple quadratics".
+For each skill give:
+- "id": short kebab-case id
+- "title": under 60 characters, plain
+- "summary": one sentence: what someone who has this skill can do
+- "prereqs": ids of skills it directly needs (only skills in this list; the first skills have [])
+- "level": "below", "at" or "above" relative to the learner's stated level
+Also "goalNode": the id of the goal skill (the last one), "subject": the subject in 1-3 words, "stem": true for maths/science/engineering/computing.
+Neutral, global wording. Return JSON {"subject", "stem", "goalNode", "nodes": [...]} only.`
+  const raw = await generateStructuredJson(prompt, { timeoutMs: 45_000, primaryTimeoutMs: 25_000, temperature: 0.4, thinking: 'minimal', preferFast: true })
+  return cleanGraph(raw, l.subject ?? '', { noItems: true })
 }
 
 /**
@@ -329,7 +357,7 @@ export function pathNodes(g: DiagGraph, known: string[], scope: PathPlan['scope'
 }
 
 /** Personalisation notes the lesson drafter follows (level, scaffolding, examples, pace, tone). */
-export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 'graph' | 'known' | 'plan' | 'goal'>; nodeId: string; firstLesson: boolean; lowMood?: boolean }): string {
+export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 'graph' | 'known' | 'plan' | 'goal'> & { diagnostic?: PathRow['diagnostic'] }; nodeId: string; firstLesson: boolean; lowMood?: boolean }): string {
   const { learner: l, path, nodeId } = input
   const g = path.graph
   const node = g.nodes.find(n => n.id === nodeId)
@@ -345,7 +373,10 @@ export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 
   const lines = [
     `Learner: ${levelLine(l) || 'level unknown'}. ${minor ? 'Teenager or child: friendly, simple sentences, concrete examples.' : 'Adult: direct, respectful, no talking down.'}`,
     `Their goal: ${path.goal.replace(/\.+$/, '')}. This lesson teaches the skill "${node?.title ?? nodeId}": ${node?.summary ?? ''}`,
-    path.known.length ? `They already showed they know: ${titles(path.known)}. Do not re-teach these; a one-line reminder is enough.` : 'The diagnostic found few secure foundations: start from the very basics of this skill.',
+    path.diagnostic?.fresh && !path.known.length
+      ? 'They told us they are completely new to this topic (no check was taken): assume no prior knowledge of it. Start from the very first idea, introduce and define every term the first time it appears, and connect it to everyday things they already know.'
+      : path.known.length ? `They already showed they know: ${titles(path.known)}. Do not re-teach these; a one-line reminder is enough.` : 'The diagnostic found few secure foundations: start from the very basics of this skill.',
+    path.diagnostic?.fresh && path.known.length ? 'They were completely new to this topic when they started; only the skills above were learned here, so define any other term the first time it appears.' : '',
     novice || lowEfficacy || anxious
       ? 'Scaffolding: HIGH. Worked example first, every step shown and narrated, then a nearly identical problem for them, then fade the steps. Small steps, frequent "does this make sense?" checks, early easy wins.'
       : strong

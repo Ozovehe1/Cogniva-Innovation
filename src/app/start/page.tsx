@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
 import { getSessionProfile } from '@/lib/auth'
 import { diagnosticPath, loadLearner } from '@/lib/learner'
-import { emptyState, knownSkills, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type DiagState } from '@/lib/diagnostic-core'
+import { priorKnowledge } from '@/lib/intake'
+import { emptyState, firstSkills, knownSkills, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type DiagState } from '@/lib/diagnostic-core'
 import { IntakeFlow } from '@/components/intake-flow'
 
 /** Intake questions that belong to one goal (asked again for each new path). */
@@ -27,9 +28,9 @@ export default async function StartPage({ searchParams }: { searchParams: Promis
     const title = (id: string) => path.graph.nodes.find(n => n.id === id)?.title ?? id
     view = {
       pathId: path.id, goal: path.goal, subject: path.subject, status: path.status, asked: st.asked.length, min: MIN_ITEMS, max: MAX_ITEMS,
-      item: publicItem(path.graph, st), done: st.done,
+      item: publicItem(path.graph, st), done: st.done, fresh: !!path.diagnostic?.fresh,
       known: path.status === 'ready' ? knownSkills(path.graph, st).map(title) : undefined,
-      next: path.status === 'ready' ? readyToLearn(path.graph, st).map(title) : undefined,
+      next: path.status === 'ready' ? (path.diagnostic?.fresh ? firstSkills(path.graph) : readyToLearn(path.graph, st)).map(title) : undefined,
     }
   }
   return (
@@ -39,6 +40,7 @@ export default async function StartPage({ searchParams }: { searchParams: Promis
       startAt={fresh ? 'goal' : undefined}
       initialItem={learner?.current_item ?? null}
       completed={!!learner?.completed_at}
+      startFresh={!fresh && priorKnowledge(learner?.answers ?? {}).none}
       initialPath={view}
       edit={edit === '1' || fresh}
     />

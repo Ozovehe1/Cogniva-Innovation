@@ -96,7 +96,8 @@ export const INTAKE: IntakeItem[] = [
   { id: 'goal_pick', kind: 'goal', ask: 'Which of these is closest?', sub: 'Pick one, or keep your own words.' },
   { id: 'last_studied', kind: 'choice', ask: 'When did you last study {subject}?', choices: [
     { value: 'now', label: 'I’m studying it now' }, { value: 'this_year', label: 'Earlier this year' },
-    { value: '1-2y', label: '1–2 years ago' }, { value: 'longer', label: 'Longer ago' }, { value: 'never', label: 'Never' },
+    { value: '1-2y', label: '1–2 years ago' }, { value: 'longer', label: 'Longer ago' },
+    { value: 'never', label: 'I’m completely new to this', hint: 'Never studied it, no idea yet' },
   ] },
   { id: 'why', kind: 'text', ask: 'Why does this matter to you?', sub: 'There’s no right answer.', placeholder: 'e.g. I want to understand it properly, not just pass' },
   { id: 'purpose', kind: 'choice', ask: 'What is it for, mainly?', choices: PURPOSES },
@@ -123,6 +124,37 @@ export const INTAKE: IntakeItem[] = [
   { id: 'interests', kind: 'multi', ask: 'What should your examples be about?', sub: 'Pick any. We’ll use them to make problems feel real.', choices: INTERESTS },
   { id: 'barriers', kind: 'text', ask: 'Anything that’s made learning hard before?', sub: 'Optional. Anything you share helps us pace things.', placeholder: 'e.g. Teachers moved too fast; I get lost when there are many steps', optional: true },
 ]
+
+/**
+ * Free-text signs that the learner knows nothing about the topic yet ("no idea", "never studied it",
+ * "complete beginner", "from scratch"...). Checked on the goal and "why" answers.
+ */
+export const NEW_TO_IT = /\b(no idea|no clue|clueless|never (?:studied|learn(?:ed|t)|done|touched|tried|heard of|seen|taken)|(?:complete(?:ly)?|total(?:ly)?|absolute|pure|real) (?:beginner|newbie|novice|noob|new)|beginner from|from (?:scratch|zero|the very (?:start|beginning))|know(?:s)? nothing|don[’']?t know (?:anything|any thing|a thing)|zero (?:knowledge|background|experience)|no (?:background|prior knowledge|knowledge|experience) (?:in|of|on|about|with)|brand new to|new to (?:it|this|this topic|the topic) entirely)\b/i
+
+export type PriorKnowledge = { none: boolean; reason: 'choice' | 'ai' | 'text' | null }
+
+/**
+ * Does the learner start with zero prior knowledge of this goal's topic? If so the adaptive check is
+ * skipped and the path starts from the foundations. In order:
+ *  1. the explicit "I’m completely new to this" answer (last_studied = never);
+ *  2. having studied it recently ("now", "this year", "1–2 years ago") means some exposure: take the check;
+ *  3. the intake AI's reading of their goal in their own words (goal_pick.prior = 'none');
+ *  4. a keyword check on the goal and "why" answers.
+ * Pure: used by the server (authoritative) and by the browser (copy only).
+ */
+export function priorKnowledge(a: Answers): PriorKnowledge {
+  const ls = a.last_studied
+  const lsv = ls && !ls.skipped && !ls.notSure ? ls.v : undefined
+  if (lsv === 'never') return { none: true, reason: 'choice' }
+  if (lsv === 'now' || lsv === 'this_year' || lsv === '1-2y') return { none: false, reason: null }
+  const pick = a.goal_pick?.v as { prior?: unknown } | undefined
+  if (pick && typeof pick === 'object' && pick.prior === 'none') return { none: true, reason: 'ai' }
+  for (const id of ['goal', 'why']) {
+    const t = a[id]?.v
+    if (typeof t === 'string' && NEW_TO_IT.test(t)) return { none: true, reason: 'text' }
+  }
+  return { none: false, reason: null }
+}
 
 export function visibleItems(a: Answers): IntakeItem[] {
   return INTAKE.filter(i => !i.when || i.when(a))
@@ -151,7 +183,7 @@ export function reflect(item: IntakeItem, a: Answers): string | null {
       const g = v as { goal?: string } | undefined
       return g?.goal ? `So the goal is: ${g.goal}.` : null
     }
-    case 'last_studied': return v === 'longer' || v === 'never' ? 'Then we’ll start with a quick refresh of the basics underneath it.' : null
+    case 'last_studied': return v === 'never' ? 'Then we’ll start from the very first idea. No check needed for this one.' : v === 'longer' ? 'Then we’ll start with a quick refresh of the basics underneath it.' : null
     case 'purpose': {
       const p = v as string
       return p === 'exam' ? 'An exam, so we’ll cover the full topic and practise exam-style questions.'

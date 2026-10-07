@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { answersToColumns, loadLearner } from '@/lib/learner'
-import { INTAKE, isMinor, type Answers } from '@/lib/intake'
+import { INTAKE, isMinor, priorKnowledge, type Answers } from '@/lib/intake'
 import { detectDistress } from '@/lib/safety'
 import { warmServices } from '@/lib/warm'
 
@@ -61,7 +61,8 @@ export async function POST(request: Request) {
   Object.assign(row, answersToColumns(store), { answers: store })
   if (typeof body.currentItem === 'string' && IDS.has(body.currentItem)) row.current_item = body.currentItem
   if (body.complete) {
-    // The diagnostic (and the first lesson, drafted during it) comes next: keep the voice and render containers awake.
+    // The diagnostic (and the first lesson, drafted during it) or, for a learner new to the topic, the path
+    // and its first lesson come next: keep the voice and render containers awake.
     warmServices()
     if (minor && !consented) return NextResponse.json({ error: 'A parent or guardian needs to agree first.' }, { status: 400 })
     row.completed_at = new Date().toISOString()
@@ -76,5 +77,6 @@ export async function POST(request: Request) {
     const ok = (n: unknown) => (typeof n === 'number' && n >= 1 && n <= 5 ? Math.round(n) : null)
     try { await createAdminClient().from('learner_checkins').insert({ student_id: profile.id, context: 'intake', mood: ok(f.mood), energy: ok(f.energy) }) } catch {}
   }
-  return NextResponse.json({ ok: true, needsConsent: minor && !consented })
+  // New to the topic: the client skips the check and goes straight to building the path.
+  return NextResponse.json({ ok: true, needsConsent: minor && !consented, ...(body.complete ? { startFresh: priorKnowledge(store).none } : {}) })
 }
