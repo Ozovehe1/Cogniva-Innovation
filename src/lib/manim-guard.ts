@@ -19,9 +19,10 @@ export const MANIM_API_SHEET = `Manim Community v0.19 API sheet (use exactly the
 - Points: \`ax.c2p(x, y)\` (coords_to_point), \`ax.i2gp(x, graph)\` (input_to_graph_point), \`ax.p2c(point)\`.
 - Labels: \`ax.get_graph_label(graph, MathTex("y=x^2"), x_val=2, direction=UR, color=NAVY)\`, \`ax.get_axis_labels(x_label="x", y_label="y")\`.
 - Data: \`ax.plot_line_graph(x_values=[...], y_values=[...], line_color=NAVY, add_vertex_dots=True)\`.
-- Helpers on Axes: get_vertical_line(point), get_horizontal_line(point), get_secant_slope_group(x, graph, dx=..., secant_line_color=...), get_riemann_rectangles(graph, x_range=[a, b], dx=...), get_area(graph, x_range=(a, b)), slope_of_tangent(x, graph), plot_derivative_graph(graph).
-- Lines: Line(start, end), DashedLine(start, end), Arrow(start, end, buff=0), TangentLine(graph, alpha=0.5, length=4) (alpha is the 0..1 proportion along the curve, not x), Dot(point, color=...).
-- Motion: \`t = ValueTracker(2.5)\`; \`q = always_redraw(lambda: Dot(ax.i2gp(t.get_value(), graph), color=CLAY))\`; \`self.play(t.animate.set_value(1.001), run_time=4)\`. For changing numbers use \`DecimalNumber(0, num_decimal_places=2)\` with \`.add_updater(lambda m: m.set_value(...))\`, not a new MathTex every frame (each MathTex compiles LaTeX).
+- Helpers on Axes: get_vertical_line(point), get_horizontal_line(point), get_secant_slope_group(x, graph, dx=..., secant_line_color=...) (returns a VGroup; do not index into it inside always_redraw), get_riemann_rectangles(graph, x_range=[a, b], dx=...), get_area(graph, x_range=(a, b)), slope_of_tangent(x, graph) (returns a float, takes no dx), plot_derivative_graph(graph).
+- Secant/tangent pattern: \`secant = always_redraw(lambda: Line(ax.c2p(xp, f(xp)), ax.c2p(t.get_value(), f(t.get_value())), color=CLAY).scale(4))\`; slope as a number: \`m = DecimalNumber(0, num_decimal_places=2).add_updater(lambda d: d.set_value((f(t.get_value()) - f(xp)) / (t.get_value() - xp)))\` (keep t away from xp, e.g. stop at xp + 0.01). Tangent at x0: \`Line(ax.c2p(x0 - 1.5, f(x0) - 1.5*fp), ax.c2p(x0 + 1.5, f(x0) + 1.5*fp))\` with fp the derivative value.
+- Lines: Line(start, end), DashedLine(start, end), Arrow(start, end, buff=0), TangentLine(graph, alpha=0.5, length=4) (alpha is the 0..1 proportion along the curve, not x; there is no point_on_curve or x argument), Dot(point, color=...).
+- Motion: \`t = ValueTracker(2.5)\`; \`q = always_redraw(lambda: Dot(ax.i2gp(t.get_value(), graph), color=CLAY))\` (always_redraw's lambda must return a Mobject, never a number); \`self.play(t.animate.set_value(1.001), run_time=4)\`. For changing numbers use \`DecimalNumber(0, num_decimal_places=2)\` with \`.add_updater(lambda m: m.set_value(...))\`, not a new MathTex every frame (each MathTex compiles LaTeX).
 - Text: MathTex(r"m = \\frac{\\Delta y}{\\Delta x}") for maths, Tex(r"...") for LaTeX text, Text("words", font_size=32) for plain words.
 - Animations: Create, Write, FadeIn(m, shift=UP), FadeOut, Transform, ReplacementTransform, TransformMatchingTex, Indicate, Circumscribe; \`mob.animate.shift(RIGHT)\`. Scene calls: self.add, self.play(..., run_time=2), self.wait(1), self.remove.
 DO NOT use (they do not exist in v0.19 and crash the render): axes.get_graph (use plot), get_line_from_equation, get_derivative_graph, get_v_line_to_graph / get_vertical_line_to_graph, setup_axes, GraphScene, ShowCreation (use Create), ShowCreationThenDestruction, TextMobject (use Text/Tex), TexMobject (use MathTex), TexText, FadeInFrom / FadeInFromDown / FadeOutAndShift (use FadeIn(m, shift=...)), CircleIndicate, x_min= / x_max= / y_min= / y_max= keyword args (use x_range / y_range), \`from manimlib import *\` (ManimGL), CONFIG = {...} class dicts, self.embed() or any interactive embed, self.frame (use self.camera.frame in a MovingCameraScene).
@@ -51,6 +52,8 @@ const DEPRECATED: { re: RegExp; msg: string }[] = [
   { re: /\b(?:from\s+manimlib\b|import\s+manimlib\b|from\s+manimgl\b|import\s+manimgl\b)/, msg: 'ManimGL (manimlib) is not installed; use `from manim import *`.' },
   { re: /^\s*CONFIG\s*=\s*\{/m, msg: 'CONFIG = {...} class dicts are ignored in v0.19; pass arguments to constructors directly.' },
   { re: /\bembed\s*\(/, msg: 'Interactive embed() is not allowed in a headless render.' },
+  { re: /\bTangentLine\s*\([^)]*\b(?:point_on_curve|x|x_val)\s*=/, msg: 'TangentLine(graph, alpha=..., length=...) takes alpha (0..1 along the curve), not point_on_curve/x; or draw Line(ax.c2p(...), ax.c2p(...)).' },
+  { re: /\bslope_of_tangent\s*\([^)]*\bdx\s*=/, msg: 'slope_of_tangent(x, graph) takes no dx; compute a secant slope in plain Python.' },
   { re: /\bself\.frame\b/, msg: 'self.frame is ManimGL; subclass MovingCameraScene and use self.camera.frame.' },
 ]
 
@@ -115,8 +118,9 @@ export function hintsFor(log: string): string[] {
   const hints: string[] = []
   if (/__getattr__\.<locals>\.getter\(\)/.test(log)) hints.push('The traceback shows Mobject.__getattr__ getter(): the get_* method on the highlighted line does not exist in v0.19 (Mobject turns unknown get_x calls into attribute getters). Replace it using the API sheet, e.g. axes.get_graph(f, color=c) → axes.plot(f, color=c).')
   for (const m of log.matchAll(/has no attribute '(\w+)'/g)) hints.push(`"${m[1]}" does not exist on that object in v0.19; use the API sheet equivalent.`)
-  for (const m of log.matchAll(/unexpected keyword argument '(\w+)'/g)) if (!/getter\(\)/.test(log)) hints.push(`The keyword "${m[1]}" is not accepted there in v0.19 (e.g. plot_line_graph takes line_color, not color).`)
   for (const m of log.matchAll(/NameError: name '(\w+)' is not defined/g)) hints.push(`${m[1]} is not part of Manim Community v0.19; replace it using the API sheet.`)
+  if (/object has no attribute 'add_updater'/.test(log)) hints.push('always_redraw(lambda: ...) must return a Mobject. For a changing number use DecimalNumber(...).add_updater(lambda d: d.set_value(...)); compute the value in plain Python.')
+  for (const m of log.matchAll(/([\w.]+)\(\) got an unexpected keyword argument '(\w+)'/g)) if (!m[1].endsWith('getter')) hints.push(`${m[1]}() does not take "${m[2]}" in v0.19; check its signature in the API sheet.`)
   if (/LaTeX compilation error|latex error/i.test(log)) hints.push('LaTeX failed: use raw strings r"..." and valid LaTeX; put plain words in Text(...).')
   return [...new Set(hints)].slice(0, 6)
 }
