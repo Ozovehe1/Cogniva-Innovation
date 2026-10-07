@@ -117,7 +117,7 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
             {l.objectives.map((o, i) => (
               <li key={i} className="flex gap-3 text-[15px] leading-relaxed text-ink-2">
                 <span className="tnum w-5 flex-shrink-0 text-[13px] leading-[1.6rem] text-faint">{String(i + 1).padStart(2, '0')}</span>
-                {o}
+                <RichText text={o} className="min-w-0 flex-1" />
               </li>
             ))}
           </ul>

@@ -1,4 +1,5 @@
 import React from 'react'
+import { RichText } from '@/components/rich-text'
 import Link from 'next/link'
 import clsx, { type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
@@ -125,7 +126,7 @@ export function PageHeader({
       <div className="min-w-0">
         {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
         <h1 className="font-display text-[30px] leading-[1.1] text-ink md:text-[38px]">{title}</h1>
-        {description && <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-muted">{description}</p>}
+        {description && <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-muted">{typeof description === 'string' ? <RichText text={description} /> : description}</p>}
       </div>
       {actions && <div className="flex flex-shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
