@@ -861,6 +861,8 @@ def _build(ctx: _Ctx, o: dict):
             d.setdefault("at", [0, 0])
             item = _build(ctx, {**d, "on": None, "at": [0, 0]} if d["kind"] in ("dot", "point") else d)
             item.move_to(p)
+            if o.get("angles") and i < len(o["angles"]):
+                item.rotate(float(ctx.ev(o["angles"][i])) * DEGREES)
             items.append(item)
         return VGroup(*items)
     if k == "group":

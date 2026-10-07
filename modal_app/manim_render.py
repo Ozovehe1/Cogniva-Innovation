@@ -251,7 +251,7 @@ def compose(job_id: str, description: str, narration: dict | None, context: str,
         r = gm_compose.compose_and_render(description, narration, context, vision=vision, log=log)
     except Exception as exc:  # noqa: BLE001
         r = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-    report = {k: r.get(k) for k in ("ok", "plan", "spec", "issues", "critique", "timings", "attempt", "error")}
+    report = {k: r.get(k) for k in ("ok", "plan", "spec", "issues", "critique", "history", "timings", "attempt", "error")}
     report["log"] = log[-40:]
     report["wall_s"] = round(time.time() - t0, 1)
     if r.get("gate"):
@@ -337,6 +337,7 @@ def web():
         prompt: str = Field(min_length=1, max_length=60000)
         json_out: bool = True
         temperature: float = 0.4
+        strong: bool = False
         images: list[str] = Field(default_factory=list, max_length=4)  # base64 jpeg
 
     @api.post("/gemini")
@@ -352,7 +353,7 @@ def web():
             raise HTTPException(status_code=500, detail=f"client unavailable: {exc}")
         log: list = []
         try:
-            text = _gemini_call(req.prompt, json_out=req.json_out, images=[_b64.b64decode(i) for i in req.images], temperature=req.temperature, log=log)
+            text = _gemini_call(req.prompt, json_out=req.json_out, images=[_b64.b64decode(i) for i in req.images], temperature=req.temperature, log=log, strong=req.strong)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=str(exc)[:300])
         return {"text": text, "log": log}

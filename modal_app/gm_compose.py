@@ -90,7 +90,12 @@ smooth closed path with a pocket complementary to the substrate, a molecule as a
 bezier outlines with their landmarks). Never a placeholder box or a plain circle for something that has a shape.
 Mechanism: the states and the causal transitions must be animated in order (approach, bind, deform, change, release...),
 with a tracker for the progress that also drives the linked quantity (e.g. the dot on an energy curve).
-Plan 8-16 objects and 12-20 timeline actions; something moves continuously in every sentence. Minimal text."""
+Contact is geometry: a part that binds, meshes or sits in another is placed at the contact point computed from the other's
+shape (the pocket's centre, pitch circles tangent), and moves there along a path, it never just overlaps a body.
+Distinct bodies that touch never share a colour: a body a quantity tracks (the substrate, the current, the oil pressure)
+takes that quantity's colour, the same colour as its curve / term; other bodies take a real material.
+Plan 8-16 objects and 12-20 timeline actions; something moves continuously in every sentence. Minimal text, but name
+the 2-4 key parts with short labels."""
 
 COMPOSE_PROMPT = """Write the scene spec for this plan, in the grammar below. Return ONLY the JSON spec.
 
@@ -538,8 +543,9 @@ def apply_ops(spec: dict, ops: list, notes: list[str]) -> int:
                 by = op.get("by") or ([float(op["to"][0]) - float((o.get("at") or o.get("center") or [0, 0])[0]), float(op["to"][1]) - float((o.get("at") or o.get("center") or [0, 0])[1])] if op.get("to") else None)
                 if not by:
                     continue
+                by = [max(-3.0, min(3.0, float(by[0]))), max(-2.5, min(2.5, float(by[1])))]
                 off = o.get("offset") or [0, 0]
-                o["offset"] = [float(off[0]) + float(by[0]), float(off[1]) + float(by[1])]
+                o["offset"] = [float(off[0]) + by[0], float(off[1]) + by[1]]
             elif kind == "resize":
                 o["scale_by"] = float(o.get("scale_by", 1)) * max(0.4, min(1.8, float(op.get("factor", 1))))
             elif kind == "region" and op.get("region") in ("left", "right", "center", "top", "bottom"):
@@ -798,16 +804,58 @@ LAST: dict = {}  # the latest plan / spec (diagnostics when a run fails)
 def make_spec(desc: str, narr: dict | None, context: str, media_dir: str, log: list, plan: dict | None = None) -> tuple[dict, dict]:
     b = beats(narr)
     if plan is None:
-        plan = ask_json(PLAN_PROMPT.format(desc=desc[:2500], context=context[:1500], beats=b), temperature=0.5, log=log)
+        plan = ask_json(PLAN_PROMPT.format(desc=desc[:2500], context=context[:1500], beats=b), temperature=0.5, log=log, strong=True)
     LAST["plan"] = plan
     import gm_scene
     regs = {str(o.get("region")) for o in plan.get("objects") or [] if isinstance(o, dict) and o.get("region")}
     zs = gm_scene.zones(regs or {"left", "right", "top"})
     ztxt = "\n".join(f"  {r}: x {z[0]:.2f}..{z[2]:.2f}, y {z[1]:.2f}..{z[3]:.2f}" for r, z in zs.items() if r != "full")
-    raw = ask_json(COMPOSE_PROMPT.format(plan=json.dumps(plan)[:9000], beats=b, zones=ztxt, grammar=GRAMMAR), temperature=0.3, timeout=120, log=log)
+    raw = ask_json(COMPOSE_PROMPT.format(plan=json.dumps(plan)[:9000], beats=b, zones=ztxt, grammar=GRAMMAR), temperature=0.3, timeout=150, log=log, strong=True)
     LAST["raw"] = raw
     spec = prepare(raw, narr, media_dir, log, plan)
     return plan, spec
+
+
+def det_fix(sp: dict, errs: list[str], notes: list[str]) -> bool:
+    """Deterministic fixes for validation errors that do not need the model: a name used in an expression that is
+    neither a param nor a tracker becomes a tracker at 0; a timeline action that fails is dropped; a link to a term that
+    is not isolated is dropped."""
+    import gm_scene
+    e = " ".join(errs)
+    m = re.search(r"name '([A-Za-z_][A-Za-z0-9_]*)' is not defined", e)
+    if m:
+        nm = m.group(1)
+        if nm not in {t["id"] for t in sp.get("trackers") or []} and nm not in (sp.get("params") or {}):
+            sp.setdefault("trackers", []).append({"id": nm, "value": 0})
+            notes.append(f"declared tracker {nm}")
+            # if it was set before declared, fine; if it is not driven at all it stays at its start value
+            return True
+    m = re.search(r"action (\w+) #(\d+) failed", e)
+    if m:
+        k = int(m.group(2))
+        sched = gm_scene.schedule(sp)
+        tl = sp.get("timeline") or []
+        if 0 <= k < len(tl):
+            notes.append(f"dropped failing action {tl[k].get('do')} #{k}: {e[:120]}")
+            tl.pop(k)
+            return True
+    m = re.search(r"link: term '(.+?)' not found in (\S+)", e)
+    if m:
+        before = len(sp["timeline"])
+        sp["timeline"] = [a for a in sp["timeline"] if not (a.get("do") == "link" and a.get("eq") == m.group(2).strip("'\""))]
+        if len(sp["timeline"]) < before:
+            notes.append(f"dropped links into {m.group(2)}")
+            return True
+    m = re.search(r"refers to unknown object '([^']+)'", e)
+    if m:
+        bad = m.group(1)
+        for a in sp["timeline"]:
+            if a.get("targets"):
+                a["targets"] = [t for t in a["targets"] if t != bad]
+        sp["timeline"] = [a for a in sp["timeline"] if a.get("targets") != [] and bad not in (a.get("from"), a.get("to"), a.get("eq"), a.get("target"), a.get("path"))]
+        notes.append(f"dropped references to {bad}")
+        return True
+    return False
 
 
 def prepare(raw: dict, narr: dict | None, media_dir: str, log: list, plan: dict | None = None) -> dict:
@@ -836,6 +884,10 @@ def prepare(raw: dict, narr: dict | None, media_dir: str, log: list, plan: dict 
                         act["targets"] = [t for t in act["targets"] if not (t == o["id"] or str(t).startswith(o["id"] + "."))] + (fb if act.get("do") == "show" else [])
                 sp["timeline"] = [act for act in sp["timeline"] if act.get("targets") != []]
                 notes.append(f"svg {o['id']} failed; primitive fallback {fb}")
+            errs = validate(sp, media_dir)
+        for _ in range(6):  # failing actions / undeclared trackers: fixed without an LLM
+            if not errs or not det_fix(sp, errs, notes):
+                break
             errs = validate(sp, media_dir)
         for _ in range(4):
             if not (errs and any("LaTeX" in e for e in errs)):
@@ -933,7 +985,7 @@ def compose_and_render(desc: str, narr: dict | None = None, context: str = "", w
                 problems = issues + [f"rebuild so it looks like the real thing / works like it: {x}" for x in rebuild]
                 problems += [f"axis scores {sc}: structure must reach 9 (real silhouette, real parts and counts, shading, parts connected), every axis 8"]
                 raw = ask_json(REPAIR_PROMPT.format(why="the quality check after rendering", problems="\n".join(problems), spec=json.dumps(_clean(spec))[:16000],
-                                                    grammar=GRAMMAR + "\nStructure plan to match:\n" + json.dumps(plan.get("structure") or [])[:3000]), temperature=0.25, timeout=120, log=log)
+                                                    grammar=GRAMMAR + "\nStructure plan to match:\n" + json.dumps(plan.get("structure") or [])[:3000]), temperature=0.25, timeout=150, log=log, strong=True)
                 spec = prepare(raw, narr, media, log, plan)
             except Exception as exc:  # noqa: BLE001
                 log.append(f"repair skipped: {exc}")

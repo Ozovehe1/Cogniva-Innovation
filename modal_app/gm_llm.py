@@ -17,7 +17,10 @@ _skip: dict[str, float] = {}
 _why: dict[str, str] = {}  # last refusal per model (status + quota id), for the error message
 
 
-def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, temperature=0.4, timeout=60, log=None) -> str:
+STRONG = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash"]  # composing / repairing a scene: quality over speed
+
+
+def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, temperature=0.4, timeout=60, log=None, strong=False) -> str:
     import httpx
 
     keys = [k.strip() for k in (os.environ.get(n, "") for n in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")) if k.strip()]
@@ -25,7 +28,7 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
     if not key and os.environ.get("GM_GEMINI_PROXY"):
         for attempt in range(5):
             r = httpx.post(os.environ["GM_GEMINI_PROXY"].rstrip("/") + "/gemini", headers={"X-Render-Token": os.environ.get("RENDER_TOKEN", "")},
-                           json={"prompt": prompt, "json_out": json_out, "temperature": temperature, "images": [base64.b64encode(i).decode() for i in images or []]}, timeout=timeout * 3 + 60)
+                           json={"prompt": prompt, "json_out": json_out, "temperature": temperature, "strong": strong, "images": [base64.b64encode(i).decode() for i in images or []]}, timeout=timeout * 3 + 60)
             if r.status_code == 503 and "429" in r.text and attempt < 4:
                 time.sleep(30 + 15 * attempt)  # the shared free-tier minute window
                 continue
@@ -44,14 +47,15 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
     last = None
     wait_hint = 0.0
     for attempt in range(3):
-        for slot in [m if k == 0 else f"{m}#{k}" for k in range(len(keys)) for m in MODELS]:
+        order = (STRONG + [m for m in MODELS if m not in STRONG]) if strong else MODELS
+        for slot in [m if k == 0 else f"{m}#{k}" for k in range(len(keys)) for m in order]:
             model, _, kidx = slot.partition("#")
             key = keys[int(kidx or 0)]
             cfg = {"temperature": temperature}
             if json_out:
                 cfg["responseMimeType"] = "application/json"
             if model.startswith("gemini-3"):
-                cfg["thinkingConfig"] = {"thinkingLevel": "low"}
+                cfg["thinkingConfig"] = {"thinkingLevel": "medium" if strong else "low"}
             if time.time() < _skip.get(slot, 0):
                 continue
             try:

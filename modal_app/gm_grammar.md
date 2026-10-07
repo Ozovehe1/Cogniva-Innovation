@@ -55,7 +55,7 @@ guides, secondary labels) or "rule" (faint guides). Never use a quantity colour 
 - brace {target, dir, label?: LaTeX, term?: term of an equation}
 - angle {lines: [lineId, lineId], r, label?: LaTeX, other?}
 - array {of: {object template, e.g. {"kind":"dot","r":0.06,"q":"w"}}, n, layout: "random"|"grid"|"circle"|"line",
-         box: [x0,y0,x1,y1], cols?, points?: [[x,y],...]}   // particles, molecules, repeated parts
+         box: [x0,y0,x1,y1], cols?, points?: [[x,y],...], angles?: [deg per item]}   // particles, molecules, repeated parts
 - group {children: [ids]}        trace {target: dot id}  (draws the path a moving dot leaves)
 - gear {center, r (pitch radius), teeth (the REAL count), depth?, angle (deg, may be a tracker expression), hub?: 0.22}
      Meshing gears: centres r1 + r2 apart, teeth proportional to radius, angle2 = -angle1 * teeth1 / teeth2 + half-tooth offset.
@@ -88,6 +88,9 @@ Example: {"cue": "slide", "dur": 3.5, "do": "set", "values": {"h": 0.05}, "rate"
 - set {values: {trackerId: value}, rate?: "linear"|"smooth", exact?: true}     // drives every live object; continuous
   drives stretch over the following narration gap unless "exact": true (use it when a readout must match a spoken number)
 - morph {from, to}            // reshape one object continuously into another (the `to` object must not be shown yet)
+     Rearrangements (unrolling wedges, assembling parts, a molecule changing shape): build the BEFORE and AFTER
+     arrangements as two groups / arrays with the same number of parts in matching order and morph between them; each
+     part travels to its counterpart. Or drive part positions with one tracker: "at": ["lerp(x0, x1, p)", "lerp(y0, y1, p)"].
 - match_tex {from, to, key_map?}   // equation to equation, term by term
 - move {targets, to: [x,y] | by: [dx,dy] | next_to: [id, dir]}     rotate {targets, angle (deg), about?: [x,y]}
 - scale {targets, factor}     follow {targets, path: id of a path/curve/circle}
