@@ -28,21 +28,24 @@ export default async function StudentLayout({ children }: { children: React.Reac
 
     if (!profile) {
       return (
-        <div style={{ color: 'white', padding: '2rem', background: '#09090B', minHeight: '100vh', fontFamily: 'monospace' }}>
-          <h2 style={{ color: '#f87171', marginBottom: '0.5rem' }}>Profile setup failed</h2>
-          <p style={{ color: '#a1a1aa', marginBottom: '1.5rem', fontSize: '14px' }}>Your account was created but the profile could not be loaded. Send these details to support:</p>
-          <pre style={{ background: '#18181B', padding: '1rem', borderRadius: '8px', fontSize: '12px', color: '#71717A', marginBottom: '1.5rem', overflowX: 'auto' }}>
+        <div className="flex min-h-dvh items-center justify-center bg-canvas px-4 py-10">
+          <div className="w-full max-w-lg rounded-[14px] border border-line bg-surface p-6 shadow-[var(--shadow-card)] md:p-8">
+            <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-danger">Account issue</p>
+            <h2 className="mt-2 font-display text-[28px] leading-tight text-ink">Profile setup failed</h2>
+            <p className="mt-2 text-[15px] leading-relaxed text-muted">Your account was created but the profile could not be loaded. Send these details to support:</p>
+            <pre className="mt-5 overflow-x-auto rounded-[10px] border border-line bg-sunken p-4 font-mono text-[12px] leading-relaxed text-ink-2">
 {`user_id:      ${user.id}
 email:        ${user.email}
 rpc_error:    ${rpcError?.message ?? 'none'}
 upsert_error: ${upsertError?.message ?? 'none'}
 select_error: ${selectError?.message ?? 'none'}`}
-          </pre>
-          <form action="/api/auth/signout" method="post">
-            <button style={{ background: '#7C3AED', color: 'white', padding: '0.5rem 1.25rem', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px' }}>
-              Sign out
-            </button>
-          </form>
+            </pre>
+            <form action="/api/auth/signout" method="post" className="mt-6">
+              <button className="inline-flex h-10 items-center rounded-[10px] bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
+                Sign out
+              </button>
+            </form>
+          </div>
         </div>
       )
     }

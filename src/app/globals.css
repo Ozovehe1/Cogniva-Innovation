@@ -1,37 +1,108 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
-:root {
-  --bg: #09090B;
-  --surface-1: #111113;
-  --surface-2: #18181B;
-  --border: rgba(255,255,255,0.08);
-  --border-hover: rgba(255,255,255,0.15);
-  --text-primary: #FAFAFA;
-  --text-secondary: #A1A1AA;
-  --text-muted: #52525B;
-  --purple: #7C3AED;
-  --purple-hover: #6D28D9;
-  --purple-light: #A78BFA;
-  --emerald: #059669;
-  --emerald-hover: #047857;
-  --emerald-light: #34D399;
-  --gold: #F59E0B;
-  --success: #22C55E;
+/*
+  GeniusMap design tokens
+  Light, editorial palette: warm paper canvas, white surfaces, near-black ink,
+  one deep green accent and a warm clay secondary used sparingly.
+*/
+@theme {
+  --color-canvas: #F7F5F0;
+  --color-surface: #FFFFFF;
+  --color-sunken: #F1EEE7;
+  --color-line: #E5E1D8;
+  --color-line-strong: #D4CFC3;
+
+  --color-ink: #14141A;
+  --color-ink-2: #3D3D47;
+  --color-muted: #66666F;
+  --color-faint: #8E8C86;
+
+  --color-accent: #1F4D3A;
+  --color-accent-hover: #173B2C;
+  --color-accent-soft: #E7EFEA;
+  --color-accent-line: #C5D7CC;
+
+  --color-clay: #A4502A;
+  --color-clay-soft: #F7EAE2;
+  --color-clay-line: #EBCDBD;
+
+  --color-amber: #8A5A00;
+  --color-amber-soft: #FBF1DC;
+  --color-amber-line: #EBD9AE;
+
+  --color-navy: #23406A;
+  --color-navy-soft: #E8EDF5;
+  --color-navy-line: #C9D4E5;
+
+  --color-danger: #A3261B;
+  --color-danger-soft: #FBEAE7;
+  --color-danger-line: #F0C8C2;
+
+  --radius-card: 14px;
+
+  --shadow-card: 0 1px 2px rgba(20, 20, 26, 0.04), 0 1px 1px rgba(20, 20, 26, 0.02);
+  --shadow-raised: 0 1px 2px rgba(20, 20, 26, 0.05), 0 8px 24px -12px rgba(20, 20, 26, 0.12);
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: var(--font-newsreader), ui-serif, Georgia, "Times New Roman", serif;
 }
 
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
-  background: var(--bg);
-  color: var(--text-secondary);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-::selection { background: rgba(124,58,237,0.3); color: var(--text-primary); }
+::selection { background: #CFE0D5; color: var(--color-ink); }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offset: 0; }
+
+.font-display {
+  font-family: var(--font-serif);
+  font-optical-sizing: auto;
+  letter-spacing: -0.015em;
+}
+
+.tnum { font-variant-numeric: tabular-nums; }
+
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+
+/* Skeleton shimmer: slow and quiet */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.skeleton {
+  background: var(--color-sunken);
+  border-radius: 6px;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+::-webkit-scrollbar-thumb { background: #D9D4C9; border-radius: 10px; border: 3px solid var(--color-canvas); }
+::-webkit-scrollbar-thumb:hover { background: #C6C0B3; }
