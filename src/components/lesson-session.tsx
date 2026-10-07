@@ -1,6 +1,7 @@
 'use client'
 import React, { useCallback, useEffect, useRef } from 'react'
 import { WhiteboardPlayer, type NeedStepsRequest, type PlayerEvent } from '@/components/whiteboard'
+import type { TranscriptAside } from '@/components/whiteboard/player'
 import type { Step } from '@/lib/lesson-schema'
 import type { Chapter } from '@/lib/lesson-sections'
 
@@ -27,6 +28,7 @@ export function LessonSession({
   answered,
   furthest,
   mode,
+  transcriptAside,
 }: {
   lessonId: string
   steps: Step[]
@@ -36,6 +38,7 @@ export function LessonSession({
   answered?: number[]
   furthest?: number
   mode: 'student' | 'preview'
+  transcriptAside?: TranscriptAside
 }) {
   const history = useRef<{ reason: string; answer?: string }[]>([])
   const url = `/api/lessons/${lessonId}/progress`
@@ -154,6 +157,7 @@ export function LessonSession({
       allowSkipChecks={mode === 'preview'}
       onNeedSteps={onNeedSteps}
       onEvent={onEvent}
+      transcriptAside={transcriptAside}
     />
   )
 }

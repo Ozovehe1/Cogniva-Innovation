@@ -52,7 +52,11 @@ export interface WhiteboardPlayerProps {
   answered?: number[]
   /** Furthest original position reached before; students can jump to any section up to it. */
   furthest?: number
+  /** A second tab beside the transcript (e.g. class materials). */
+  transcriptAside?: TranscriptAside
 }
+
+export interface TranscriptAside { label: string; count?: number; content: React.ReactNode }
 
 /** Below this container width the board switches to the phone layout. */
 const COMPACT_W = 600
@@ -77,6 +81,7 @@ export function WhiteboardPlayer({
   title,
   answered,
   furthest: furthestProp = 0,
+  transcriptAside,
 }: WhiteboardPlayerProps) {
   const reduced = !!useReducedMotion()
   const [steps, setSteps] = useState<Step[]>(initialSteps)
@@ -914,12 +919,13 @@ export function WhiteboardPlayer({
       </div>
 
       {/* Transcript */}
-      <Transcript lines={lines} currentIdx={currentIdx} reduced={reduced} heading={multi ? `Section ${section + 1} · ${sectionTitle}` : undefined} />
+      <Transcript lines={lines} currentIdx={currentIdx} reduced={reduced} heading={multi ? `Section ${section + 1} · ${sectionTitle}` : undefined} aside={transcriptAside} />
     </div>
   )
 }
 
-function Transcript({ lines, currentIdx, reduced, heading }: { lines: ReturnType<typeof stepLines>; currentIdx: number; reduced: boolean; heading?: string }) {
+function Transcript({ lines, currentIdx, reduced, heading, aside }: { lines: ReturnType<typeof stepLines>; currentIdx: number; reduced: boolean; heading?: string; aside?: TranscriptAside }) {
+  const [tab, setTab] = useState<'transcript' | 'aside'>('transcript')
   const boxRef = useRef<HTMLDivElement>(null)
   const curRef = useRef<HTMLLIElement>(null)
   useEffect(() => {
@@ -937,15 +943,37 @@ function Transcript({ lines, currentIdx, reduced, heading }: { lines: ReturnType
     // KaTeX and fonts can change line heights after the first paint.
     const t = setTimeout(scroll, 250)
     return () => clearTimeout(t)
-  }, [lines.length, currentIdx, reduced])
+  }, [lines.length, currentIdx, reduced, tab])
   const firstCurrent = lines.findIndex(l => l.index === currentIdx)
   return (
     <section className="mt-4 rounded-[14px] border border-line bg-surface" aria-label="Lesson transcript">
-      <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-        <h2 className="min-w-0 truncate text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Transcript{heading ? <span className="normal-case tracking-normal text-faint"> · {heading}</span> : null}</h2>
-        {lines.length > 0 && <span className="tnum text-[12px] text-muted">{lines.filter(l => l.kind === 'say').length} lines</span>}
-      </div>
-      <div ref={boxRef} className="wb-transcript relative max-h-[240px] overflow-y-auto overscroll-contain px-4 py-3 md:max-h-[300px]" tabIndex={0}>
+      {aside ? (
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4" role="tablist" aria-label="Lesson panels">
+          <div className="flex min-w-0 items-center gap-5">
+            {(['transcript', 'aside'] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={tab === t}
+                onClick={() => setTab(t)}
+                className={cx('-mb-px flex h-10 items-center gap-1.5 border-b-2 text-[12px] font-medium uppercase tracking-[0.08em] transition-colors', tab === t ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink')}
+              >
+                {t === 'transcript' ? 'Transcript' : aside.label}
+                {t === 'aside' && aside.count ? <span className="tnum rounded-full bg-sunken px-1.5 text-[11px] tracking-normal text-ink-2">{aside.count}</span> : null}
+              </button>
+            ))}
+          </div>
+          {tab === 'transcript' && heading && <span className="hidden min-w-0 truncate text-[12px] text-faint sm:block">{heading}</span>}
+        </div>
+      ) : (
+        <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+          <h2 className="min-w-0 truncate text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Transcript{heading ? <span className="normal-case tracking-normal text-faint"> · {heading}</span> : null}</h2>
+          {lines.length > 0 && <span className="tnum text-[12px] text-muted">{lines.filter(l => l.kind === 'say').length} lines</span>}
+        </div>
+      )}
+      {aside && tab === 'aside' && <div role="tabpanel" className="max-h-[300px] overflow-y-auto overscroll-contain px-4 py-3 md:max-h-[340px]">{aside.content}</div>}
+      <div ref={boxRef} hidden={!!aside && tab === 'aside'} className="wb-transcript relative max-h-[240px] overflow-y-auto overscroll-contain px-4 py-3 md:max-h-[300px]" tabIndex={0}>
         {lines.length === 0 ? (
           <p className="py-1 text-[15px] text-muted">Everything the tutor says will be written here as the lesson plays.</p>
         ) : (

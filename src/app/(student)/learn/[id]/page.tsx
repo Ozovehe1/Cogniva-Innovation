@@ -6,6 +6,7 @@ import { validateScript } from '@/lib/lesson-schema'
 import { LESSON_MAX_STEPS, estimateMs, formatDuration, normalizeChapters } from '@/lib/lesson-sections'
 import { Eyebrow } from '@/components/ui'
 import { LessonSession } from '@/components/lesson-session'
+import { StudentMaterials, type MaterialView } from '@/components/lesson-materials'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +45,12 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
   }
   const totalMs = estimateMs(steps)
 
+  // Class materials the tutor shared (RLS: linked students, approved lesson, shared + read files only).
+  const { data: mats } = await supabase
+    .from('lesson_materials').select('id, file_name, mime, size, page_count, created_at')
+    .eq('lesson_id', id).eq('visible_to_students', true).eq('status', 'ready').order('created_at', { ascending: true })
+  const materials = (mats ?? []) as MaterialView[]
+
   return (
     <div className="mx-auto max-w-[920px]">
       <Link href="/learn" className="-ml-1 mb-4 inline-flex h-9 items-center gap-1.5 rounded-md px-1 text-sm text-muted hover:text-ink">
@@ -55,7 +62,9 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
       <p className="tnum mb-5 mt-2 text-[13px] text-muted md:mb-6">
         About {formatDuration(totalMs)}{chapters.length > 1 ? ` · ${chapters.length} sections` : ''}
       </p>
-      <LessonSession lessonId={l.id} steps={steps} chapters={chapters} title={l.title} resumeAt={resumeAt} answered={answered} furthest={furthest} mode="student" />
+      <LessonSession lessonId={l.id} steps={steps} chapters={chapters} title={l.title} resumeAt={resumeAt} answered={answered} furthest={furthest} mode="student"
+        transcriptAside={materials.length > 0 ? { label: 'Materials', count: materials.length, content: <StudentMaterials lessonId={l.id} materials={materials} /> } : undefined}
+      />
       {l.objectives && l.objectives.length > 0 && (
         <section className="mt-8 border-t border-line pt-6">
           <h2 className="text-[15px] font-semibold text-ink">In this lesson</h2>

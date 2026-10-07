@@ -5,6 +5,7 @@ import { LESSON_MAX_STEPS, MAX_TARGET, MIN_TARGET, chapterAt, estimateMs, flatte
 import { validateScript, type ManimClipStep, type Step } from '@/lib/lesson-schema'
 import { publicClipUrl } from '@/lib/supabase/admin'
 import { pregenerateNarration } from '@/lib/tts-server'
+import { removeMaterialFiles } from '@/lib/materials-server'
 
 export const maxDuration = 300
 
@@ -142,6 +143,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const { id } = await params
   const r = await loadOwn(id)
   if ('error' in r) return r.error
+  await removeMaterialFiles(r.supabase, id)
   const { error } = await r.supabase.from('lessons').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

@@ -9,6 +9,7 @@ import { AnimationsPanel, LessonStatusBadge, ObjectivesEditor } from '@/componen
 import { validateScript, type Step } from '@/lib/lesson-schema'
 import { LESSON_MAX_STEPS, flattenSections, normalizeChapters, type Chapter } from '@/lib/lesson-sections'
 import { DraftProgress, SectionsPanel, type DraftStatus, type SectionView } from '@/components/tutor-sections'
+import { MaterialsPanel } from '@/components/lesson-materials'
 
 interface Lesson {
   id: string
@@ -209,6 +210,15 @@ export default function TutorLessonEditor({ params }: { params: Promise<{ id: st
           <SectionsPanel sections={sections} targetMinutes={lesson.target_minutes} onAction={sectionAction} busyId={sectionBusy} locked={lesson.draft_status === 'outlining'} />
         </div>
       )}
+
+      <div className="mt-8">
+        <MaterialsPanel
+          lessonId={lesson.id}
+          targetMinutes={lesson.target_minutes ?? 15}
+          drafting={lesson.draft_status === 'outlining' || lesson.draft_status === 'drafting'}
+          onBuilt={() => { signature.current = ''; void load() }}
+        />
+      </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <ObjectivesEditor

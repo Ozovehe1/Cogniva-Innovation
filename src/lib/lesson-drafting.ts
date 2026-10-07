@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
 import { GeminiQuotaError } from './gemini'
 import { draftLessonOutline, draftLessonSection, type OutlineSection } from './lesson-ai'
+import { loadMaterialSources, outlineDigest, sectionExcerpts, type MaterialSource, type StyleNotes } from './materials'
 import { flattenSections, validateSection, type Chapter } from './lesson-sections'
 import type { Step } from './lesson-schema'
 import { pregenerateNarration } from './tts-server'
@@ -55,9 +56,11 @@ interface LessonJobRow {
   draft_notes: string | null
   draft_retry_at: string | null
   draft_lock_until: string | null
+  draft_from_materials?: boolean
+  style_notes?: StyleNotes | null
 }
 
-const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until'
+const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, draft_from_materials, style_notes'
 
 /* ───────────── Internal auth for the self-chain ───────────── */
 
@@ -150,6 +153,8 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
   const t0 = Date.now()
   if (!(await claim(db, lessonId))) return 'busy'
   let handOver = false
+  // The tutor's class materials, loaded once per invocation when the draft follows them.
+  let sources: MaterialSource[] | null = null
   try {
     for (;;) {
       const { data } = await db.from('lessons').select(JOB_COLS).eq('id', lessonId).maybeSingle()
@@ -167,11 +172,14 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       if (lesson.draft_status !== 'outlining' && lesson.draft_status !== 'drafting') return lesson.draft_status
 
       const lite = { title: lesson.title, subject: lesson.subject, objectives: lesson.objectives ?? [] }
+      if (lesson.draft_from_materials && sources === null) sources = await loadMaterialSources(db, lessonId)
+      const useMaterials = !!lesson.draft_from_materials && !!sources && sources.length > 0
 
       if (lesson.draft_status === 'outlining') {
         let outline: OutlineSection[]
         try {
-          outline = await draftLessonOutline(lite, lesson.target_minutes ?? 15, lesson.draft_notes ?? undefined)
+          outline = await draftLessonOutline(lite, lesson.target_minutes ?? 15, lesson.draft_notes ?? undefined,
+            useMaterials ? { text: outlineDigest(sources!), style: lesson.style_notes } : undefined)
         } catch (err) {
           if (err instanceof GeminiQuotaError) {
             if (!err.daily && (err.retryAfterMs ?? 90_000) <= MAX_INLINE_WAIT_MS && Date.now() - t0 + MAX_INLINE_WAIT_MS < RUN_BUDGET_MS - 60_000) {
@@ -210,7 +218,10 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
 
       await db.from('lesson_sections').update({ status: 'drafting', error: null }).eq('id', next.id)
       try {
-        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes: next.notes ?? undefined })
+        const material = useMaterials
+          ? { text: sectionExcerpts(sources!, [next.title, next.goal, ...(next.key_points ?? [])].join(' ')), style: lesson.style_notes }
+          : undefined
+        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes: next.notes ?? undefined, material })
         const v = validateSection(steps, next.position)
         if (!v.ok) throw new Error(v.errors.slice(0, 2).join('; '))
         await db.from('lesson_sections').update({ status: 'ready', steps: v.steps, error: null }).eq('id', next.id)
@@ -243,10 +254,11 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
 }
 
 /** Start a fresh draft (outline + all sections) for a lesson. */
-export async function restartDraft(db: SupabaseClient, lessonId: string, targetMinutes: number, notes?: string | null) {
+export async function restartDraft(db: SupabaseClient, lessonId: string, targetMinutes: number, notes?: string | null, fromMaterials?: boolean) {
   await db.from('lesson_sections').delete().eq('lesson_id', lessonId)
   return db.from('lessons').update({
     status: 'draft', target_minutes: targetMinutes, draft_notes: notes ?? null,
+    ...(fromMaterials !== undefined ? { draft_from_materials: fromMaterials } : {}),
     draft_status: 'outlining', draft_error: null, draft_retry_at: null, script: [], chapters: [],
   }).eq('id', lessonId)
 }
