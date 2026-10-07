@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * Deploys the Manim render service (modal_app/manim_render.py) to Modal during
- * the Vercel production build. Runs before `next build`.
+ * Deploys the Modal apps in modal_app/ during the Vercel production build
+ * (runs before `next build`):
+ *   - manim_render.py  -> app "geniusmap-manim" (Manim clip renders)
+ *   - tts.py           -> app "geniusmap-tts"   (Kokoro narration voice)
  *
  * Runs only when:
  *   - VERCEL_ENV === 'production'
  *   - MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set (Vercel project env)
- *   - modal_app/** changed since VERCEL_GIT_PREVIOUS_SHA (or that SHA is unknown),
- *     or FORCE_MODAL_DEPLOY=1
+ *   - the app's file changed since VERCEL_GIT_PREVIOUS_SHA (or that SHA is unknown),
+ *     or FORCE_MODAL_DEPLOY=1 (all apps)
  *
  * It never fails the build: every error is logged as a warning and the script exits 0.
  * Secret values are never printed.
@@ -32,15 +34,21 @@ function run(cmd, args, { timeoutMs = 10 * 60_000, env = process.env, quiet = fa
   return { ok: r.status === 0 && !r.error, out, error: r.error }
 }
 
-function modalChanged() {
-  if (process.env.FORCE_MODAL_DEPLOY === '1') return { changed: true, why: 'FORCE_MODAL_DEPLOY=1' }
+const APPS = [
+  { file: 'modal_app/manim_render.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-manim-render[a-z0-9-]*\.modal\.run/i, env: 'MODAL_RENDER_URL' },
+  { file: 'modal_app/tts.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-tts[a-z0-9-]*\.modal\.run/i, env: 'MODAL_TTS_URL' },
+]
+
+/** Which app files need a deploy. */
+function changedApps() {
+  if (process.env.FORCE_MODAL_DEPLOY === '1') return { files: APPS.map(a => a.file), why: 'FORCE_MODAL_DEPLOY=1' }
   const prev = process.env.VERCEL_GIT_PREVIOUS_SHA
   const head = process.env.VERCEL_GIT_COMMIT_SHA || 'HEAD'
-  if (!prev) return { changed: true, why: 'no previous deployment SHA' }
+  if (!prev) return { files: APPS.map(a => a.file), why: 'no previous deployment SHA' }
   const r = run('git', ['diff', '--name-only', prev, head, '--', 'modal_app'], { quiet: true, timeoutMs: 30_000 })
-  if (!r.ok) return { changed: true, why: `previous SHA ${prev.slice(0, 7)} not available in this clone` }
+  if (!r.ok) return { files: APPS.map(a => a.file), why: `previous SHA ${prev.slice(0, 7)} not available in this clone` }
   const files = r.out.split('\n').filter(Boolean)
-  return files.length ? { changed: true, why: `changed: ${files.join(', ')}` } : { changed: false, why: `no changes in modal_app since ${prev.slice(0, 7)}` }
+  return { files: APPS.map(a => a.file).filter(f => files.includes(f)), why: files.length ? `changed: ${files.join(', ')}` : `no changes in modal_app since ${prev.slice(0, 7)}` }
 }
 
 function main() {
@@ -48,9 +56,9 @@ function main() {
   const missing = ['MODAL_TOKEN_ID', 'MODAL_TOKEN_SECRET', 'RENDER_TOKEN'].filter(k => !(process.env[k] ?? '').trim())
   if (missing.length) { warn(`not set or empty in the build env: ${missing.join(', ')}; skipping Modal deploy.`); return }
 
-  const c = modalChanged()
-  if (!c.changed) { log(`skipped (${c.why})`); return }
-  log(`deploying (${c.why})`)
+  const c = changedApps()
+  if (!c.files.length) { log(`skipped (${c.why})`); return }
+  log(`deploying ${c.files.join(', ')} (${c.why})`)
 
   const py = ['python3', 'python'].find(p => run(p, ['--version'], { quiet: true, timeoutMs: 15_000 }).ok)
   if (!py) { warn('python3 is not available in the build image; skipping.'); return }
@@ -79,12 +87,15 @@ function main() {
   }
   log(`secret geniusmap-render updated (RENDER_TOKEN, APP_URL=${appUrl})`)
 
-  // Deploy. The first deploy builds the LaTeX image on Modal and can take several minutes.
-  const dep = run(py, ['-m', 'modal', 'deploy', 'modal_app/manim_render.py'], { env, timeoutMs: 25 * 60_000 })
-  if (!dep.ok) { warn(`modal deploy failed${dep.error ? ` (${dep.error.message})` : ''}.`); return }
-  const url = dep.out.match(/https:\/\/[a-z0-9-]+--geniusmap-manim-render[a-z0-9-]*\.modal\.run/i)?.[0]
-  if (url) log(`MODAL_RENDER_URL=${url}`)
-  else warn('deployed, but the web endpoint URL was not found in the output.')
+  // Deploy. A first deploy builds the image on Modal and can take several minutes.
+  for (const app of APPS.filter(a => c.files.includes(a.file))) {
+    log(`modal deploy ${app.file}`)
+    const dep = run(py, ['-m', 'modal', 'deploy', app.file], { env, timeoutMs: 25 * 60_000 })
+    if (!dep.ok) { warn(`modal deploy ${app.file} failed${dep.error ? ` (${dep.error.message})` : ''}.`); continue }
+    const url = dep.out.match(app.urlRe)?.[0]
+    if (url) log(`${app.env}=${url}`)
+    else warn(`${app.file} deployed, but the web endpoint URL was not found in the output.`)
+  }
   log('done')
 }
 
