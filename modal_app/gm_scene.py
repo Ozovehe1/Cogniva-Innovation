@@ -472,7 +472,10 @@ def _build(ctx: _Ctx, o: dict):
             m.add_cubic_bezier_curve_to(pts[i], pts[i + 1], pts[i + 2])
         return _style(m, col, o)
     if k == "curve":
-        f = ctx.fn(o["fn"], ["s"])
+        # the parameter may be written s, u, x or t (t only when no tracker is called t)
+        pnames = ["s", "u", "x"] + ([] if "t" in ctx.trackers else ["t"])
+        f0 = ctx.fn(o["fn"], pnames)
+        f = lambda v: f0(*([v] * len(pnames)))  # noqa: E731
         s0, s1 = (float(ctx.ev(x)) for x in o.get("range", [0, 1]))
         if on:
             axm = ctx.mobs[on]
@@ -484,7 +487,8 @@ def _build(ctx: _Ctx, o: dict):
     if k == "graph":
         axm = ctx.mobs[on]
         f = ctx.fn(o["fn"], ["x"])
-        x0, x1 = (float(ctx.ev(x)) for x in o.get("x", axm.x_range[:2]))
+        xr = o.get("x", axm.x_range[:2])
+        x0, x1 = (float(ctx.ev(x)) for x in xr[:2])
         m = axm.plot(lambda x: float(f(x)), x_range=[x0, x1, (x1 - x0) / 200], use_smoothing=False)
         if o.get("discontinuities"):
             m = axm.plot(lambda x: float(f(x)), x_range=[x0, x1, (x1 - x0) / 400], discontinuities=[float(ctx.ev(d)) for d in o["discontinuities"]], use_smoothing=False)
@@ -557,7 +561,7 @@ def _build(ctx: _Ctx, o: dict):
         size = o.get("size")
         kw = {"x_length": float(size[0]), "y_length": float(size[1])} if size else {}
         m = NumberPlane(x_range=xr, y_range=yr, **kw,
-                        background_line_style={"stroke_color": "#9C9AA0", "stroke_width": 1.4, "stroke_opacity": 0.75},
+                        background_line_style={"stroke_color": "#8E8C93", "stroke_width": 1.2, "stroke_opacity": 0.5},
                         axis_config={"stroke_color": NEUTRAL["muted"], "stroke_width": 2}, faded_line_ratio=1)
         if o.get("grid_q"):
             m.background_lines.set_stroke(QCOLORS[ctx.quantities[o["grid_q"]]["color"]], 1.5, opacity=0.55)
@@ -580,7 +584,8 @@ def _build(ctx: _Ctx, o: dict):
         return m
     if k == "surface":
         axm = ctx.mobs[on] if on else None
-        f = ctx.fn(o["fn"], ["u", "v"])
+        f1 = ctx.fn(o["fn"], ["u", "v", "x", "y"])
+        f = lambda u, v: f1(u, v, u, v)  # noqa: E731
         ur = [float(ctx.ev(x)) for x in o.get("u", [-2, 2])]
         vr = [float(ctx.ev(x)) for x in o.get("v", [-2, 2])]
 
@@ -625,7 +630,19 @@ def _build(ctx: _Ctx, o: dict):
         return _place(ctx, o, g)
     if k == "matrix":
         from manim import Matrix
-        rows = [[str(c) for c in r] for r in o["rows"]]
+        def cell(c):
+            # an entry naming params / trackers ("a", "2*k") shows its value; anything else is LaTeX
+            if isinstance(c, (int, float)):
+                v = float(c)
+            elif isinstance(c, str) and names_in(c) and names_in(c) <= (set(ctx.params) | set(ctx.trackers) | set(_CONSTS)):
+                try:
+                    v = float(ctx.ev(c))
+                except Exception:  # noqa: BLE001
+                    return c
+            else:
+                return str(c)
+            return str(int(round(v))) if abs(v - round(v)) < 1e-6 else f"{v:.2f}".rstrip("0")
+        rows = [[cell(c) for c in r] for r in o["rows"]]
         m = Matrix(rows, element_to_mobject_config={"font_size": float(o.get("size", 40)), "color": NEUTRAL["ink"]}, h_buff=float(o.get("hbuff", 1.0)), v_buff=float(o.get("vbuff", 0.7)))
         m.get_brackets().set_color(col)
         for j, q in enumerate(o.get("col_q") or []):
@@ -697,6 +714,15 @@ def _build(ctx: _Ctx, o: dict):
 
 
 def build_object(ctx: _Ctx, o: dict):
+    try:
+        return _build_object(ctx, o)
+    except SpecError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise SpecError(f"object {o.get('id')} ({o.get('kind')}): {type(exc).__name__}: {exc}") from exc
+
+
+def _build_object(ctx: _Ctx, o: dict):
     if ctx.is_dynamic(o):
         ctx.dynamic.add(o["id"])
         holder = {"last": None}
@@ -948,10 +974,16 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
             m = need(i)
             about = ctx.pt(a["about"], a.get("on")) if "about" in a else None
             axis = OUT if not a.get("axis") else np.array(a["axis"], dtype=float)
-            out.append(Rotate(m, angle=float(ctx.ev(a.get("angle", 90))) * DEGREES, about_point=about, axis=axis, run_time=dur, rate_func=rate))
+            ang = ctx.ev(a.get("angle", 90))
+            ang = ang[0] if isinstance(ang, list) else ang
+            out.append(Rotate(m, angle=float(ang) * DEGREES, about_point=about, axis=axis, run_time=dur, rate_func=rate))
         return out
     if do == "scale":
-        return [need(i).animate(run_time=dur, rate_func=rate).scale(float(ctx.ev(a.get("factor", 1.2)))) for i in _ids(a)]
+        fac = ctx.ev(a.get("factor", a.get("by", 1.2)))
+        if isinstance(fac, list):
+            sx, sy = (float(fac[0]), float(fac[1] if len(fac) > 1 else fac[0]))
+            return [need(i).animate(run_time=dur, rate_func=rate).stretch(sx, 0).stretch(sy, 1) for i in _ids(a)]
+        return [need(i).animate(run_time=dur, rate_func=rate).scale(float(fac)) for i in _ids(a)]
     if do == "follow":
         path = need(a["path"])
         return [MoveAlongPath(need(i), path, run_time=dur, rate_func=rate if a.get("rate") else linear) for i in _ids(a)]

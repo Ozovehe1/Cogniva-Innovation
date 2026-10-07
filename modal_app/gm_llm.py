@@ -21,8 +21,13 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
 
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key and os.environ.get("GM_GEMINI_PROXY"):
-        r = httpx.post(os.environ["GM_GEMINI_PROXY"].rstrip("/") + "/gemini", headers={"X-Render-Token": os.environ.get("RENDER_TOKEN", "")},
-                       json={"prompt": prompt, "json_out": json_out, "temperature": temperature, "images": [base64.b64encode(i).decode() for i in images or []]}, timeout=timeout * 3 + 30)
+        for attempt in range(5):
+            r = httpx.post(os.environ["GM_GEMINI_PROXY"].rstrip("/") + "/gemini", headers={"X-Render-Token": os.environ.get("RENDER_TOKEN", "")},
+                           json={"prompt": prompt, "json_out": json_out, "temperature": temperature, "images": [base64.b64encode(i).decode() for i in images or []]}, timeout=timeout * 3 + 60)
+            if r.status_code == 503 and "429" in r.text and attempt < 4:
+                time.sleep(30 + 15 * attempt)  # the shared free-tier minute window
+                continue
+            break
         if r.status_code != 200:
             raise RuntimeError(f"Gemini proxy {r.status_code}: {r.text[:200]}")
         j = r.json()
@@ -71,7 +76,7 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
                 m = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', r.text)
                 delay = float(m.group(1)) if m else 20.0
                 # a daily quota is gone for hours; a per-minute one frees up within the hint
-                _skip[model] = time.time() + (3600 if daily else delay)
+                _skip[model] = time.time() + (600 if daily else delay)
                 if not daily:
                     wait_hint = max(wait_hint, min(delay, 45.0))
         soon = [t for t in (_skip.get(m, 0) for m in MODELS) if t - time.time() < 60]

@@ -68,9 +68,13 @@ Return JSON:
  "objects": [{{"id": "...", "what": "what it is", "build": "how it is drawn from primitives (point, line, arc, circle, ellipse, rect, polygon, path, bezier, curve, axes, plane, axes3d, graph, area, riemann, tangent, secant, surface, field, text, tex, matrix, number, brace, angle, array, trace), with sizes and positions in frame units (x -7..7, y -4..4)", "quantity": "quantity id or null"}}],
  "changes": [{{"when": "narration words", "what": "what moves / morphs / grows, driven by which tracker through which formula"}}],
  "equations": [{{"tex": "LaTeX with {{{{term}}}} groups", "terms": {{"term": "quantity id"}}, "linked_to": "object ids"}}],
+ "layout": "where each group sits in the frame (e.g. device left x -6..-1, graph right x 0.5..6.5, equation top right); use the whole 16:9 frame, nothing crammed in one corner",
  "mode": "2d" or "3d" (3d only if depth is essential)
 }}
-For a real-world object, design a simplified but recognisable construction from primitives (outline shapes, repeated parts as arrays, coils as curves); name its 2-4 key parts only.
+For a real-world object or device, design a simplified but recognisable construction from primitives (outline shapes, repeated parts as arrays, teeth/coils/waves as curves), name its 2-4 key parts only, and make the mechanism itself move (parts rotate, slide or flow at rates from the real relationship), not just arrows beside a box.
+For a process (biology, chemistry), show the actors as shapes that move and change state through the stages, not a flow chart of words.
+For an abstract idea, find the picture that makes it obvious (lengths, areas, grids, number lines, rotations) and let it evolve.
+Plan for 6-12 objects and 8-16 timeline actions so the clip is rich and something moves on every sentence.
 Craft: one colour per quantity everywhere; objects persist and evolve (morph, trackers) rather than being replaced; minimal text; accurate scale and motion from the real numbers; each equation term coloured like its object."""
 
 COMPOSE_PROMPT = """Write the scene spec for this plan, in the grammar below. Return ONLY the JSON spec.
@@ -513,11 +517,16 @@ def critique(sheet: bytes, plan: dict, log: list) -> dict:
 
 
 # ───────────── Pipeline ─────────────
+LAST: dict = {}  # the latest plan / spec (diagnostics when a run fails)
+
+
 def make_spec(desc: str, narr: dict | None, context: str, media_dir: str, log: list, plan: dict | None = None) -> tuple[dict, dict]:
     b = beats(narr)
     if plan is None:
         plan = ask_json(PLAN_PROMPT.format(desc=desc[:2500], context=context[:1500], beats=b), temperature=0.5, log=log)
+    LAST["plan"] = plan
     raw = ask_json(COMPOSE_PROMPT.format(plan=json.dumps(plan)[:6000], beats=b, grammar=GRAMMAR), temperature=0.3, timeout=90, log=log)
+    LAST["raw"] = raw
     spec = prepare(raw, narr, media_dir, log, plan)
     return plan, spec
 
