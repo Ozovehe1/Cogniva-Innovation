@@ -1,6 +1,37 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 
-const GEMINI_MODEL = 'gemini-3.8-flash'
+// Primary model first; fall back when Google returns overload/quota errors.
+const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-2.5-flash'] as const
+const ATTEMPT_TIMEOUT_MS = 25_000
+
+function isRetryable(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /\b(503|429|500|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|timed? ?out|aborted/i.test(msg)
+}
+
+async function generateJson(prompt: string) {
+  let lastErr: unknown
+  for (const model of GEMINI_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          httpOptions: { timeout: ATTEMPT_TIMEOUT_MS },
+          thinkingConfig: model.startsWith('gemini-3')
+            ? { thinkingLevel: ThinkingLevel.LOW }
+            : { thinkingBudget: 128 },
+        },
+      })
+      return parseGeminiJson(response.text ?? '')
+    } catch (err) {
+      lastErr = err
+      if (!isRetryable(err)) throw err
+      console.warn(`Gemini ${model} unavailable, trying next model:`, err instanceof Error ? err.message : err)
+    }
+  }
+  throw lastErr
+}
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 
@@ -32,15 +63,7 @@ Generate a JSON response with exactly these keys:
 Intelligence type keys: linguistic, logicalMathematical, spatial, musical, bodilyKinesthetic, interpersonal, intrapersonal, naturalist
 Return ONLY valid JSON, no markdown, no explanation.`
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-    },
-  })
-
-  return parseGeminiJson(response.text ?? '')
+  return generateJson(prompt)
 }
 
 export async function generateProjectForStudent(studentProfile: object, subject: string, difficulty: string) {
@@ -59,13 +82,5 @@ Return JSON with these keys:
 
 Return ONLY valid JSON, no markdown.`
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-    },
-  })
-
-  return parseGeminiJson(response.text ?? '')
+  return generateJson(prompt)
 }
