@@ -71,7 +71,8 @@ Example: {"cue": "slide", "dur": 3.5, "do": "set", "values": {"h": 0.05}, "rate"
          {"cue": "derivative", "dur": 1.5, "do": "match_tex", "from": "slope", "to": "deriv"}
 - show {targets: [ids]}      (draws lines/curves, writes text and maths, grows arrows, fades in fills and particles)
 - hide {targets}
-- set {values: {trackerId: value}, rate?: "linear"|"smooth"}     // drives every live object
+- set {values: {trackerId: value}, rate?: "linear"|"smooth", exact?: true}     // drives every live object; continuous
+  drives stretch over the following narration gap unless "exact": true (use it when a readout must match a spoken number)
 - morph {from, to}            // reshape one object continuously into another (the `to` object must not be shown yet)
 - match_tex {from, to, key_map?}   // equation to equation, term by term
 - move {targets, to: [x,y] | by: [dx,dy] | next_to: [id, dir]}     rotate {targets, angle (deg), about?: [x,y]}

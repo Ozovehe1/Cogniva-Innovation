@@ -394,6 +394,15 @@ def _tex(ctx: _Ctx, o: dict):
     return m
 
 
+def _places(r) -> int:
+    """Decimals for axis numbers: none for whole-number ticks (1, 2, 3 rather than 1.0, 2.0)."""
+    vals = [r[0] + k * r[2] for k in range(1 + int(max(0, (r[1] - r[0]) / (r[2] or 1))))] if len(r) > 2 and r[2] else r[:2]
+    for p in range(0, 3):
+        if all(abs(v * 10 ** p - round(v * 10 ** p)) < 1e-6 for v in vals):
+            return p
+    return 2
+
+
 def _build(ctx: _Ctx, o: dict):
     k = o["kind"]
     on = o.get("on")
@@ -544,7 +553,8 @@ def _build(ctx: _Ctx, o: dict):
         size = o.get("size", [10, 6])
         m = Axes(x_range=xr, y_range=yr, x_length=float(size[0]), y_length=float(size[1]),
                  axis_config={"color": col, "stroke_width": 2, "include_tip": bool(o.get("tips", True)), "tip_length": 0.13, "tip_width": 0.11, "font_size": 22},
-                 x_axis_config={"include_numbers": bool(o.get("numbers", False))}, y_axis_config={"include_numbers": bool(o.get("numbers", False))})
+                 x_axis_config={"include_numbers": bool(o.get("numbers", False)), "decimal_number_config": {"num_decimal_places": _places(xr)}},
+                 y_axis_config={"include_numbers": bool(o.get("numbers", False)), "decimal_number_config": {"num_decimal_places": _places(yr)}})
         if o.get("numbers"):
             for ax in (m.x_axis, m.y_axis):
                 if getattr(ax, "numbers", None) is not None:
@@ -867,14 +877,17 @@ def run_spec(scene, spec: dict):
             now = t0
         nxt = groups[gi + 1][0]["_t0"] if gi + 1 < len(groups) else max(end, now + max(a["_dur"] for a in g))
         window = max(0.15, nxt - now) if gi + 1 < len(groups) else max(a["_dur"] for a in g)
-        anims, after = [], []
+        anims, after, played = [], [], []
         for a in g:
             dur = min(a["_dur"], window)
-            if a.get("do") in CONTINUOUS and window > dur and gi + 1 < len(groups):
+            if a.get("do") in CONTINUOUS and not a.get("exact") and window > dur and gi + 1 < len(groups):
                 # 3Blue1Brown keeps motion going while the voice talks: drives stretch into the gap (up to 3x)
                 dur = min(window, a["_dur"] * 3)
             try:
-                anims += _action(ctx, scene, a, dur, visible, fixed, after)
+                got = [x for x in _action(ctx, scene, a, dur, visible, fixed, after) if x is not None]
+                anims += got
+                if got:
+                    played.append(dur)
             except SpecError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -882,7 +895,8 @@ def run_spec(scene, spec: dict):
         anims = [x for x in anims if x is not None]
         if anims:
             scene.play(*anims)
-            now += max(getattr(x, "run_time", 1.0) for x in anims)
+            # `.animate` builders carry no run_time attribute, so the clock follows the durations that were asked for
+            now += max(played) if played else max(getattr(x, "run_time", 1.0) for x in anims)
         for f in after:
             f()
         gate["frames"].append(_snapshot(ctx, scene, now, visible))
@@ -902,6 +916,14 @@ def _ids(a, key="targets"):
     if v is None:
         return []
     return v if isinstance(v, list) else [v]
+
+
+def _pulse(ctx, mid, m, color, scale, dur):
+    """Indicate, except for arrows: scaling an Arrow (live or not) can fail inside Manim (a tip without points) and hang
+    the render, so arrows get a Circumscribe in their own colour instead."""
+    if ctx.defs.get(mid, {}).get("kind") in ("arrow", "vector") or mid in ctx.dynamic:
+        return Circumscribe(m, color=color or PALETTE["amber"], run_time=dur, buff=0.08)
+    return Indicate(m, color=color, scale_factor=scale, run_time=dur)
 
 
 def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, after: list):
@@ -1037,7 +1059,7 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
             an = an.move_to(need(a["follow"]).get_center())
         return [an]
     if do == "indicate":
-        return [Indicate(need(i), color=PALETTE["amber"] if not ctx.defs.get(i, {}).get("q") else None, scale_factor=1.08, run_time=dur) for i in _ids(a)]
+        return [_pulse(ctx, i, need(i), PALETTE["amber"] if not ctx.defs.get(i, {}).get("q") else None, 1.08, dur) for i in _ids(a)]
     if do == "circle":
         return [Circumscribe(need(i), color=PALETTE["amber"], run_time=dur, buff=0.08) for i in _ids(a)]
     if do == "link":
@@ -1050,7 +1072,7 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
         conn = DashedLine(term.get_critical_point(DOWN if tgt.get_center()[1] < term.get_center()[1] else UP), tgt.get_center(), color=c, stroke_width=2, dash_length=0.1)
         scene.add(conn)
         after.append(lambda: scene.remove(conn))
-        return [Indicate(term, color=c, scale_factor=1.25, run_time=dur), Indicate(tgt, color=c, scale_factor=1.1, run_time=dur), Create(conn, run_time=dur * 0.5, rate_func=there_and_back)]
+        return [Indicate(term, color=c, scale_factor=1.25, run_time=dur), _pulse(ctx, a["target"], tgt, c, 1.1, dur), Create(conn, run_time=dur * 0.5, rate_func=there_and_back)]
     if do == "color":
         q = a["q"]
         if q not in ctx.quantities:
