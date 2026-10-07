@@ -19,7 +19,7 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
-import { GeminiQuotaError } from './gemini'
+import { GeminiQuotaError, isRetryable } from './gemini'
 import type { GenMeta } from './lesson-ai'
 import { EXTRA_PREFIX, HOOK_SECONDS, MAX_BEATS, MAX_EXTRA_BEATS, draftBeat, extraBeat, hookPlan, planLessonBeats, traceSummary, type BeatKind, type BeatPlan } from './lesson-beats'
 import { flattenSections, type Chapter } from './lesson-sections'
@@ -83,9 +83,10 @@ interface LessonJobRow {
   draft_retry_at: string | null
   draft_lock_until: string | null
   generated_by?: string | null
+  created_at?: string | null
 }
 
-const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, generated_by'
+const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, generated_by, created_at'
 
 /* ───────────── Internal auth for the self-chain ───────────── */
 
@@ -218,8 +219,8 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       // A paused job resumes once its retry time has passed.
       if (lesson.draft_status === 'paused') {
         if (lesson.draft_retry_at && new Date(lesson.draft_retry_at).getTime() > Date.now()) return 'paused'
-        const { count } = await db.from('lesson_sections').select('id', { count: 'exact', head: true }).eq('lesson_id', lessonId)
-        const status: DraftStatus = count ? 'drafting' : 'outlining'
+        const { data: any1 } = await db.from('lesson_sections').select('id').eq('lesson_id', lessonId).limit(1)
+        const status: DraftStatus = any1?.length ? 'drafting' : 'outlining'
         await db.from('lessons').update({ draft_status: status, draft_error: null, draft_retry_at: null }).eq('id', lessonId)
         continue
       }
@@ -230,6 +231,12 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       const targetMs = (lesson.target_minutes ?? 15) * 60_000
 
       if (lesson.draft_status === 'outlining') {
+        // A planned lesson is never planned again (that would drop beats a learner may be playing).
+        const { data: planned } = await db.from('lesson_sections').select('id').eq('lesson_id', lessonId).limit(1)
+        if (planned?.length) {
+          await db.from('lessons').update({ draft_status: 'drafting' }).eq('id', lessonId)
+          continue
+        }
         // The plan and the opening beat are written at the same time, so playback can start
         // as soon as the opening beat exists. The voice container (scales to zero, ~20-40 s cold
         // start) is woken now so it is up by the time the opening lines need voicing.
@@ -247,6 +254,11 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
           const err = planR.reason
           if (err instanceof GeminiQuotaError) { if (await onQuota(err) === 'paused') return 'paused'; continue }
           const msg = err instanceof Error ? err.message : String(err)
+          // Overload (503) and timeouts pass: try again shortly (the pg_cron tick resumes it), for up to 30 minutes.
+          if (isRetryable(err) && Date.now() - new Date(lesson.created_at ?? Date.now()).getTime() < 30 * 60_000) {
+            await db.from('lessons').update({ draft_status: 'paused', draft_error: 'busy', draft_retry_at: new Date(Date.now() + 60_000).toISOString() }).eq('id', lessonId)
+            return 'paused'
+          }
           console.error('Beat plan failed:', msg)
           await db.from('lessons').update({ draft_status: 'failed', draft_error: `The lesson plan could not be written: ${msg.slice(0, 200)}` }).eq('id', lessonId)
           return 'failed'
@@ -359,6 +371,8 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         console.error(`Beat ${next.position + 1} failed:`, msg)
         const attempts = (next.attempts ?? 0) + 1
         await db.from('lesson_sections').update({ status: attempts >= BEAT_ATTEMPTS ? 'failed' : 'pending', attempts, steps: [], error: msg.slice(0, 300) }).eq('id', next.id)
+        // An overload spike (503, timeouts) usually passes in seconds: give it a moment before the next try.
+        if (isRetryable(err) && Date.now() + 10_000 + BEAT_RESERVE_MS < hardEnd) await sleep(10_000)
       }
     }
   } finally {
