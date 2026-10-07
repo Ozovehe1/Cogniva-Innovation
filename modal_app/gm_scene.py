@@ -713,19 +713,28 @@ def _build(ctx: _Ctx, o: dict):
         xr = [float(ctx.ev(v)) for v in o.get("x", [-5, 5, 1])]
         yr = [float(ctx.ev(v)) for v in o.get("y", [-3, 3, 1])]
         size = o.get("size", [10, 6])
+        # tick numbers on both axes by default (numbers: false turns them off); axis labels are mandatory and protected
+        nums = o.get("numbers", True) is not False
         m = Axes(x_range=xr, y_range=yr, x_length=float(size[0]), y_length=float(size[1]),
                  axis_config={"color": col, "stroke_width": 2, "include_tip": bool(o.get("tips", True)), "tip_length": 0.13, "tip_width": 0.11, "font_size": 22},
-                 x_axis_config={"include_numbers": bool(o.get("numbers", False)), "decimal_number_config": {"num_decimal_places": _places(xr)}},
-                 y_axis_config={"include_numbers": bool(o.get("numbers", False)), "decimal_number_config": {"num_decimal_places": _places(yr)}})
-        if o.get("numbers"):
+                 x_axis_config={"include_numbers": nums, "decimal_number_config": {"num_decimal_places": _places(xr)}},
+                 y_axis_config={"include_numbers": nums, "decimal_number_config": {"num_decimal_places": _places(yr)}})
+        if nums:
             for ax in (m.x_axis, m.y_axis):
                 if getattr(ax, "numbers", None) is not None:
                     ax.numbers.set_color(NEUTRAL["muted"])
         m.move_to(np.array((ctx.ev(o.get("center", [0, 0])) + [0])[:3]))
-        labels = o.get("labels")
-        if labels:
-            lab = m.get_axis_labels(x_label=MathTex(labels[0], font_size=30, color=NEUTRAL["muted"]), y_label=MathTex(labels[1], font_size=30, color=NEUTRAL["muted"]))
-            m.add(lab)
+        labels = o.get("labels") or ["x", "y"]
+        xl = MathTex(axis_label_tex(labels[0]), font_size=26, color=NEUTRAL["muted"])
+        yl = MathTex(axis_label_tex(labels[1] if len(labels) > 1 else "y"), font_size=26, color=NEUTRAL["muted"])
+        # x label centred under the axis (below the tick numbers); y label above the top of the y axis, left-aligned to it
+        low = m.x_axis.numbers if nums and getattr(m.x_axis, "numbers", None) is not None and len(m.x_axis.numbers) else m.x_axis
+        xl.next_to(low, DOWN, buff=0.14).set_x(m.x_axis.get_center()[0])
+        yl.next_to(m.y_axis.get_top(), UP, buff=0.12)
+        if yl.get_left()[0] > m.y_axis.get_left()[0] - 0.1 and yl.width > 1.2:
+            yl.align_to(m.y_axis, LEFT).shift(LEFT * 0.2)
+        m.add(xl, yl)
+        m.axis_label_mobs = (xl, yl)
         return m
     if k == "plane":
         xr = [float(v) for v in o.get("x", [-7, 7, 1])]
@@ -1389,6 +1398,17 @@ def _words(ctx, i):
     return 0
 
 
+def axis_label_tex(lab) -> str:
+    """'Temperature (°C)' / 'T (\\mathrm{K})' -> TeX; plain words go in \\text{} so they keep their spaces."""
+    s = str(lab).strip().strip("$")
+    if not s:
+        return "x"
+    if "\\" in s or "^" in s or "_" in s:
+        return s.replace("°", "^{\\circ}")
+    s = s.replace("°", "$^{\\circ}$").replace("%", "\\%")
+    return "\\text{" + s + "}"
+
+
 def _snapshot(ctx: _Ctx, scene, t: float, visible: set):
     items = []
     for i in sorted(visible):
@@ -1454,6 +1474,18 @@ def _checks(ctx: _Ctx, gate: dict):
             if key not in seen:
                 seen.add(key)
                 issues.append({"type": "text_density", "t": fr["t"], "words": fr["words"]})
+    # axes must carry in-frame x and y labels (hard gate)
+    for oid, o in ctx.defs.items():
+        if o.get("kind") != "axes" or oid not in ctx.mobs:
+            continue
+        labs = getattr(ctx.mobs[oid], "axis_label_mobs", None)
+        if not labs:
+            issues.append({"type": "axis_label", "id": oid, "why": "missing"})
+            continue
+        for which, lm in zip("xy", labs):
+            b = _bbox(lm)
+            if not b or b[0] < -HALF_W or b[2] > HALF_W or b[1] < -HALF_H or b[3] > HALF_H:
+                issues.append({"type": "axis_label", "id": oid, "why": f"{which} label off frame"})
     # colour: a quantity declared but never drawn, or drawn with no quantity
     used = {o.get("q") for o in ctx.spec.get("objects") or []} | {q for o in ctx.spec.get("objects") or [] for q in (o.get("terms") or {}).values()}
     for q in ctx.quantities:

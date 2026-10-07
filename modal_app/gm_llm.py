@@ -14,7 +14,8 @@ import time
 
 MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-2.5-flash"]
 _skip: dict[str, float] = {}
-_why: dict[str, str] = {}  # last refusal per model (status + quota id), for the error message
+_why: dict[str, str] = {}
+LAST_MODEL: dict = {}  # the model that served the latest call (stage logs)  # last refusal per model (status + quota id), for the error message
 
 
 STRONG = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash"]  # composing / repairing a scene: quality over speed
@@ -38,6 +39,9 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
         j = r.json()
         if log is not None:
             log.extend(j.get("log", []))
+        oks = [x for x in j.get("log", []) if x.endswith(" ok")]
+        if oks:
+            LAST_MODEL["model"] = oks[-1].split()[1].split("#")[0]
         return j["text"]
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set")
@@ -47,7 +51,10 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
     last = None
     wait_hint = 0.0
     for attempt in range(3):
-        order = (STRONG + [m for m in MODELS if m not in STRONG]) if strong else MODELS
+        # strongest available models first; flash-lite is the backup. GM_FORCE_MODELS (comma list) pins the order,
+        # e.g. to verify that the backup alone still meets the bar.
+        forced = [m.strip() for m in os.environ.get("GM_FORCE_MODELS", "").split(",") if m.strip()]
+        order = forced or (STRONG + [m for m in MODELS if m not in STRONG])
         for slot in [m if k == 0 else f"{m}#{k}" for k in range(len(keys)) for m in order]:
             model, _, kidx = slot.partition("#")
             key = keys[int(kidx or 0)]
@@ -56,6 +63,8 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
                 cfg["responseMimeType"] = "application/json"
             if model.startswith("gemini-3"):
                 cfg["thinkingConfig"] = {"thinkingLevel": "medium" if strong else "low"}
+            elif model.startswith("gemini-2.5-flash") and "lite" not in model:
+                cfg["thinkingConfig"] = {"thinkingBudget": 2048 if strong else 512}
             if time.time() < _skip.get(slot, 0):
                 continue
             try:
@@ -75,6 +84,7 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
                     continue
                 if log is not None:
                     log.append(f"gemini {slot} ok")
+                LAST_MODEL["model"] = model
                 return text
             last = f"{slot}: {r.status_code} {r.text[:160]}"
             qid = re.findall(r'"quotaId":\s*"([^"]+)"', r.text)

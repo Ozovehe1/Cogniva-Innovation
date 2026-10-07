@@ -48,13 +48,19 @@ render_image = (
         "lmodern",
         "tipa",
     )
-    .pip_install("manim==0.19.0", "httpx==0.27.2")
+    .pip_install("manim==0.19.0", "httpx==0.27.2", "sympy==1.14.0", "shapely==2.0.6", "rdkit==2024.9.6")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pen_export.py"), "/root/pen_export.py")
     # The scene grammar runtime + the AI visual composer (plan -> spec -> validate -> render -> gate -> repair).
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_scene.py"), "/root/gm_scene.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_compose.py"), "/root/gm_compose.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_grammar.md"), "/root/gm_grammar.md")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_llm.py"), "/root/gm_llm.py")
+    # The part-graph composer: semantic part graph -> deterministic solvers / World / gates (tried first, gm_compose is the fallback).
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_parts.py"), "/root/gm_parts.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_rigs.py"), "/root/gm_rigs.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_refdata.py"), "/root/gm_refdata.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_partcompose.py"), "/root/gm_partcompose.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_memory.json"), "/root/gm_memory.json")
 )
 
 web_image = (
@@ -233,30 +239,53 @@ def _put(url: str | None, data: bytes, ctype: str) -> bool:
         return False
 
 
-@app.function(image=render_image, secrets=[secret], timeout=900, cpu=2.0, memory=4096, max_containers=4)
+@app.function(image=render_image, secrets=[secret], timeout=1500, cpu=4.0, memory=6144, max_containers=6)
 def compose(job_id: str, description: str, narration: dict | None, context: str, upload_url: str, paths_upload_url: str | None,
-            report_upload_url: str | None, vision: str = "auto", callback: bool = True) -> dict:
-    """AI visual composer at render time (never on the learner's path): plan -> spec -> validate -> render -> gate -> repair (max 2 renders)."""
+            report_upload_url: str | None, vision: str = "auto", callback: bool = True, models: str | None = None, engine: str = "auto") -> dict:
+    """AI visual composer at render time (never on the learner's path). First the part-graph composer (semantic part graph ->
+    deterministic solvers, single-source numbers, fact checks, hard gates, pairwise critic); when no solver fits the topic or a
+    gate cannot be met, the free grammar composer (plan -> spec -> validate -> render -> gate -> repair)."""
     import sys
     import time
 
     sys.path.insert(0, "/root")
+    if models:  # pin the Gemini order for this call (e.g. flash-lite only, to verify the backup)
+        os.environ["GM_FORCE_MODELS"] = models
+    else:
+        os.environ.pop("GM_FORCE_MODELS", None)
     import gm_compose
 
     if callback:
         _callback(job_id, "rendering")
     t0 = time.time()
     log: list = []
-    try:
-        r = gm_compose.compose_and_render(description, narration, context, vision=vision, log=log)
-    except Exception as exc:  # noqa: BLE001
-        r = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-    report = {k: r.get(k) for k in ("ok", "plan", "spec", "issues", "critique", "history", "timings", "attempt", "error")}
-    report["log"] = log[-40:]
+    r = None
+    parts_report = None
+    if engine in ("auto", "parts"):
+        try:
+            import gm_partcompose
+            pr = gm_partcompose.compose_parts(description, narration, log=log, budget_s=600)
+        except Exception as exc:  # noqa: BLE001
+            pr = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "fallback": True}
+        parts_report = {k: pr.get(k) for k in ("ok", "error", "graph", "scene", "gate", "facts", "checklist", "timings", "stages", "mode", "pen_coverage")}
+        if pr.get("ok"):
+            r = {"ok": True, "video": pr["video"], "pen": pr.get("pen"), "engine": "parts", "code": gm_partcompose_code(pr["scene"]), "timings": pr.get("timings"), "issues": pr["gate"].get("soft")}
+        else:
+            log.append(f"parts composer: {pr.get('error')} -> free composer")
+    if r is None and engine != "parts":
+        try:
+            r = gm_compose.compose_and_render(description, narration, context, vision=vision, log=log, budget_s=max(240, 780 - (time.time() - t0)))
+            r["engine"] = "grammar"
+        except Exception as exc:  # noqa: BLE001
+            r = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    r = r or {"ok": False, "error": "parts composer failed"}
+    report = {k: r.get(k) for k in ("ok", "plan", "spec", "issues", "critique", "history", "timings", "attempt", "error", "engine")}
+    report["parts"] = parts_report
+    report["log"] = log[-60:]
     report["wall_s"] = round(time.time() - t0, 1)
-    if r.get("gate"):
+    if r.get("gate") and r.get("engine") == "grammar":
         report["gate"] = {"duration": r["gate"].get("duration"), "checks": r["gate"].get("checks")}
-    _put(report_upload_url, json.dumps(report).encode(), "application/json")
+    _put(report_upload_url, json.dumps(report, default=str).encode(), "application/json")
     if not r.get("ok"):
         if callback:
             _callback(job_id, "failed", (r.get("error") or "composition failed") + "\n" + "\n".join(log[-8:]), {"composed": True})
@@ -273,8 +302,14 @@ def compose(job_id: str, description: str, narration: dict | None, context: str,
             _put(paths_upload_url, f.read(), "application/json")
     report["bytes"] = len(video)
     if callback:
-        _callback(job_id, "done", None, {"composed": True, "code": gm_compose.scene_code(r["spec"]), "issues": r.get("issues"), "timings": r.get("timings")})
+        code = r.get("code") or gm_compose.scene_code(r["spec"])
+        _callback(job_id, "done", None, {"composed": True, "code": code, "issues": r.get("issues"), "timings": r.get("timings")})
     return report
+
+
+def gm_partcompose_code(scene: dict) -> str:
+    import gm_parts
+    return gm_parts.scene_code(scene)
 
 
 @app.function(image=web_image, secrets=[secret])
@@ -311,6 +346,8 @@ def web():
         report_upload_url: str | None = Field(default=None, max_length=4000)
         vision: str = Field(default="auto", pattern=r"^(auto|always|never)$")
         callback: bool = True
+        models: str | None = Field(default=None, max_length=300)  # comma list pinning the Gemini order (tests of the backup)
+        engine: str = Field(default="auto", pattern=r"^(auto|parts|grammar)$")
 
     @api.post("/compose", status_code=202)
     def compose_endpoint(req: ComposeRequest, x_render_token: str | None = Header(default=None)):
@@ -319,7 +356,8 @@ def web():
         for u in (req.upload_url, req.paths_upload_url, req.report_upload_url):
             if u and not u.startswith("https://"):
                 raise HTTPException(status_code=400, detail="upload urls must be https")
-        call = compose.spawn(req.job_id, req.description, req.narration, req.context, req.upload_url, req.paths_upload_url, req.report_upload_url, req.vision, req.callback)
+        call = compose.spawn(req.job_id, req.description, req.narration, req.context, req.upload_url, req.paths_upload_url, req.report_upload_url, req.vision, req.callback,
+                             req.models, req.engine)
         return {"accepted": True, "call_id": call.object_id}
 
     @api.get("/result/{call_id}")

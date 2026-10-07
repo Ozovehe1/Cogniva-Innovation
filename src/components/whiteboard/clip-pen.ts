@@ -55,19 +55,41 @@ export function tipOf(s: PenStroke, prop: number): [number, number] | null {
   return [a[0] * w0 + b[0] * w1 + c[0] * w2 + d[0] * w3, a[1] * w0 + b[1] * w1 + c[1] * w2 + d[1] * w3]
 }
 
+/** Prefix maximum of stroke end times (strokes are sorted by t0): lets tipAt skip every finished stroke by binary search,
+ * so dense pen data (thousands of label glyphs) costs O(log n + active) per frame instead of a scan from the start. */
+const endIndex = new WeakMap<PenPaths, Float64Array>()
+function prefixEnds(paths: PenPaths): Float64Array {
+  let a = endIndex.get(paths)
+  if (!a) {
+    a = new Float64Array(paths.strokes.length)
+    let m = -Infinity
+    paths.strokes.forEach((s, i) => { m = Math.max(m, s.t1); a![i] = m })
+    endIndex.set(paths, a)
+  }
+  return a
+}
+
 /** Where the tip is at video time t: on the newest stroke being drawn, gliding to the next within 0.45 s, else null. */
 export function tipAt(paths: PenPaths, t: number): { at: [number, number]; down: boolean } | null {
+  const strokes = paths.strokes
+  if (!strokes.length) return null
+  const ends = prefixEnds(paths)
+  let lo = 0, hi = strokes.length
+  while (lo < hi) { const m = (lo + hi) >> 1; if (ends[m] < t) lo = m + 1; else hi = m }
   let best: PenStroke | null = null
   let bestP = 0
-  for (const s of paths.strokes) {
+  let i = lo
+  for (; i < strokes.length; i++) {
+    const s = strokes[i]
     if (s.t0 > t) break
     if (t > s.t1) continue
     const p = proportionAt(s, t)
     if (p > 0 && p < 1 && (!best || s.t0 >= best.t0)) { best = s; bestP = p }
   }
   if (best) { const at = tipOf(best, bestP); return at ? { at, down: true } : null }
-  const next = paths.strokes.find(s => s.t0 > t && s.t0 - t < 0.45)
-  if (next) { const at = tipOf(next, 0); return at ? { at, down: false } : null }
+  for (let j = i; j < strokes.length && strokes[j].t0 - t < 0.45; j++) {
+    if (strokes[j].t0 > t) { const at = tipOf(strokes[j], 0); return at ? { at, down: false } : null }
+  }
   return null
 }
 

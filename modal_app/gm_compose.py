@@ -304,8 +304,16 @@ def normalize(spec, notes: list[str]) -> dict:
                 if h != o[key]:
                     notes.append(f"{o['id']}: {key} tex hygiene")
                     o[key] = h
-        if o["kind"] == "axes" and isinstance(o.get("labels"), list):
-            o["labels"] = [tex_hygiene(str(x)) for x in o["labels"]]
+        if o["kind"] == "axes":
+            labs = o.get("labels") if isinstance(o.get("labels"), list) else []
+            if len(labs) < 2 or not all(str(x).strip() for x in labs[:2]):
+                # derive from the quantities its graphs are bound to (name + unit), else the plan's params
+                qs = {q.get("id"): q for q in spec.get("quantities") or [] if isinstance(q, dict)}
+                gq = [qs.get(g.get("q")) for g in spec.get("objects") or [] if isinstance(g, dict) and g.get("on") == o.get("id") and g.get("q") in qs]
+                ylab = next((f"{q.get('name', q['id'])}" + (f" ({q['unit']})" if q.get("unit") else "") for q in gq if q), None)
+                labs = [labs[0] if labs and str(labs[0]).strip() else "x", labs[1] if len(labs) > 1 and str(labs[1]).strip() else (ylab or "y")]
+                notes.append(f"{o['id']}: axis labels derived {labs}")
+            o["labels"] = [tex_hygiene(str(x)) for x in labs[:2]]
         if o["kind"] == "matrix" and isinstance(o.get("rows"), list):
             o["rows"] = [[tex_hygiene(c) if isinstance(c, str) else c for c in r] for r in o["rows"] if isinstance(r, list)]
         if o["kind"] == "tex":
@@ -740,6 +748,8 @@ def heuristics(r: dict, spec: dict) -> list[str]:
             issues.append(f"text {c['ids'][0]} sits on the filled shape {c['ids'][1]} at {c['t']}s")
         elif t == "text_density":
             issues.append(f"{c['words']} words of text on screen at {c['t']}s; cut text, show it instead")
+        elif t == "axis_label":
+            issues.append(f"axes '{c['id']}': {c['why']} axis label; every axes needs x and y labels with quantity name and units")
         elif t == "unused_quantity":
             issues.append(f"quantity {c['id']} is declared but never drawn")
     narr = spec.get("narration") or {}
@@ -1033,6 +1043,9 @@ def compose_and_render(desc: str, narr: dict | None = None, context: str = "", w
         elif not nops:
             break
     timings["total_s"] = round(time.time() - t0, 1)
+    if best is not None and any("axis label" in x for x in best["issues"]):
+        log.append("gate: an axes lacks in-frame x/y labels; clip not shipped")
+        best = None
     if best is None:
         return {"ok": False, "plan": plan, "spec": spec, "timings": timings, "log": log, "history": history}
     return {"ok": True, "plan": plan, **best, "history": history, "timings": timings, "log": log}

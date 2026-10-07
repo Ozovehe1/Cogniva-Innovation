@@ -35,7 +35,7 @@ guides, secondary labels) or "rule" (faint guides). Never use a quantity colour 
 - path {points, smooth?: true for a smooth curve through the points, closed?}
 - bezier {points: 4, 7, 10... cubic control points (segments share end points)}
 - curve {fn: "[x(s), y(s)]" (or 3 values in 3d), range: [s0, s1]}      // parametric, any shape
-- axes {x: [min,max,step], y: [min,max,step], size: [w,h], center: [x,y], labels: ["x","y"] (LaTeX), numbers?: true}
+- axes {x: [min,max,step], y: [min,max,step], size: [w,h], center: [x,y], labels: ["Temperature (°C)","Efficiency (%)"] REQUIRED: quantity name AND unit for both axes (x label is drawn centred under the axis, y label above the y axis), numbers?: true (default; tick numbers on both axes)}
 - plane {x: [min,max,step], y: [..], size?, center?}   // NumberPlane grid that can be warped / matrix-transformed
 - axes3d {x, y, z ranges, size: [w,h,d]}               // 3d mode
 - graph {on: axes, fn: "expression in x", x: [a,b]}    // y = f(x); may use trackers
