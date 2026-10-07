@@ -500,7 +500,7 @@ def _build(ctx: _Ctx, o: dict):
         if b - a < 1e-3:
             return VGroup()
         kw = {"bounded_graph": ctx.mobs[o["bounded"]]} if o.get("bounded") else {}
-        m = axm.get_area(g, x_range=(a, b), color=col, opacity=float(o.get("fill", 0.25)), **kw)
+        m = axm.get_area(g, x_range=(a, b), color=col, opacity=max(0.25, float(o.get("fill", 0.3))), **kw)
         return m
     if k == "riemann":
         axm = ctx.mobs[on]
@@ -510,8 +510,8 @@ def _build(ctx: _Ctx, o: dict):
         # strokes thin out with the rectangles so a fine sum reads as a solid area, not hatching
         px = dx * axm.x_axis.unit_size
         sw = 1.2 if px > 0.25 else max(0.0, px * 4)
-        m = axm.get_riemann_rectangles(g, x_range=[a, b], dx=dx, input_sample_type=o.get("sample", "left"), stroke_width=sw, stroke_color=col, fill_opacity=float(o.get("fill", 0.45)))
-        m.set_fill(col, opacity=float(o.get("fill", 0.45)))
+        m = axm.get_riemann_rectangles(g, x_range=[a, b], dx=dx, input_sample_type=o.get("sample", "left"), stroke_width=sw, stroke_color=col, fill_opacity=max(0.35, float(o.get("fill", 0.45))))
+        m.set_fill(col, opacity=max(0.35, float(o.get("fill", 0.45))))
         m.set_stroke(col, width=sw, opacity=0.9)
         return m
     if k == "tangent":
@@ -831,6 +831,9 @@ def _anim_show(ctx, mid, m, dur):
     return Create(m, run_time=dur)
 
 
+CONTINUOUS = {"set", "follow", "drift", "rotate", "matrix", "warp"}
+
+
 def run_spec(scene, spec: dict):
     ctx = _Ctx(spec, scene)
     scene.camera.background_color = BG
@@ -846,7 +849,7 @@ def run_spec(scene, spec: dict):
         scene.add(t)
 
     gate = {"frames": [], "issues": list(ctx.issues), "duration": 0.0}
-    acts = schedule(spec)
+    acts = [a for a in schedule(spec) if a.get("do") != "wait"]  # time fills itself; a wait would only cut motion short
     end = total_duration(spec)
     groups: list[list[dict]] = []
     for a in acts:
@@ -867,6 +870,9 @@ def run_spec(scene, spec: dict):
         anims, after = [], []
         for a in g:
             dur = min(a["_dur"], window)
+            if a.get("do") in CONTINUOUS and window > dur and gi + 1 < len(groups):
+                # 3Blue1Brown keeps motion going while the voice talks: drives stretch into the gap (up to 3x)
+                dur = min(window, a["_dur"] * 3)
             try:
                 anims += _action(ctx, scene, a, dur, visible, fixed, after)
             except SpecError:

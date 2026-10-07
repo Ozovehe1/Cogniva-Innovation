@@ -101,6 +101,44 @@ export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 
   }
 }
 
+/**
+ * The general visual composer (modal_app/gm_compose.py): the render service plans the concept, writes a scene in the
+ * GeniusMap scene grammar, validates it (every LaTeX snippet compiled, every expression evaluated), renders it, runs the
+ * frame gate and repairs once, all at render time on Modal, ahead of playback. On success the callback stores the
+ * composed scene as the job's code; on failure the callback falls back to free-form Manim code (the escape hatch).
+ */
+export async function dispatchCompose(admin: SupabaseClient, job: Pick<ManimJob, 'id' | 'attempts'> & { prompt: string }, narration?: { text: string; ms?: number; words?: { w: string; s: number; e: number }[] } | null, context = '') {
+  if (!renderServiceConfigured()) return { ok: false as const, error: 'render service not configured' }
+  const attempt = job.attempts + 1
+  const path = `${job.id}/${attempt}.mp4`
+  const [{ data: signed, error: signErr }, { data: penSigned }, { data: repSigned }] = await Promise.all([
+    admin.storage.from(MANIM_BUCKET).createSignedUploadUrl(path, { upsert: true }),
+    admin.storage.from(MANIM_BUCKET).createSignedUploadUrl(penPathFor(path), { upsert: true }),
+    admin.storage.from(MANIM_BUCKET).createSignedUploadUrl(path.replace(/\.mp4$/, '') + '.report.json', { upsert: true }),
+  ])
+  if (signErr || !signed) return { ok: false as const, error: `Could not create an upload URL: ${signErr?.message ?? 'unknown error'}` }
+  await admin.from('manim_jobs').update({ status: 'rendering', error: null, attempts: attempt, video_path: path }).eq('id', job.id)
+  try {
+    const base = process.env.MODAL_RENDER_URL!.replace(/\/+$/, '')
+    const res = await fetch(`${base}/compose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN! },
+      body: JSON.stringify({
+        job_id: job.id, description: job.prompt.slice(0, 4000), context: context.slice(0, 3000),
+        narration: narration?.text ? { text: narration.text, ms: narration.ms, words: narration.words } : null,
+        upload_url: signed.signedUrl, paths_upload_url: penSigned?.signedUrl ?? null, report_upload_url: repSigned?.signedUrl ?? null,
+      }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!res.ok) throw new Error(`render service answered ${res.status}: ${(await res.text()).slice(0, 300)}`)
+    return { ok: true as const }
+  } catch (err) {
+    const error = `Could not reach the composer: ${err instanceof Error ? err.message : String(err)}`
+    await admin.from('manim_jobs').update({ status: 'failed', error }).eq('id', job.id)
+    return { ok: false as const, error }
+  }
+}
+
 async function vetForRender(code: string, prompt: string | null): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
   const v = vetManimCode(code)
   if (!v.error) return { ok: true, code: v.code }

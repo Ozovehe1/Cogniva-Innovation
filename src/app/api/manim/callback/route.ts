@@ -1,10 +1,11 @@
 import { NextResponse, after } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { MAX_RENDER_ATTEMPTS, dispatchRender, renderTokenMatches, type ManimJob } from '@/lib/manim'
-import { fixManimCode, type ManimNarration } from '@/lib/lesson-ai'
+import { fixManimCode, generateManimCode, type ManimNarration } from '@/lib/lesson-ai'
 import { ensureNarration } from '@/lib/tts-server'
 
-export const maxDuration = 90
+// The composer fallback writes fresh code (up to two 60 s Gemini passes) after answering Modal.
+export const maxDuration = 300
 
 /**
  * POST /api/manim/callback  — called by the Modal render service.
@@ -33,7 +34,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true })
   }
   if (status === 'done') {
-    await admin.from('manim_jobs').update({ status: 'done', error: null }).eq('id', jobId)
+    // Composed clips report the scene they rendered (grammar spec as Python) so it can be inspected and re-rendered.
+    const code = body.composed && typeof body.code === 'string' ? body.code.slice(0, 60000) : undefined
+    await admin.from('manim_jobs').update({ status: 'done', error: null, ...(code ? { code } : {}) }).eq('id', jobId)
     // AI lessons: the drafting worker places the finished clip into the next section it releases
     // (sections the learner may already be playing are never changed).
     return NextResponse.json({ ok: true })
@@ -41,6 +44,22 @@ export async function POST(request: Request) {
 
   // Failed.
   const error = typeof body.error === 'string' ? body.error.slice(-6000) : 'Render failed'
+  if (body.composed && !job.code) {
+    // Modal retries callbacks; a repeat of the same failure must not start a second fallback.
+    if (job.status === 'queued' || job.status === 'failed') return NextResponse.json({ ok: true, ignored: 'fallback already handled' })
+    // The composer gave up after its own bounded repair: fall back to free-form Manim code (the escape hatch).
+    await admin.from('manim_jobs').update({ status: 'queued', error: `Composer failed; falling back to free-form code.\n${error.slice(-1500)}` }).eq('id', jobId)
+    after(async () => {
+      try {
+        const code = await generateManimCode(job.prompt)
+        await admin.from('manim_jobs').update({ code }).eq('id', jobId)
+        await dispatchRender(admin, { id: jobId, code, attempts: job.attempts, prompt: job.prompt })
+      } catch (err) {
+        await admin.from('manim_jobs').update({ status: 'failed', error: `${error.slice(-3000)}\n\nFallback failed: ${err instanceof Error ? err.message : String(err)}` }).eq('id', jobId)
+      }
+    })
+    return NextResponse.json({ ok: true, fallback: true })
+  }
   if (job.attempts >= MAX_RENDER_ATTEMPTS || !job.code) {
     await admin.from('manim_jobs').update({ status: 'failed', error }).eq('id', jobId)
     return NextResponse.json({ ok: true, retried: false })
