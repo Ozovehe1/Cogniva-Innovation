@@ -1,6 +1,6 @@
 'use client'
 import 'katex/dist/katex.min.css'
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ListOrdered, Lock, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
 import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type Ink, type ManimClipStep, type Step } from '@/lib/lesson-schema'
@@ -9,9 +9,9 @@ import { BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, ShapeElement, TextEl
 import { CheckCard, RichText, type CheckResponse } from './check-card'
 import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
 import { NATURAL_VOICE_WAIT_MS, getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
-import { buildTimeline, firedAt, varsAt, type StepTimeline } from './timeline'
+import { PEN_ACTIONS, PEN_PREROLL_MS, buildTimeline, firedAt, varsAt, type StepTimeline } from './timeline'
 import { VarStore, VarsContext } from './live-vars'
-import { HandOverlay, PenProvider, usePenEngine } from './pen'
+import { HandOverlay, PenCueContext, PenProvider, usePenEngine, type PenCue } from './pen'
 import { cx } from '@/components/ui'
 import { chapterAt, estimateStepMs, formatDuration, type Chapter } from '@/lib/lesson-sections'
 
@@ -84,6 +84,8 @@ export interface TranscriptAside { label: string; count?: number; content: React
 /** Below this container width the board switches to the phone layout. */
 const COMPACT_W = 600
 
+const noSubscribe = () => () => {}
+
 /**
  * Plays a lesson scene script on a 16:10 whiteboard. The board is laid out in
  * fixed board units (BOARD_W x BOARD_H) and scaled to the container. On narrow
@@ -115,6 +117,11 @@ export function WhiteboardPlayer({
   const [cursor, setCursor] = useState(() => Math.min(initialIndex, initialSteps.length))
   const [animIdx, setAnimIdx] = useState(-1)
   const [playId, setPlayId] = useState(0)
+  /** Play ids come from one counter, so each animation of a step gets its own. */
+  const playSeq = useRef(0)
+  /** The play in which each step was last animated: the React key of what it drew, so a written element keeps its
+   *  node when its step ends (no second copy fading out over it) and is drawn afresh when the step is replayed. */
+  const [playOf, setPlayOf] = useState<Record<number, number>>({})
   const [playing, setPlaying] = useState(autoPlay)
   const [resolved, setResolved] = useState<Set<number>>(() => new Set((answered ?? []).filter(i => i >= 0 && i < initialSteps.length)))
   const [pendingCheck, setPendingCheck] = useState<number | null>(() => {
@@ -163,8 +170,9 @@ export function WhiteboardPlayer({
   /* ── Narration-timed playback of the current step ── */
   /** Timeline of the step being played (animIdx), once its narration timing is known. */
   const [tl, setTl] = useState<(StepTimeline & { index: number; play: number }) | null>(null)
-  /** How many of its actions have fired so far. */
-  const [fired, setFired] = useState(0)
+  /** How many of its actions have fired so far (for the play it belongs to). */
+  const [firedState, setFiredState] = useState({ play: -1, n: 0 })
+  const fired = firedState.play === playId ? firedState.n : 0
   /** playId whose step has finished (narration + motion). */
   const [doneId, setDoneId] = useState(-1)
   /** The student paused mid-step: the narration clock is frozen. */
@@ -184,9 +192,15 @@ export function WhiteboardPlayer({
   /** Duration (ms) of each action of the live step, keyed "<step>.<k>". */
   const durs = useMemo(() => {
     const m = new Map<string, number>()
-    if (tl && tl.index === animIdx) for (const a of tl.actions) m.set(a.key, a.dur)
+    if (tl && tl.index === animIdx && tl.play === playId) for (const a of tl.actions) m.set(a.key, a.dur)
     return m
-  }, [tl, animIdx])
+  }, [tl, animIdx, playId])
+  /** Cue (start on the narration clock) of each action of the live step. */
+  const cues = useMemo(() => {
+    const m = new Map<string, PenCue>()
+    if (tl && tl.index === animIdx && tl.play === playId) for (const a of tl.actions) if (PEN_ACTIONS.has(a.action.type)) m.set(a.key, { at: a.start, dur: a.dur, epoch: playId })
+    return m
+  }, [tl, animIdx, playId])
 
   /* ── Sections ── */
   const origTotal = initialSteps.length
@@ -277,32 +291,36 @@ export function WhiteboardPlayer({
   const goTo = useCallback((i: number, animate: boolean, list: Step[] = steps) => {
     setNotice(null)
     setHold(false)
-    if (i < 0) { setCursor(0); setAnimIdx(-1); setPendingCheck(null); setClipIdx(null); setPlayId(p => p + 1); return }
+    if (i < 0) { setCursor(0); setAnimIdx(-1); setPendingCheck(null); setClipIdx(null); setPlayId(++playSeq.current); return }
     const idx = Math.min(i, list.length - 1)
     setCursor(idx + 1)
     setAnimIdx(animate ? idx : -1)
-    setPlayId(p => p + 1)
+    const id = ++playSeq.current
+    setPlayId(id)
+    if (animate) setPlayOf(m => ({ ...m, [idx]: id }))
     blockersFor(idx, list)
     if (animate) emit({ type: 'step', index: idx })
   }, [steps, blockersFor, emit])
 
-  const blocked = pendingCheck !== null || clipIdx !== null || thinking
+  // A clip closes only when its video and its narration have both finished (nothing is cut short).
+  const clipOpen = clipIdx !== null && !(clipEnded && !(animIdx === clipIdx && doneId !== playId && started))
+  const blocked = pendingCheck !== null || clipOpen || thinking
 
   /** The pen that writes on the board and moves the hand (see ./pen). */
   const pen = usePenEngine()
 
   /* ── Voice ── */
   const narratorRef = useRef<Narrator | null>(null)
-  const [voiceOk, setVoiceOk] = useState(false)
-  const [soundOn, setSoundOn] = useState(true)
+  const voiceOk = useSyncExternalStore(noSubscribe, () => getNarrator().supported, () => false)
+  const soundPref = useSyncExternalStore(noSubscribe, readSoundPref, () => true)
+  const [soundChoice, setSoundOn] = useState<boolean | null>(null)
+  const soundOn = soundChoice ?? soundPref
   const unlocked = useRef(false)
   const stepsRef = useRef(steps)
   useEffect(() => { stepsRef.current = steps }, [steps])
   useEffect(() => {
     const n = getNarrator()
     narratorRef.current = n
-    setVoiceOk(n.supported)
-    setSoundOn(readSoundPref())
     return () => n.cancel()
   }, [])
   const voiceOn = voiceOk && soundOn
@@ -315,6 +333,7 @@ export function WhiteboardPlayer({
    * on the device voice while natural audio is still on its way.
    */
   const [voicePrep, setVoicePrep] = useState<'idle' | 'preparing' | 'ready' | 'failed'>('idle')
+  const preloadRef = useRef<((i: number) => void) | null>(null)
   useEffect(() => {
     const n = narratorRef.current
     if (!n || !voiceOn || started) return
@@ -381,7 +400,6 @@ export function WhiteboardPlayer({
     if (n?.preload && voiceOnRef.current) n.preload(texts)
     for (const url of clips) prefetchClip(url)
   }, [])
-  const preloadRef = useRef(preloadFrom)
   useEffect(() => { preloadRef.current = preloadFrom }, [preloadFrom])
 
   /**
@@ -392,14 +410,14 @@ export function WhiteboardPlayer({
    */
   useEffect(() => {
     const n = narratorRef.current
-    setTl(null); setFired(0)
-    if (animIdx < 0 || !started) { n?.cancel(); return }
+    if (animIdx < 0 || !started) { n?.cancel(); pen.setClock(null); return }
     const step = stepsRef.current[animIdx]
     if (!step) return
     const id = playId
     const index = animIdx
     let cancelled = false
     let raf = 0
+    let speakTimer: ReturnType<typeof setTimeout> | undefined
     const text = stepSpeech(step)
     const voiced = !!(n && voiceOnRef.current && text)
     preloadFrom(index + 1)
@@ -410,45 +428,80 @@ export function WhiteboardPlayer({
       if (cancelled) return
       const t = buildTimeline(step, index, timing, { reduced: reducedRef.current })
       const startVars = buildBoard(stepsRef.current, index).vars
-      setTl({ ...t, index, play: id })
+      // When the step opens with drawing, the clock starts a moment before the voice so the hand is already on its
+      // first stroke when the first word is spoken.
+      const firstPen = t.actions.find(a => PEN_ACTIONS.has(a.action.type))
+      const lead = !reducedRef.current && firstPen && firstPen.start < PEN_PREROLL_MS ? PEN_PREROLL_MS - firstPen.start : 0
       let speaking = false
-      if (voiced && n) {
-        speaking = true
-        n.speak(text, () => { speaking = false })
-        setVoiceSource(n.source ?? null)
-        setFallbackReason(n.source === 'device' ? (n.fallbackReason ?? null) : null)
+      let voiceStarted = !voiced
+      // The step's master clock (ms from the first word). While the natural voice plays it IS the audio's own
+      // position, so a stall in the audio stops the drawing and the hand with it; otherwise it runs on the wall clock.
+      const clk = { base: -lead, since: performance.now(), last: -Infinity, lastPos: -1 }
+      const audioPos = () => (speaking && n?.source === 'audio' ? n.position?.() ?? -1 : -1)
+      const clockNow = () => {
+        const w = performance.now()
+        let now: number
+        if (holdRef.current) { clk.since = w; now = clk.base }
+        else {
+          const pos = audioPos()
+          if (pos >= 0) {
+            // Follow the audio. Its reported position can move in coarse steps, so between updates the clock runs on
+            // from the last one, but only while the audio is really advancing: loading, a stall or a pause stops it.
+            if (pos !== clk.lastPos) { clk.lastPos = pos; clk.base = pos; clk.since = w }
+            if (n?.advancing?.()) now = clk.base + Math.min(w - clk.since, 400)
+            else { clk.since = w; now = clk.base }
+          } else {
+            now = clk.base + (w - clk.since)
+            // Before the voice starts the clock waits for it at 0.
+            if (!voiceStarted || (speaking && n?.source === 'audio')) now = Math.min(now, 0)
+          }
+        }
+        // Monotonic within a play (a late audio report never winds the drawing back).
+        if (now < clk.last && !holdRef.current) now = clk.last
+        clk.last = now
+        return now
       }
-      const started = performance.now()
-      let base = 0
-      let since = started
+      pen.setClock({ epoch: id, now: clockNow, audio: audioPos })
+      setTl({ ...t, index, play: id })
+      const begin = () => {
+        if (cancelled) return
+        voiceStarted = true
+        if (voiced && n) {
+          // The clock now continues from the voice's own position.
+          clk.base = 0; clk.since = performance.now()
+          speaking = true
+          n.speak(text, () => {
+            // Carry on from where the audio ended on the wall clock.
+            clk.base = clk.last; clk.since = performance.now(); speaking = false
+          })
+          setVoiceSource(n.source ?? null)
+          setFallbackReason(n.source === 'device' ? (n.fallbackReason ?? null) : null)
+        }
+      }
+      if (lead > 0 && voiced) speakTimer = setTimeout(begin, lead)
+      else begin()
       let lastFired = -1
       const cap = t.total + (voiced ? Math.max(4000, estimateSpeechMs(text) * 0.6) : 0)
       const frame = () => {
         if (cancelled) return
-        const nowWall = performance.now()
-        if (holdRef.current) { since = nowWall } else {
-          const pos = n?.position?.() ?? -1
-          if (speaking && pos >= 0 && n?.source === 'audio') { base = pos; since = nowWall }
-        }
-        const now = holdRef.current ? base : base + (nowWall - since)
-        if (holdRef.current) base = now
-        const f = firedAt(t, now)
-        if (f !== lastFired) { lastFired = f; setFired(f) }
+        const now = clockNow()
+        const f = firedAt(t, now, reducedRef.current ? 0 : PEN_PREROLL_MS)
+        if (f !== lastFired) { lastFired = f; setFiredState({ play: id, n: f }) }
         varStore.set(varsAt(t, startVars, now))
         const node = boardEl.current
         if (node) { node.dataset.clock = String(Math.round(now)); node.dataset.voice = speaking ? (n?.source ?? 'none') : node.dataset.voice ?? 'none' }
         // Done when the motion and the narration are both finished (cap guards a voice that never reports its end).
-        if ((now >= t.total && !speaking) || now >= cap) {
-          setFired(t.actions.length)
+        if ((now >= t.total && !speaking && voiceStarted) || now >= cap) {
+          setFiredState({ play: id, n: t.actions.length })
           setDoneId(id)
           return
         }
         raf = requestAnimationFrame(frame)
       }
       raf = requestAnimationFrame(frame)
-    })()
-    return () => { cancelled = true; cancelAnimationFrame(raf) }
-  }, [playId, animIdx, started, varStore, preloadFrom])
+    })().catch(err => console.error('whiteboard step failed', err))
+    return () => { cancelled = true; cancelAnimationFrame(raf); clearTimeout(speakTimer) }
+  }, [playId, animIdx, started, varStore, preloadFrom, pen])
   // Voice turned on/off mid-step only affects later steps; turning it off silences now.
   // Pause and resume narration with the player.
   useEffect(() => {
@@ -458,19 +511,13 @@ export function WhiteboardPlayer({
     else n.resume()
   }, [hold])
 
-  // A clip closes only when its video and its narration have both finished (nothing is cut short).
-  useEffect(() => {
-    if (clipIdx === null || !clipEnded) return
-    if (animIdx === clipIdx && doneId !== playId && started) return
-    setClipEnded(false); setClipIdx(null); setPlaying(true)
-  }, [clipIdx, clipEnded, animIdx, doneId, playId, started])
 
   // Auto-advance: the next step starts when this one's narration and motion are done.
   useEffect(() => {
     if (!playing || blocked || hold) return
     if (cursor >= steps.length) {
       if (animIdx === cursor - 1 && doneId !== playId && animIdx >= 0) return
-      setPlaying(false)
+      // Stays "playing": steps appended later (sections still being written) carry straight on.
       if (started) waitingAtEndRef.current = true
       if (!completedRef.current && steps.length) { completedRef.current = true; emit({ type: 'complete' }) }
       return
@@ -521,7 +568,7 @@ export function WhiteboardPlayer({
     // Checks in this section and after it are asked again.
     setResolved(r => new Set([...r].filter(i => i < ch.start)))
     setPendingCheck(null); setClipIdx(null)
-    setCursor(at); setAnimIdx(-1); setPlayId(p => p + 1)
+    setCursor(at); setAnimIdx(-1); setPlayId(++playSeq.current)
     setPlaying(true)
     if (why === 'section') emit({ type: 'restart', scope: 'section', section: k })
   }, [chapters, steps, unlockVoice, emit])
@@ -537,10 +584,7 @@ export function WhiteboardPlayer({
 
   // Report the position (original-script terms) whenever it changes.
   const oc = origCursor(cursor)
-  useEffect(() => {
-    if (!started) return
-    setFurthest(f => Math.max(f, oc))
-  }, [oc, started])
+  if (started && oc > furthest) setFurthest(oc)
   useEffect(() => {
     if (!started) return
     emit({ type: 'position', cursor: oc, section, furthest: Math.max(furthest, oc), total: origTotal })
@@ -650,7 +694,7 @@ export function WhiteboardPlayer({
   const lines = useMemo(() => steps.slice(sectionStart, cursor).flatMap((st, i) => stepLines(st, sectionStart + i)), [steps, cursor, sectionStart])
   const currentIdx = lines.length ? lines[lines.length - 1].index : -1
 
-  const clip = clipIdx !== null ? (steps[clipIdx] as ManimClipStep) : null
+  const clip = clipOpen && clipIdx !== null ? (steps[clipIdx] as ManimClipStep) : null
   const check = pendingCheck !== null ? (steps[pendingCheck] as CheckStep) : null
   const progress = steps.length ? cursor / steps.length : 0
   const atEnd = cursor >= steps.length && !blocked
@@ -665,8 +709,11 @@ export function WhiteboardPlayer({
     return m
   }, [layout, board, noteIds, animIdx])
 
-  const textKey = (el: { key: string; morphAct?: string; born: number }, animate: 'enter' | 'morph' | null) =>
-    animate === 'enter' ? `${el.key}#${playId}` : el.morphAct !== undefined ? `${el.key}~${el.morphAct}` : el.key
+  const elKey = (el: { key: string; born: number }) => `${el.key}#${playOf[el.born] ?? 0}`
+  const textKey = (el: { key: string; morphAct?: string; born: number }) =>
+    el.morphAct !== undefined ? `${el.key}~${el.morphAct}` : elKey(el)
+  /** The narration cue an element being drawn now is inked on (null: shown as it is). */
+  const cueOf = (el: { act: string; born: number }) => (el.born === animIdx ? cues.get(el.act) ?? null : null)
   const animOf = (el: { morphedAt?: number; born: number }) =>
     el.morphedAt === animIdx && animIdx >= 0 ? 'morph' as const : el.born === animIdx ? 'enter' as const : null
 
@@ -719,9 +766,11 @@ export function WhiteboardPlayer({
             if (el.kind === 'shape') {
               const anim = el.born === animIdx
               return (
-                <motion.g key={anim ? `${el.key}#${playId}` : el.key} exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.35 } }}>
+                <motion.g key={elKey(el)} exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.35 } }}>
                   <FxWrap fx={el.fx} ms={el.fx ? durs.get(el.fx.act) ?? 0 : 0} reduced={reduced} svg>
-                    <ShapeElement el={el} animate={anim} reduced={reduced} duration={durOf(el.act, el.born)} vars={board.vars} />
+                    <PenCueContext.Provider value={cueOf(el)}>
+                      <ShapeElement el={el} animate={anim} reduced={reduced} duration={durOf(el.act, el.born)} vars={board.vars} />
+                    </PenCueContext.Provider>
                   </FxWrap>
                 </motion.g>
               )
@@ -730,8 +779,10 @@ export function WhiteboardPlayer({
               if (noteIds.has(el.target)) return null
               const anim = el.born === animIdx
               return (
-                <motion.g key={anim ? `${el.key}#${playId}` : el.key} exit={{ opacity: 0, transition: { duration: 0.25 } }}>
-                  <HighlightElement el={el} animate={anim} reduced={reduced} measure={measure} />
+                <motion.g key={elKey(el)} exit={{ opacity: 0, transition: { duration: 0.25 } }}>
+                  <PenCueContext.Provider value={cueOf(el)}>
+                    <HighlightElement el={el} animate={anim} reduced={reduced} measure={measure} duration={durOf(el.act, el.born)} />
+                  </PenCueContext.Provider>
                 </motion.g>
               )
             }
@@ -745,10 +796,14 @@ export function WhiteboardPlayer({
           if (layout && !layout.labels.has(el.key)) return null
           const animate = animOf(el)
           const d = animate === 'morph' ? durs.get(el.morphAct ?? '') : durOf(el.act, el.born)
-          const node = <TextElement el={el} animate={animate} reduced={reduced} registerRef={registerRef} duration={d} vars={board.vars} />
+          const node = (
+            <PenCueContext.Provider value={animate === 'enter' ? cueOf(el) : null}>
+              <TextElement el={el} animate={animate} reduced={reduced} registerRef={registerRef} duration={d} vars={board.vars} />
+            </PenCueContext.Provider>
+          )
           return el.fx
-            ? <FxWrap key={textKey(el, animate)} fx={el.fx} ms={durs.get(el.fx.act) ?? 0} reduced={reduced}>{node}</FxWrap>
-            : <React.Fragment key={textKey(el, animate)}>{node}</React.Fragment>
+            ? <FxWrap key={textKey(el)} fx={el.fx} ms={durs.get(el.fx.act) ?? 0} reduced={reduced}>{node}</FxWrap>
+            : <React.Fragment key={textKey(el)}>{node}</React.Fragment>
         })}
       </AnimatePresence>
       </div>
@@ -835,6 +890,7 @@ export function WhiteboardPlayer({
       <PenProvider pen={pen}>
       <VarsContext.Provider value={varStore}>
       <BoardScale.Provider value={scale || 1}>
+        <div className="relative">
         <div
           ref={node => { outerRef.current = node; boardEl.current = node }}
           className={cx(
@@ -860,8 +916,8 @@ export function WhiteboardPlayer({
                     {layout.notes.map(el => {
                       const animate = animOf(el)
                       return (
+                        <PenCueContext.Provider key={textKey(el)} value={animate === 'enter' ? cueOf(el) : null}>
                         <TextElement
-                          key={textKey(el, animate)}
                           el={el}
                           animate={animate}
                           reduced={reduced}
@@ -871,6 +927,7 @@ export function WhiteboardPlayer({
                           duration={animate === 'morph' ? durs.get(el.morphAct ?? '') : durOf(el.act, el.born)}
                           vars={board.vars}
                         />
+                        </PenCueContext.Provider>
                       )
                     })}
                   </AnimatePresence>
@@ -879,8 +936,6 @@ export function WhiteboardPlayer({
             </>
           ) : drawing}
 
-          {/* The hand holding the marker (hidden with reduced motion: writing then appears at once). */}
-          <HandOverlay pen={pen} hidden={reduced} />
 
           {/* Manim clip overlay */}
           <AnimatePresence>
@@ -895,7 +950,7 @@ export function WhiteboardPlayer({
               >
                 <ClipVideo
                   step={clip}
-                  onDone={() => setClipEnded(true)}
+                  onDone={() => { setClipEnded(true); setPlaying(true) }}
                   onSkip={() => { narratorRef.current?.cancel(); setClipEnded(false); setClipIdx(null); setPlaying(true) }}
                 />
               </motion.div>
@@ -945,6 +1000,10 @@ export function WhiteboardPlayer({
               {voicePrep === 'failed' && <span className="text-[12px] text-muted">Natural voice unavailable · the device voice will read this lesson</span>}
             </button>
           )}
+        </div>
+        {/* The hand holding the marker, over the board and reaching above its top edge so the arm is never cut off
+            there (hidden with reduced motion: writing then appears at once). */}
+        <HandOverlay pen={pen} hidden={reduced} />
         </div>
       </BoardScale.Provider>
       </VarsContext.Provider>

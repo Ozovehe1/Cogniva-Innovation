@@ -1,5 +1,5 @@
 'use client'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Check, X } from 'lucide-react'
 import type { CheckStep } from '@/lib/lesson-schema'
@@ -56,6 +56,17 @@ export function CheckCard({
   }
 
   const retry = () => { setResult(null); setChoice(null); setText('') }
+
+  // A right answer carries the lesson on by itself once there has been time to read the explanation.
+  const correct = !!result?.correct
+  const readMs = correct ? Math.min(7000, 1700 + (step.explanation ? step.explanation.split(/\s+/).length * 230 : 0)) : 0
+  useEffect(() => {
+    if (!correct) return
+    const t = setTimeout(() => onRespond('continue'), readMs)
+    return () => clearTimeout(t)
+    // Once per right answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [correct])
 
   return (
     <motion.div
@@ -141,7 +152,12 @@ export function CheckCard({
           {result.correct && step.explanation && <p className="mt-1 text-sm leading-relaxed text-ink-2"><RichText text={step.explanation} /></p>}
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             {result.correct ? (
-              <button type="button" className={buttonClass('primary', 'md')} onClick={() => onRespond('continue')}>Continue</button>
+              <div className="flex flex-col gap-1.5">
+                <button type="button" className={buttonClass('primary', 'md')} onClick={() => onRespond('continue')}>Continue</button>
+                <div className="h-0.5 w-full overflow-hidden rounded-full bg-accent/15" aria-hidden>
+                  <motion.div className="h-full bg-accent" initial={{ width: '0%' }} animate={{ width: '100%' }} transition={{ duration: readMs / 1000, ease: 'linear' }} />
+                </div>
+              </div>
             ) : (
               <>
                 <button type="button" className={buttonClass('primary', 'md')} onClick={() => onRespond('explain_wrong', { correct: false, answer: result.answer })}>Walk me through it</button>

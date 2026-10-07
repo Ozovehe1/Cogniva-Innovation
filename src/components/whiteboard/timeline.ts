@@ -29,6 +29,16 @@ export interface StepTimeline {
 
 const BREATH_MS = 280
 
+/** Actions the pen draws (their ink follows the narration clock, see ./pen). */
+export const PEN_ACTIONS = new Set(['draw', 'write', 'math', 'highlight'])
+/** Actions that move or change what is already drawn. */
+const MOTION_ACTIONS = new Set(['animate', 'move', 'scale', 'camera', 'transform', 'fade', 'color'])
+/**
+ * How long before its cue a pen action's element is put on the board (still blank): the hand travels to its first
+ * stroke in this time, so the ink starts on the cue word itself.
+ */
+export const PEN_PREROLL_MS = 380
+
 /** Time (ms) a narration word starts / ends, given the step's timing. */
 function wordTime(step: Step, timing: NarrationTiming, map: number[], cue: Cue, from: number, edge: 's' | 'e'): { t: number; idx: number } | null {
   const ci = findCueWord(step, cue, from)
@@ -117,6 +127,16 @@ export function buildTimeline(step: Step, index: number, timing: NarrationTiming
     if (opts.reduced) dur = a.action.type === 'animate' || a.action.type === 'set' ? 0 : Math.min(dur, 250)
     actions.push({ ...a, start, dur })
   })
+  // Motion that acts on the board (a ball moving, a value counting, a shape sliding) never starts before the ink it
+  // depends on is down: it waits for the pen actions before it to finish, then keeps its own length.
+  let penEnd = 0
+  let prevStart = 0
+  for (const a of actions) {
+    if (MOTION_ACTIONS.has(a.action.type) && a.start < penEnd) a.start = penEnd
+    if (a.start < prevStart) a.start = prevStart
+    prevStart = a.start
+    if (PEN_ACTIONS.has(a.action.type)) penEnd = Math.max(penEnd, a.start + a.dur)
+  }
   const end = actions.reduce((m, a) => Math.max(m, a.start + a.dur), 0)
   return { actions, narrationMs, total: Math.max(narrationMs, end) + BREATH_MS, timing: t }
 }
@@ -144,9 +164,9 @@ export function varsAt(tl: StepTimeline, before: Vars, now: number): Vars {
   return v
 }
 
-/** Number of actions that have started by `now`. */
-export function firedAt(tl: StepTimeline, now: number): number {
+/** Number of actions that have started by `now` (pen actions count from `preroll` ms before their cue). */
+export function firedAt(tl: StepTimeline, now: number, preroll = 0): number {
   let n = 0
-  for (const a of tl.actions) { if (a.start <= now) n++; else break }
+  for (const a of tl.actions) { if (a.start - (PEN_ACTIONS.has(a.action.type) ? preroll : 0) <= now) n++; else break }
   return n
 }

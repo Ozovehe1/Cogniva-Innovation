@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { WhiteboardPlayer, type NeedStepsRequest, type PlayerControl, type PlayerEvent } from '@/components/whiteboard'
 import { detectDistress } from '@/lib/safety'
 import { SafetyPause } from './safety-pause'
+import { UpNextCard } from './up-next'
 import { Spinner, buttonClass, cx } from './ui'
 import type { TranscriptAside } from '@/components/whiteboard/player'
 import type { Step } from '@/lib/lesson-schema'
@@ -40,6 +41,8 @@ export function LessonSession({
   checkHref,
   minor,
   partial = false,
+  upNext,
+  autoPlay = false,
 }: {
   lessonId: string
   steps: Step[]
@@ -55,7 +58,14 @@ export function LessonSession({
   minor?: boolean | null
   /** Later sections are still being written: reaching the end is not completing the lesson. */
   partial?: boolean
+  /** What the learner goes on to when this lesson ends (their mastery check or the next lesson on their path). */
+  upNext?: { href: string; title: string; eyebrow?: string; note?: string } | null
+  /** Start playing at once (arrived here from the previous lesson's up-next card). */
+  autoPlay?: boolean
 }) {
+  const [finished, setFinished] = useState(false)
+  // New sections arrived (the page refreshed with more steps): the player has already carried on into them.
+  const [seenSteps, setSeenSteps] = useState(steps.length)
   const [waitingForMore, setWaitingForMore] = useState(false)
   const control = useRef<PlayerControl | null>(null)
   const [checkin, setCheckin] = useState<null | { reason: 'time' | 'wrong' }>(null)
@@ -76,6 +86,8 @@ export function LessonSession({
     }, 15_000)
     return () => clearInterval(t)
   }, [mode])
+
+  if (steps.length !== seenSteps) { setSeenSteps(steps.length); setWaitingForMore(false) }
 
   const history = useRef<{ reason: string; answer?: string }[]>([])
   const url = `/api/lessons/${lessonId}/progress`
@@ -167,6 +179,7 @@ export function LessonSession({
       pending.current = null
       pendingAnswers.current = {}
       post({ completed: true, event: { type: 'complete' } })
+      setFinished(true)
     }
   }, [post, flush, schedule, partial, checkHref, mode])
 
@@ -221,12 +234,15 @@ export function LessonSession({
       onNeedSteps={onNeedSteps}
       onEvent={onEvent}
       transcriptAside={transcriptAside}
+      autoPlay={autoPlay}
     />
-    {waitingForMore && (
-      <div className="mt-4 rounded-[14px] border border-line bg-surface p-4 text-[15px] leading-relaxed text-ink-2">
-        That’s everything written so far. The next section is on its way; <button type="button" onClick={() => window.location.reload()} className="font-medium text-accent hover:underline underline-offset-4">reload</button> in a minute to continue.
+    {waitingForMore && partial && (
+      <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-line bg-surface p-4 text-[15px] leading-relaxed text-ink-2" role="status">
+        <Spinner />
+        <span>Your tutor is finishing the next part. It will carry on here by itself as soon as it’s ready.</span>
       </div>
     )}
+    {(finished || (waitingForMore && !partial)) && upNext && mode === 'student' && <UpNextCard {...upNext} />}
     {basicsOffer && checkHref && (
       <div className="mt-4 flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-4 sm:flex-row sm:items-center">
         <p className="flex-1 text-[15px] leading-relaxed text-ink-2">A few answers haven’t landed. A two-minute check on the basics underneath this can find the gap.</p>

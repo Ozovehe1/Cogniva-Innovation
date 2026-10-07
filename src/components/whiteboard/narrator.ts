@@ -25,6 +25,8 @@ export interface Narrator {
   preload?(texts: string[]): void
   /** ms into the line being spoken, or -1 when unknown (device voice). */
   position?(): number
+  /** True while the natural voice's audio is actually advancing (not loading, stalled, paused or ended). */
+  advancing?(): boolean
   /** What spoke the last line: natural audio or the device voice. */
   readonly source?: 'audio' | 'device' | null
   /** Why the last line fell back to the device voice (only set after a real failure). */
@@ -208,6 +210,10 @@ class AudioNarrator implements Narrator {
     if (typeof window !== 'undefined') {
       this.audio = new Audio()
       this.audio.preload = 'auto'
+      const a = this.audio
+      // Whether the audio clock is really running: false from a new source until it plays, and while it waits for data.
+      a.addEventListener('playing', () => { this.flowing = true })
+      for (const ev of ['waiting', 'stalled', 'pause', 'ended', 'emptied', 'seeking', 'loadstart']) a.addEventListener(ev, () => { this.flowing = false })
     }
   }
 
@@ -351,6 +357,13 @@ class AudioNarrator implements Narrator {
     this.onEnd = null
     this.mode = null
     cb?.()
+  }
+
+  private flowing = false
+
+  advancing() {
+    const a = this.audio
+    return this.mode === 'audio' && !!a && this.flowing && !a.paused && !a.ended && a.readyState >= 3
   }
 
   position() {

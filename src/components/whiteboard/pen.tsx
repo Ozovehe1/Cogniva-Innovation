@@ -4,20 +4,27 @@
  *
  * Writers (handwritten text, KaTeX reveal, diagram strokes) hand the engine a
  * list of segments: each segment is one stroke of the pen, placed on the job's
- * own clock (ms from when it was queued). Every animation frame the engine
- * advances each segment (`apply`, e.g. a stroke-dashoffset or a clip path) and
- * puts the marker tip exactly where the newest active stroke is being drawn
- * (`point`, in client coordinates). Between strokes the hand lifts and travels
- * to the next one; when nothing is being written it drifts to the board edge and
- * after a while slides off. One requestAnimationFrame loop for the whole board,
- * and the hand is moved with transforms only, so it stays cheap on phones.
+ * own timeline (ms from its cue). The job's cue is a time on the narration clock
+ * (the playing voice's own position, see the player): the first stroke starts
+ * exactly when the cue word is spoken, every stroke grows with that clock, and
+ * when the voice stalls (buffering, pause) the ink and the hand stop with it.
+ * Every animation frame the engine reads the clock once, advances each segment
+ * (`apply`, e.g. a stroke-dashoffset or a clip path) and puts the marker tip
+ * exactly where the newest active stroke is being drawn (`point`, in client
+ * coordinates), from the same progress value, so the ink never runs ahead of
+ * or behind the tip. Before a cue the hand already travels to the first stroke
+ * so it lands on the word; between strokes it lifts and travels to the next one;
+ * when nothing is being written it drifts to the board edge and after a while
+ * slides off. One requestAnimationFrame loop for the whole board, and the hand
+ * is moved with transforms only, so it stays cheap on phones. Jobs without a cue
+ * (outside a narrated step) run on the wall clock from when they are queued.
  */
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react'
 
 export interface Pt { x: number; y: number }
 
 export interface PenSegment {
-  /** ms from the start of the job. */
+  /** ms from the start of the job (its cue). */
   start: number
   /** ms. */
   dur: number
@@ -27,13 +34,33 @@ export interface PenSegment {
   point: (p: number) => Pt | null
 }
 
+/** When a job's ink starts on the narration clock, how long it may take, and which step clock it belongs to. */
+export interface PenCue { at: number; dur: number; epoch: number }
+
+/** The narration clock of the step being played. */
+export interface PenClock {
+  epoch: number
+  /** ms into the step (follows the voice's audio position). */
+  now: () => number
+  /** The voice's own audio position in ms, -1 when no audio is playing (for timing measurements). */
+  audio?: () => number
+}
+
 interface Job {
   t0: number
   segs: PenSegment[]
   end: number
   last: number[]
   cancelled: boolean
+  cue: PenCue | null
+  tag: string
+  inked: boolean
+  /** Hand travel toward the first stroke before the cue. */
+  travel: { from: Pt; t: number } | null
 }
+
+/** One measured first-ink event (see window.__penInk). */
+export interface InkEvent { tag: string; epoch: number; cueAt: number; clock: number; audio: number; wall: number }
 
 /** Where the hand is this frame (overlay-local px) and how it is moving. */
 export interface HandState {
@@ -48,9 +75,11 @@ export interface HandState {
   writing: number
   /** 0..1 opacity / presence. */
   visible: number
-  /** Board size in px. */
+  /** Overlay size in px. */
   w: number
   h: number
+  /** How far the overlay reaches above the board (px): the board's top edge is at y = top. */
+  top: number
   now: number
 }
 
@@ -64,10 +93,17 @@ export interface HandView {
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
 
+declare global {
+  interface Window { __penInk?: InkEvent[] }
+}
+
 export class PenEngine {
   private jobs: Job[] = []
   private raf = 0
   private view: HandView | null = null
+  private clock: PenClock | null = null
+  /** Clock reading for this frame (ms), or null outside a narrated step. */
+  private clockNow: number | null = null
   /** Hand state, in overlay-local px. */
   private pos: Pt | null = null
   private lift = 1
@@ -81,11 +117,22 @@ export class PenEngine {
     if (view) { this.pos = null; this.kick() }
   }
 
-  /** Queue a writing job. Returns a cancel function (the job's strokes are left as they are). */
-  run(segs: PenSegment[]): () => void {
-    const job: Job = { t0: performance.now(), segs, end: segs.reduce((m, s) => Math.max(m, s.start + s.dur), 0), last: segs.map(() => -1), cancelled: false }
+  /** The step clock jobs with a cue run on. A new epoch finishes every job of an older one at once. */
+  setClock(clock: PenClock | null) {
+    if (clock && this.clock && clock.epoch !== this.clock.epoch) this.finishWhere(j => !!j.cue && j.cue.epoch !== clock.epoch)
+    this.clock = clock
+    this.kick()
+  }
+
+  /** Queue a writing job (on `cue` when given, otherwise from now). Returns a cancel function (strokes are left as they are). */
+  run(segs: PenSegment[], cue: PenCue | null = null, tag = ''): () => void {
+    const job: Job = {
+      t0: performance.now(), segs, end: segs.reduce((m, s) => Math.max(m, s.start + s.dur), 0), last: segs.map(() => -1),
+      cancelled: false, cue: cue && this.clock && cue.epoch === this.clock.epoch ? cue : null, tag, inked: false, travel: null,
+    }
     this.jobs.push(job)
-    this.step(job, job.t0)
+    this.readClock()
+    this.step(job, performance.now())
     this.kick()
     return () => {
       if (job.cancelled) return
@@ -95,9 +142,11 @@ export class PenEngine {
   }
 
   /** Finish every running job at once (e.g. skip). */
-  flush() {
-    for (const j of this.jobs) j.segs.forEach((s, i) => { if (j.last[i] < 1) { s.apply?.(1); j.last[i] = 1 } })
-    this.jobs = []
+  flush() { this.finishWhere(() => true) }
+
+  private finishWhere(pred: (j: Job) => boolean) {
+    for (const j of this.jobs) if (pred(j)) j.segs.forEach((s, i) => { if (j.last[i] < 1) { s.apply?.(1); j.last[i] = 1 } })
+    this.jobs = this.jobs.filter(j => !pred(j))
   }
 
   private kick() {
@@ -107,13 +156,31 @@ export class PenEngine {
     }
   }
 
+  private readClock() {
+    this.clockNow = this.clock ? this.clock.now() : null
+  }
+
+  /** ms into the job (negative before its cue). */
+  private local(job: Job, now: number) {
+    if (job.cue && this.clockNow !== null && this.clock && job.cue.epoch === this.clock.epoch) return this.clockNow - job.cue.at
+    return now - job.t0
+  }
+
   private step(job: Job, now: number) {
-    const local = now - job.t0
+    const local = this.local(job, now)
     job.segs.forEach((s, i) => {
       if (job.last[i] >= 1) return
       const p = s.dur <= 0 ? (local >= s.start ? 1 : 0) : clamp01((local - s.start) / s.dur)
       if (p === job.last[i]) return
       job.last[i] = p
+      if (p > 0 && !job.inked) {
+        job.inked = true
+        if (typeof window !== 'undefined') {
+          const log = (window.__penInk ??= [])
+          log.push({ tag: job.tag, epoch: job.cue?.epoch ?? -1, cueAt: job.cue?.at ?? -1, clock: this.clockNow ?? -1, audio: this.clock?.audio?.() ?? -1, wall: Date.now() })
+          if (log.length > 400) log.splice(0, log.length - 400)
+        }
+      }
       s.apply?.(p)
     })
   }
@@ -122,10 +189,14 @@ export class PenEngine {
     this.raf = 0
     const dt = Math.min(64, now - this.lastFrame)
     this.lastFrame = now
+    this.readClock()
     for (const j of this.jobs) this.step(j, now)
-    const active = this.jobs.filter(j => now - j.t0 <= j.end)
-    this.jobs = this.jobs.filter(j => now - j.t0 <= j.end + 50)
-    const job = active.length ? active.reduce((a, b) => (b.t0 > a.t0 ? b : a)) : null
+    this.jobs = this.jobs.filter(j => this.local(j, now) <= j.end + 50)
+    const active = this.jobs.filter(j => { const l = this.local(j, now); return l >= 0 && l <= j.end })
+    let job = active.length ? active.reduce((a, b) => (this.local(b, now) < this.local(a, now) ? b : a)) : null
+    // Nothing being written: the next job waiting for its cue (the hand goes there ahead of the word).
+    const waiting = job ? null : this.jobs.filter(j => this.local(j, now) < 0).reduce<Job | null>((a, b) => (!a || this.local(b, now) > this.local(a, now) ? b : a), null)
+    if (!job && waiting) job = waiting
     this.moveHand(job, now, dt)
     const handBusy = this.view && (job || this.visible > 0.01)
     if (this.jobs.length || handBusy) this.raf = requestAnimationFrame(this.frame)
@@ -136,6 +207,7 @@ export class PenEngine {
     if (!v) return
     const rr = v.root.getBoundingClientRect()
     if (!rr.width) return
+    const top = Number(v.root.dataset.top ?? 0) || 0
     const { w: hw, h: hh } = v.size()
     const toLocal = (p: Pt | null): Pt | null => (p ? { x: p.x - rr.left, y: p.y - rr.top } : null)
     let target: Pt | null = null
@@ -144,37 +216,51 @@ export class PenEngine {
     let snap = false
     if (job) {
       this.lastActive = now
-      const local = now - job.t0
+      const local = this.local(job, now)
       const segs = job.segs
       let k = segs.findIndex(s => local < s.start + s.dur)
       if (k < 0) k = segs.length - 1
       const s = segs[k]
       if (local >= s.start) {
-        // Pen down on this stroke: the tip sits exactly on it.
+        // Pen down on this stroke: the tip sits exactly on it (same progress as the ink).
         target = toLocal(s.point(clamp01((local - s.start) / Math.max(1, s.dur))))
         lift = 0
         writing = 1
         snap = true
+      } else if (k === 0) {
+        // Before the cue: travel (lifted) to the first stroke, landing on it as the cue word starts.
+        const to = toLocal(s.point(0))
+        if (to) {
+          if (!job.travel) job.travel = { from: this.pos ?? to, t: local }
+          const span = s.start - job.travel.t
+          const q = span > 1 ? clamp01((local - job.travel.t) / span) : 1
+          const e = easeInOut(q)
+          const from = job.travel.from
+          target = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e }
+          const dist = Math.hypot(to.x - from.x, to.y - from.y)
+          lift = Math.max(0.15, Math.min(1, 0.25 + dist / 160) * Math.sin(Math.PI * Math.min(1, q * 1.1)))
+          snap = true
+        }
       } else {
         // Between strokes: lift and travel from the end of the last stroke to the start of the next.
-        const prev = k > 0 ? segs[k - 1] : null
-        const from = prev ? toLocal(prev.point(1)) : this.pos
+        const prev = segs[k - 1]
+        const from = toLocal(prev.point(1))
         const to = toLocal(s.point(0))
-        const gapStart = prev ? prev.start + prev.dur : 0
+        const gapStart = prev.start + prev.dur
         const q = clamp01((local - gapStart) / Math.max(1, s.start - gapStart))
         if (from && to) {
           const e = easeInOut(q)
           target = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e }
           const dist = Math.hypot(to.x - from.x, to.y - from.y)
           lift = Math.min(1, 0.25 + dist / 160) * Math.sin(Math.PI * q)
-          snap = !!prev
+          snap = true
         } else target = to
       }
     } else {
       const idle = now - this.lastActive
       // Rest at the lower right edge of the board; slide off after a while.
       const off = idle > 3500 || !this.lastActive
-      target = { x: rr.width - hw * (off ? -0.15 : 0.32), y: rr.height - Math.min(rr.height * 0.12, 40) + (off ? hh * 0.25 : 0) }
+      target = { x: rr.width - hw * (off ? -0.15 : 0.32), y: rr.height - Math.min((rr.height - top) * 0.12, 40) + (off ? hh * 0.25 : 0) }
       lift = 1
     }
     if (!target) return
@@ -184,16 +270,18 @@ export class PenEngine {
       const k = 1 - Math.exp(-dt / (job ? 70 : 260))
       this.pos = { x: this.pos.x + (target.x - this.pos.x) * k, y: this.pos.y + (target.y - this.pos.y) * k }
     }
-    const kl = 1 - Math.exp(-dt / 60)
+    const kl = 1 - Math.exp(-dt / 45)
     this.lift += (lift - this.lift) * kl
     this.writing += (writing - this.writing) * (1 - Math.exp(-dt / 120))
     const wantVisible = job || now - this.lastActive < 3500 ? 1 : 0
     this.visible += (wantVisible - this.visible) * (1 - Math.exp(-dt / 220))
 
-    // Wrist angle follows where on the board the hand is; fingers flex a little while writing.
+    // Wrist angle follows where on the board the hand is; fingers flex a little while writing. Near the top edge the
+    // wrist turns so the arm comes in from the right rather than from above (the whole hand stays in view).
     const xf = this.pos.x / rr.width - 0.5
+    const nearTop = clamp01(1 - (this.pos.y - top) / Math.max(1, hh * 1.1))
     const wobble = this.writing * (Math.sin(now / 1000 * Math.PI * 2 * 4.2) * 1.3 + Math.sin(now / 1000 * Math.PI * 2 * 1.7) * 0.6)
-    v.render({ x: this.pos.x, y: this.pos.y, lift: this.lift, rot: -4 + xf * 9 + wobble, writing: this.writing, visible: this.visible, w: rr.width, h: rr.height, now })
+    v.render({ x: this.pos.x, y: this.pos.y, lift: this.lift, rot: -4 + xf * 9 + nearTop * 24 + wobble, writing: this.writing, visible: this.visible, w: rr.width, h: rr.height, top, now })
   }
 
   dispose() {
@@ -201,6 +289,12 @@ export class PenEngine {
     this.raf = 0
     this.jobs = []
   }
+}
+
+/** The cue of the element being rendered (set by the player around each newly drawn element). */
+export const PenCueContext = createContext<PenCue | null>(null)
+export function usePenCue(): PenCue | null {
+  return useContext(PenCueContext)
 }
 
 export const PenContext = createContext<PenEngine | null>(null)
@@ -264,6 +358,9 @@ const MAX_FRAME_MS = 12
  * takes over as soon as it has loaded. It hands back to the photo hand if the GPU loses its context or the
  * device turns out too slow to draw it.
  */
+/** How far the hand's layer reaches above the board (px), so writing near the top edge never cuts the arm off. */
+export const HAND_OVERHANG = 150
+
 export function HandOverlay({ pen, hidden = false }: { pen: PenEngine; hidden?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const handRef = useRef<HTMLImageElement>(null)
@@ -320,7 +417,8 @@ export function HandOverlay({ pen, hidden = false }: { pen: PenEngine; hidden?: 
   }, [pen, hidden])
   const photoOn = mode === 'photo' && !hidden
   return (
-    <div ref={rootRef} aria-hidden data-hand={hidden ? 'none' : mode} className="pointer-events-none absolute inset-0 z-[15] overflow-hidden">
+    <div ref={rootRef} aria-hidden data-hand={hidden ? 'none' : mode} data-top={HAND_OVERHANG}
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-[15] overflow-hidden" style={{ top: -HAND_OVERHANG }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img ref={shadowRef} src={photoOn ? '/whiteboard/hand-shadow.webp' : undefined} alt="" draggable={false} decoding="async"
         className="absolute left-0 top-0 max-w-none select-none" style={{ width: 200, opacity: 0, display: photoOn ? undefined : 'none', transformOrigin: `${TIP.x * 100}% ${TIP.y * 100}%`, willChange: 'transform, opacity', WebkitMaskImage: SLEEVE_FADE, maskImage: SLEEVE_FADE }} />

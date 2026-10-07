@@ -1,5 +1,5 @@
 'use client'
-import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import katex from 'katex'
 import { BOARD_H, type Num, type Shape, type Vars } from '@/lib/lesson-schema'
@@ -22,7 +22,7 @@ import {
 } from './board-state'
 import { useLiveVars } from './live-vars'
 import { HandText, canHandwrite, useInkReveal } from './handwriting'
-import { usePen, type Pt } from './pen'
+import { usePen, usePenCue, type Pt } from './pen'
 
 const NO_VARS: Vars = {}
 
@@ -424,7 +424,7 @@ interface StrokeProps {
   dashed?: boolean
   animate: boolean
   reduced: boolean
-  duration: number
+  duration?: number
   delay?: number
   clipId?: string
   fill?: string
@@ -446,97 +446,172 @@ function bezier([x1, y1, x2, y2]: [number, number, number, number]) {
     return sy(Math.min(1, Math.max(0, t)))
   }
 }
-const easeSmooth = bezier(EASE_SMOOTH)
+/** A pen stroke's pace along its path: a gentle start and finish. */
+const easeStroke = bezier([0.3, 0.05, 0.4, 1])
 
-/** Client position of a point at length `l` along a path inside the board's SVG (handles CSS scaling and group transforms). */
-function pathPoint(path: SVGPathElement, l: number): Pt | null {
-  const svg = path.ownerSVGElement
+/** Client position of a board-SVG point (handles CSS scaling, the camera and group transforms). */
+function svgToClient(el: SVGGraphicsElement, x: number, y: number): Pt | null {
+  const svg = el.ownerSVGElement
   if (!svg) return null
   const r = svg.getBoundingClientRect()
   const w = svg.width.baseVal.value || svg.clientWidth
   if (!r.width || !w) return null
-  let pt = path.getPointAtLength(l)
-  const m = path.getCTM()
+  let pt = new DOMPoint(x, y)
+  const m = el.getCTM()
   if (m) pt = pt.matrixTransform(m)
   const k = r.width / w
   return { x: r.left + pt.x * k, y: r.top + pt.y * k }
 }
 
-/** Has the board's pen follow a path while framer-motion draws it on. */
-function usePenFollow(ref: React.RefObject<SVGPathElement | null>, active: boolean, duration: number, delay: number) {
-  const pen = usePen()
-  useEffect(() => {
-    const p = ref.current
-    if (!p || !active || duration <= 0) return
-    let len = 0
-    try { len = p.getTotalLength() } catch { return }
-    if (len < 2) return
-    return pen.run([{ start: delay * 1000, dur: duration * 1000, point: f => pathPoint(p, len * easeSmooth(f)) }])
-    // Once per mount of a newly drawn stroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+/** Board speed of the pen on diagrams (board units per ms) and the pause between strokes (ms). */
+const DRAW_SPEED = 0.42
+const DRAW_GAP = 90
+
+type InkItem = { weight: number; min: number; apply: (p: number) => void; point: (p: number) => Pt | null; reset: () => void }
+
+/** The inkable parts of a drawn element, in drawing order (each tagged data-ink). */
+function inkItems(root: SVGGElement): InkItem[] {
+  const out: InkItem[] = []
+  let lastPoint: (p: number) => Pt | null = () => null
+  root.querySelectorAll<SVGGraphicsElement>('[data-ink]').forEach(node => {
+    const kind = node.dataset.ink
+    if (kind === 'path' || kind === 'dash') {
+      const g = node as unknown as SVGGeometryElement
+      let len = 0
+      try { len = g.getTotalLength() } catch { len = 0 }
+      if (!(len > 0.5)) return
+      // Dashed lines are revealed through their mask path (the dashes stay); solid ones by their own dash offset.
+      const target = kind === 'dash' ? (root.querySelector<SVGPathElement>(`#${CSS.escape(node.dataset.mask ?? '')} path`)) : g
+      if (!target) return
+      const L = len + 1
+      target.style.strokeDasharray = `${L} ${L}`
+      target.style.strokeDashoffset = `${L}`
+      const point = (p: number) => { const q = g.getPointAtLength(len * easeStroke(p)); return svgToClient(g, q.x, q.y) }
+      out.push({
+        weight: len, min: 110,
+        apply: p => {
+          if (p >= 1) { target.style.strokeDasharray = ''; target.style.strokeDashoffset = ''; return }
+          target.style.strokeDasharray = `${L} ${L}`
+          target.style.strokeDashoffset = `${L * (1 - easeStroke(p))}`
+        },
+        point,
+        reset: () => { target.style.strokeDasharray = ''; target.style.strokeDashoffset = '' },
+      })
+      lastPoint = point
+    } else if (kind === 'text') {
+      // Written left to right: a clip that opens as the tip crosses it.
+      let bb: DOMRect
+      try { bb = node.getBBox() } catch { return }
+      if (!bb.width) return
+      const clip = (p: number) => `polygon(-20% -60%, ${(-2 + p * 104).toFixed(1)}% -60%, ${(-2 + p * 104).toFixed(1)}% 160%, -20% 160%)`
+      node.style.clipPath = clip(0)
+      const point = (p: number) => svgToClient(node, bb.x + bb.width * p, bb.y + bb.height * (0.62 + 0.18 * Math.sin(p * Math.PI * 2 * Math.max(1, bb.width / 14))))
+      out.push({
+        weight: bb.width * 1.4, min: 140,
+        apply: p => { node.style.clipPath = p >= 1 ? '' : clip(p) },
+        point,
+        reset: () => { node.style.clipPath = '' },
+      })
+      lastPoint = point
+    } else if (kind === 'dot') {
+      // A dot: the pen presses and it grows under the tip.
+      const c = node as unknown as SVGCircleElement
+      const cx = c.cx.baseVal.value, cy = c.cy.baseVal.value
+      node.style.transformBox = 'fill-box'
+      node.style.transformOrigin = 'center'
+      node.style.transform = 'scale(0)'
+      const point = () => svgToClient(node, cx, cy)
+      out.push({ weight: 10, min: 160, apply: p => { node.style.transform = p >= 1 ? '' : `scale(${easeStroke(p).toFixed(3)})` }, point, reset: () => { node.style.transform = '' } })
+      lastPoint = point
+    } else if (kind === 'sweep') {
+      // Tick marks and their numbers along an axis: each appears as the tip passes it.
+      const [x1, y1, x2, y2] = (node.dataset.sweep ?? '').split(',').map(Number)
+      if (![x1, y1, x2, y2].every(Number.isFinite)) return
+      const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1
+      const kids = Array.from(node.children) as SVGGraphicsElement[]
+      const at = kids.map(k => { try { const b = k.getBBox(); return ((b.x + b.width / 2 - x1) * dx + (b.y + b.height / 2 - y1) * dy) / (len * len) } catch { return 0 } })
+      kids.forEach(k => { k.style.opacity = '0' })
+      const point = (p: number) => svgToClient(node, x1 + dx * p, y1 + dy * p)
+      out.push({
+        weight: len * 0.8, min: 200,
+        apply: p => kids.forEach((k, i) => { k.style.opacity = p >= 1 || at[i] <= p ? '' : '0' }),
+        point,
+        reset: () => kids.forEach(k => { k.style.opacity = '' }),
+      })
+      lastPoint = point
+    } else if (kind === 'fill') {
+      // A shape's tint washes in as its outline closes; the pen rests at the end of the outline meanwhile.
+      node.style.opacity = '0'
+      const point = lastPoint
+      out.push({ weight: 0, min: 160, apply: p => { node.style.opacity = p >= 1 ? '' : String(p) }, point: p => point(1) ?? point(p), reset: () => { node.style.opacity = '' } })
+    }
+  })
+  return out
 }
 
-/** A path drawn on with a stroke animation. Dashed paths are revealed through a mask so the dashes survive. */
-function Stroke({ d, color, width, dashed, animate, reduced, duration, delay = 0, clipId, fill = 'none', maskId }: StrokeProps) {
+/**
+ * Draws everything tagged data-ink inside `ref` with the board's pen, on the element's narration cue: every stroke,
+ * tick and label appears only under the marker tip, in order, within `durationMs`.
+ */
+function useInkGroup(ref: React.RefObject<SVGGElement | null>, active: boolean, durationMs: number, tag: string, ready = true) {
+  const pen = usePen()
+  const cue = usePenCue()
+  useLayoutEffect(() => {
+    const root = ref.current
+    if (!root || !active || !ready) return
+    const items = inkItems(root)
+    if (!items.length) return
+    const natural = items.map(it => Math.max(it.min, it.weight / DRAW_SPEED))
+    const gaps = DRAW_GAP * (items.length - 1)
+    const sum = natural.reduce((a, b) => a + b, 0) + gaps
+    const room = Math.max(160, durationMs - 40)
+    // Never slower than a relaxed hand (1.6x natural), never longer than the cue window.
+    const k = Math.min(room / sum, 1.6)
+    let t = 0
+    const segs = items.map((it, i) => {
+      const seg = { start: t, dur: natural[i] * k, apply: it.apply, point: it.point }
+      t += natural[i] * k + DRAW_GAP * k
+      return seg
+    })
+    const cancel = pen.run(segs, cue, tag)
+    return () => { cancel(); items.forEach(it => it.reset()) }
+    // Once per newly drawn element.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, ready])
+}
+
+/** A path drawn by the pen (see useInkGroup). Dashed paths are revealed through a mask so the dashes survive. */
+function Stroke({ d, color, width, dashed, animate, reduced, clipId, fill = 'none', maskId }: StrokeProps) {
   const draw = animate && !reduced
-  const pathRef = useRef<SVGPathElement>(null)
-  usePenFollow(pathRef, draw, duration, delay)
   const common = {
-    fill,
     stroke: color,
     strokeWidth: width,
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
     clipPath: clipId ? `url(#${clipId})` : undefined,
   }
+  const fillPath = fill !== 'none' ? <path d={d} fill={fill} stroke="none" clipPath={common.clipPath} data-ink={draw ? 'fill' : undefined} /> : null
   if (dashed) {
     return (
       <g>
         {draw && (
           <defs>
             <mask id={maskId} maskUnits="userSpaceOnUse" x="-100" y="-100" width="1000" height="700">
-              <motion.path
-                d={d}
-                fill="none"
-                stroke="#fff"
-                strokeWidth={width + 6}
-                strokeLinecap="round"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration, delay, ease: EASE_SMOOTH }}
-              />
+              <path d={d} fill="none" stroke="#fff" strokeWidth={width + 6} strokeLinecap="round" />
             </mask>
           </defs>
         )}
-        <path ref={pathRef} d={d} {...common} strokeDasharray={`${width * 3} ${width * 2.6}`} mask={draw ? `url(#${maskId})` : undefined} />
+        <path d={d} fill="none" {...common} strokeDasharray={`${width * 3} ${width * 2.6}`} mask={draw ? `url(#${maskId})` : undefined}
+          data-ink={draw ? 'dash' : undefined} data-mask={draw ? maskId : undefined} />
+        {fillPath}
       </g>
     )
   }
   return (
-    <motion.path
-      ref={pathRef}
-      d={d}
-      {...common}
-      initial={draw ? { pathLength: 0, opacity: 0 } : animate ? { opacity: 0 } : false}
-      animate={{ pathLength: 1, opacity: 1 }}
-      transition={{
-        pathLength: { duration, delay, ease: EASE_SMOOTH },
-        opacity: { duration: reduced ? 0.15 : 0.12, delay },
-      }}
-    />
-  )
-}
-
-function FadeIn({ children, animate, delay = 0, reduced }: { children: React.ReactNode; animate: boolean; delay?: number; reduced: boolean }) {
-  return (
-    <motion.g
-      initial={animate ? { opacity: 0 } : false}
-      animate={{ opacity: 1 }}
-      transition={{ duration: reduced ? 0.15 : 0.4, delay: reduced ? 0 : delay }}
-    >
-      {children}
-    </motion.g>
+    <>
+      <path d={d} fill="none" {...common} data-ink={draw ? 'path' : undefined} />
+      {fillPath}
+    </>
   )
 }
 
@@ -546,7 +621,17 @@ function slopeAt(f: (x: number) => number, x: number) {
   return (f(x + h) - f(x - h)) / (2 * h)
 }
 
-export function ShapeElement({ el, animate, reduced, duration, vars: boardVars = NO_VARS }: { el: ShapeEl; animate: boolean; reduced: boolean; duration?: number; vars?: Vars }) {
+type ShapeProps = { el: ShapeEl; animate: boolean; reduced: boolean; duration?: number; vars?: Vars }
+
+/** A drawn shape: everything in it is inked by the board's pen on the shape's cue (see useInkGroup). */
+export function ShapeElement(props: ShapeProps) {
+  const ref = useRef<SVGGElement>(null)
+  const draw = props.animate && !props.reduced
+  useInkGroup(ref, draw, props.duration ?? animMs(props.el.step), `draw:${props.el.step.shape.kind}:${props.el.key}`)
+  return <g ref={ref}><ShapeBody {...props} /></g>
+}
+
+function ShapeBody({ el, animate, reduced, vars: boardVars = NO_VARS }: ShapeProps) {
   const vars = useLiveVars(!!el.dyn, boardVars)
   const { step } = el
   const tickPx = useMinUnits(14, 11.5)
@@ -555,7 +640,6 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
   const shape: Shape = step.shape
   const color = INK_HEX[step.color ?? 'ink']
   const width = step.width ?? (shape.kind === 'axes' ? 1.6 : 2.6)
-  const dur = (duration ?? animMs(step)) / 1000
   const clipId = el.axes ? `wb-clip-${el.axes.id}` : undefined
   const maskId = `wb-mask-${el.key.replace(/[^\w-]/g, '_')}`
   const P = (p: [Num, Num]) => toBoard(el.axes, [evalNum(p[0], vars), evalNum(p[1], vars)])
@@ -565,21 +649,21 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
 
   switch (shape.kind) {
     case 'line':
-      return <Stroke {...base} d={pathFromPoints([P(shape.from), P(shape.to)])} duration={dur} clipId={clipId} />
+      return <Stroke {...base} d={pathFromPoints([P(shape.from), P(shape.to)])} clipId={clipId} />
     case 'arrow': {
       const a = P(shape.from), b = P(shape.to)
       return (
         <g>
-          <Stroke {...base} d={pathFromPoints([a, b])} duration={dur * 0.8} clipId={clipId} />
-          <Stroke {...base} maskId={`${maskId}-h`} dashed={false} d={arrowHead(a, b, 9 + width * 1.6)} duration={dur * 0.25} delay={dur * 0.75} />
+          <Stroke {...base} d={pathFromPoints([a, b])} clipId={clipId} />
+          <Stroke {...base} maskId={`${maskId}-h`} dashed={false} d={arrowHead(a, b, 9 + width * 1.6)} />
         </g>
       )
     }
     case 'polyline':
-      return <Stroke {...base} d={pathFromPoints(shape.points.map(P))} duration={dur} clipId={clipId} />
+      return <Stroke {...base} d={pathFromPoints(shape.points.map(P))} clipId={clipId} />
     case 'polygon': {
       const pts = shape.points.map(P)
-      return <Stroke {...base} d={`${pathFromPoints(pts)} Z`} duration={dur} clipId={clipId} fill={fillTint} />
+      return <Stroke {...base} d={`${pathFromPoints(pts)} Z`} clipId={clipId} fill={fillTint} />
     }
     case 'arc':
     case 'sector': {
@@ -593,37 +677,30 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
       const large = sweep > 180 ? 1 : 0
       const arc = `M${sx.toFixed(2)} ${sy.toFixed(2)} A${r} ${r} 0 ${large} 0 ${ex.toFixed(2)} ${ey.toFixed(2)}`
       const d = shape.kind === 'sector' ? `M${cx} ${cy} L${sx.toFixed(2)} ${sy.toFixed(2)} A${r} ${r} 0 ${large} 0 ${ex.toFixed(2)} ${ey.toFixed(2)} Z` : arc
-      return <Stroke {...base} d={d} duration={dur} clipId={clipId} fill={shape.kind === 'sector' ? fillTint : 'none'} />
+      return <Stroke {...base} d={d} clipId={clipId} fill={shape.kind === 'sector' ? fillTint : 'none'} />
     }
     case 'rect': {
       const [x, y] = P([shape.x, shape.y])
       const [x2, y2] = P([shape.x + shape.w, shape.y + shape.h])
       const pts: [number, number][] = [[x, y], [x2, y], [x2, y2], [x, y2], [x, y]]
-      return <Stroke {...base} d={pathFromPoints(pts)} duration={dur} clipId={clipId} fill={fillTint} />
+      return <Stroke {...base} d={pathFromPoints(pts)} clipId={clipId} fill={fillTint} />
     }
     case 'circle': {
       const [cx, cy] = P(shape.center)
       const r = shape.r * xScale(el.axes)
       const d = `M${cx + r} ${cy} A${r} ${r} 0 1 1 ${cx - r} ${cy} A${r} ${r} 0 1 1 ${cx + r} ${cy}`
-      return <Stroke {...base} d={d} duration={dur} clipId={clipId} fill={fillTint} />
+      return <Stroke {...base} d={d} clipId={clipId} fill={fillTint} />
     }
     case 'point': {
       const [x, y] = P(shape.at)
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+      const ink = animate && !reduced
       return (
-        <FadeIn animate={animate} reduced={reduced}>
-          <motion.circle
-            cx={x}
-            cy={y}
-            r={5.5}
-            fill={color}
-            initial={animate && !reduced ? { scale: 0 } : false}
-            animate={{ scale: 1 }}
-            transition={{ duration: 0.35, ease: EASE_SMOOTH }}
-            style={{ transformOrigin: `${x}px ${y}px` }}
-          />
+        <g>
+          <circle cx={x} cy={y} r={5.5} fill={color} data-ink={ink ? 'dot' : undefined} />
           {shape.label && (
             <text
+              data-ink={ink ? 'text' : undefined}
               x={x + (shape.labelPos === 'nw' || shape.labelPos === 'sw' ? -12 : 12)}
               y={y + (shape.labelPos === 'se' || shape.labelPos === 'sw' ? 26 : -12)}
               textAnchor={shape.labelPos === 'nw' || shape.labelPos === 'sw' ? 'end' : 'start'}
@@ -631,7 +708,7 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
               {shape.label}
             </text>
           )}
-        </FadeIn>
+        </g>
       )
     }
     case 'axes': {
@@ -649,14 +726,14 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
       const belowY = xb[1] + 10 + tickPx + axisLabelPx
       const labelBelow = !!shape.xLabel && belowY <= BOARD_H - 4
       const xLabelY = labelBelow ? belowY : xb[1] + 4 + axisLabelPx
+      const ink = animate && !reduced
       const labelLeft = shape.xLabel && !labelBelow ? xb[0] - 2 - shape.xLabel.length * axisLabelPx * 0.5 - tickPx * 0.6 : Infinity
       return (
         <g>
-          <Stroke {...base} color={axisColor} d={pathFromPoints([xa, xb])} duration={dur * 0.55} />
-          <Stroke {...base} color={axisColor} maskId={`${maskId}-y`} d={pathFromPoints([ya, yb])} duration={dur * 0.55} delay={dur * 0.2} />
-          <FadeIn animate={animate} reduced={reduced} delay={dur * 0.55}>
-            <path d={arrowHead(xa, xb, 10)} fill="none" stroke={axisColor} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" />
-            <path d={arrowHead(ya, yb, 10)} fill="none" stroke={axisColor} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" />
+          {/* Drawn in pen order: x axis, its arrow, ticks and name; then the same for y. */}
+          <Stroke {...base} color={axisColor} d={pathFromPoints([xa, xb])} />
+          <path d={arrowHead(xa, xb, 10)} fill="none" stroke={axisColor} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" data-ink={ink ? 'path' : undefined} />
+          <g data-ink={ink && xticks.length ? 'sweep' : undefined} data-sweep={`${xa[0]},${xa[1]},${xb[0]},${xb[1]}`}>
             {xticks.map(v => {
               const [tx, ty] = toBoard(ax, [v, originY])
               return (
@@ -666,6 +743,15 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
                 </g>
               )
             })}
+          </g>
+          {shape.xLabel && (
+            <text data-ink={ink ? 'text' : undefined} x={xb[0] - 2} y={xLabelY} fontSize={axisLabelPx} textAnchor="end" fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
+              {shape.xLabel}
+            </text>
+          )}
+          <Stroke {...base} color={axisColor} maskId={`${maskId}-y`} d={pathFromPoints([ya, yb])} />
+          <path d={arrowHead(ya, yb, 10)} fill="none" stroke={axisColor} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" data-ink={ink ? 'path' : undefined} />
+          <g data-ink={ink && yticks.length ? 'sweep' : undefined} data-sweep={`${ya[0]},${ya[1]},${yb[0]},${yb[1]}`}>
             {yticks.map(v => {
               const [tx, ty] = toBoard(ax, [originX, v])
               return (
@@ -675,17 +761,12 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
                 </g>
               )
             })}
-            {shape.xLabel && (
-              <text x={xb[0] - 2} y={xLabelY} fontSize={axisLabelPx} textAnchor="end" fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
-                {shape.xLabel}
-              </text>
-            )}
-            {shape.yLabel && (
-              <text x={yb[0] + 12} y={yb[1] + axisLabelPx * 0.4} fontSize={axisLabelPx} fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
-                {shape.yLabel}
-              </text>
-            )}
-          </FadeIn>
+          </g>
+          {shape.yLabel && (
+            <text data-ink={ink ? 'text' : undefined} x={yb[0] + 12} y={yb[1] + axisLabelPx * 0.4} fontSize={axisLabelPx} fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
+              {shape.yLabel}
+            </text>
+          )}
         </g>
       )
     }
@@ -693,7 +774,7 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
       if (!el.axes) return null
       const d = functionPath(shape.expr, el.axes, shape.domain, vars)
       if (!d) return null
-      return <Stroke {...base} width={step.width ?? 3} d={d} duration={dur} clipId={clipId} />
+      return <Stroke {...base} width={step.width ?? 3} d={d} clipId={clipId} />
     }
     case 'secant':
     case 'tangent': {
@@ -716,7 +797,7 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
       const y0 = f(x0)
       if (![xa, xb, m, y0].every(Number.isFinite)) return null
       const d = pathFromPoints([P([xa, y0 + m * (xa - x0)]), P([xb, y0 + m * (xb - x0)])])
-      return <Stroke {...base} d={d} duration={dur} clipId={clipId} />
+      return <Stroke {...base} d={d} clipId={clipId} />
     }
   }
 }
@@ -728,11 +809,14 @@ export function HighlightElement({
   animate,
   reduced,
   measure,
+  duration,
 }: {
   el: HighlightEl
   animate: boolean
   reduced: boolean
   measure: (id: string) => Box | null
+  /** Cue window (ms). */
+  duration?: number
 }) {
   const [box, setBox] = useState<Box | null>(null)
   useLayoutEffect(() => {
@@ -746,49 +830,27 @@ export function HighlightElement({
     return () => { clearTimeout(t); cancelAnimationFrame(frame); window.removeEventListener('resize', onResize) }
   }, [el.target, measure])
 
+  const ink = animate && !reduced
+  const ref = useRef<SVGGElement>(null)
+  useInkGroup(ref, ink, duration ?? 650, `highlight:${el.target}`, !!box)
   if (!box) return null
   const color = INK_HEX[el.color]
   const pad = 8
   const x = box.x - pad, y = box.y - pad / 1.5, w = box.w + pad * 2, h = box.h + (pad / 1.5) * 2
-  const dur = reduced ? 0 : 0.6
   if (el.style === 'underline') {
     const d = `M${x + 4} ${y + h + 2} Q${x + w / 2} ${y + h + 6} ${x + w - 4} ${y + h + 1}`
     return (
-      <motion.path
-        d={d}
-        fill="none"
-        stroke={color}
-        strokeWidth={3.5}
-        strokeLinecap="round"
-        initial={animate && !reduced ? { pathLength: 0 } : false}
-        animate={{ pathLength: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: dur, ease: EASE_SMOOTH }}
-      />
+      <motion.g ref={ref} exit={{ opacity: 0 }}>
+        <path d={d} fill="none" stroke={color} strokeWidth={3.5} strokeLinecap="round" data-ink={ink ? 'path' : undefined} />
+      </motion.g>
     )
   }
   const r = 8
   const d = `M${x + r} ${y} H${x + w - r} Q${x + w} ${y} ${x + w} ${y + r} V${y + h - r} Q${x + w} ${y + h} ${x + w - r} ${y + h} H${x + r} Q${x} ${y + h} ${x} ${y + h - r} V${y + r} Q${x} ${y} ${x + r} ${y} Z`
   return (
-    <motion.g exit={{ opacity: 0 }}>
-      <motion.path
-        d={d}
-        fill={color}
-        stroke="none"
-        initial={animate ? { opacity: 0 } : false}
-        animate={{ opacity: 0.09 }}
-        transition={{ duration: reduced ? 0.15 : 0.5, delay: reduced ? 0 : 0.35 }}
-      />
-      <motion.path
-        d={d}
-        fill="none"
-        stroke={color}
-        strokeWidth={2.2}
-        strokeLinejoin="round"
-        initial={animate && !reduced ? { pathLength: 0 } : false}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: dur, ease: EASE_SMOOTH }}
-      />
+    <motion.g ref={ref} exit={{ opacity: 0 }}>
+      <path d={d} fill="none" stroke={color} strokeWidth={2.2} strokeLinejoin="round" data-ink={ink ? 'path' : undefined} />
+      <path d={d} fill={color} fillOpacity={0.09} stroke="none" data-ink={ink ? 'fill' : undefined} />
     </motion.g>
   )
 }

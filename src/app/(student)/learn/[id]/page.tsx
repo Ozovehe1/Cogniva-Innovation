@@ -15,8 +15,9 @@ import { LessonPreparing } from '@/components/lesson-preparing'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-export default async function LessonPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function LessonPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ autoplay?: string }> }) {
   const { id } = await params
+  const { autoplay } = await searchParams
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound()
   const { supabase, profile } = await getSessionProfile()
   // RLS: shared approved lessons, or this learner's own AI lessons (no approval step).
@@ -26,7 +27,19 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
   const l = lesson as { id: string; title: string; subject: string; objectives: string[] | null; script: unknown; chapters: unknown; status: string; owner_student_id: string | null; draft_status: string }
   const own = !!profile && l.owner_student_id === profile.id
   if (!own && l.status !== 'approved') notFound()
-  const { data: topicRow } = own ? await supabase.from('path_topics').select('id, status').eq('lesson_id', id).maybeSingle() : { data: null }
+  const { data: topicRow } = own ? await supabase.from('path_topics').select('id, status, path_id, position').eq('lesson_id', id).maybeSingle() : { data: null }
+  // What follows this lesson on the learner's path: its mastery check until the topic is mastered, then the next
+  // topic's lesson (written ahead while this one plays).
+  let upNext: { href: string; title: string; eyebrow?: string; note?: string } | null = null
+  if (own && topicRow) {
+    const t = topicRow as { id: string; status: string; path_id: string; position: number }
+    if (t.status !== 'mastered') upNext = { href: `/learn/${id}/check?autostart=1`, eyebrow: 'Up next · quick check', title: 'Mastery check', note: 'Four questions; 3 of 4 unlocks the next topic.' }
+    else {
+      const { data: nx } = await supabase.from('path_topics').select('title, lesson_id, status').eq('path_id', t.path_id).gt('position', t.position).neq('status', 'mastered').order('position').limit(1).maybeSingle()
+      const n = nx as { title: string; lesson_id: string | null; status: string } | null
+      if (n?.lesson_id && n.status !== 'locked') upNext = { href: `/learn/${n.lesson_id}?autoplay=1`, title: n.title, note: 'Next lesson on your path' }
+    }
+  }
   if (own && topicRow) {
     const h = await headers()
     const origin = h.get('host') ? `${h.get('x-forwarded-proto') ?? 'https'}://${h.get('host')}` : undefined
@@ -86,7 +99,8 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
         <>
           {drafting && <LessonPreparing lessonId={l.id} own={own} compact readySteps={steps.length} />}
           <LessonSession lessonId={l.id} steps={steps} chapters={chapters} title={l.title} resumeAt={resumeAt} answered={answered} furthest={furthest} mode="student"
-            checkHref={topicRow ? `/learn/${l.id}/check` : undefined} minor={minor} partial={drafting} />
+            checkHref={topicRow ? `/learn/${l.id}/check` : undefined} minor={minor} partial={drafting}
+            upNext={upNext} autoPlay={autoplay === '1' && resumeAt === 0} />
         </>
       )}
       {topicRow && steps.length > 0 && (

@@ -16,7 +16,7 @@
  */
 import React, { useLayoutEffect, useMemo, useRef } from 'react'
 import FONT from './fonts/ems-casual-hand.json'
-import { usePen, type PenSegment, type Pt } from './pen'
+import { usePen, usePenCue, type PenSegment, type Pt } from './pen'
 
 interface FontData { upm: number; cap: number; adv: number; glyphs: Record<string, [number, string[]]> }
 const font = FONT as unknown as FontData
@@ -118,11 +118,11 @@ function schedule(lens: number[], meta: Placed[], px: number, available: number 
     out.push({ start: t, dur })
     t += dur
   })
-  const lead = Math.min(220, (available ?? t) * 0.12)
+  // The first stroke starts on the cue itself (the pen engine brings the hand there before it).
   const natural = t
-  const room = available !== undefined ? Math.max(120, available - lead - 60) : natural
+  const room = available !== undefined ? Math.max(120, available - 60) : natural
   const k = natural > room ? room / natural : 1
-  return out.map(o => ({ start: lead + o.start * k, dur: o.dur * k }))
+  return out.map(o => ({ start: o.start * k, dur: o.dur * k }))
 }
 
 export function HandText({
@@ -150,6 +150,7 @@ export function HandText({
   className?: string
 }) {
   const pen = usePen()
+  const cue = usePenCue()
   const svgRef = useRef<SVGSVGElement>(null)
   const lay = useMemo(() => layoutText(text, px, maxWidth, align), [text, px, maxWidth, align])
   const write = animate && !reduced
@@ -172,11 +173,13 @@ export function HandText({
       apply: q => { p.style.strokeDashoffset = q >= 1 ? '0' : `${(lens[i] + 1) * (1 - q)}` },
       point: q => toClient(p, lens[i] * q),
     }))
-    const cancel = pen.run(segs)
+    const cancel = pen.run(segs, cue, `text:${text.slice(0, 24)}`)
     return () => {
       cancel()
       paths.forEach(p => { p.style.strokeDasharray = ''; p.style.strokeDashoffset = '' })
     }
+    // Once per written element: a new cue object for the same element must not restart it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [write, lay, px, duration, pen])
   return (
     <span className={className} style={{ display: 'inline-block', lineHeight: 0 }}>
@@ -243,6 +246,7 @@ function inkBoxes(root: HTMLElement): Box[] {
  */
 export function useInkReveal(ref: React.RefObject<HTMLElement | null>, active: boolean, px: number, duration: number | undefined) {
   const pen = usePen()
+  const cue = usePenCue()
   useLayoutEffect(() => {
     const el = ref.current
     if (!el || !active) return
@@ -271,8 +275,8 @@ export function useInkReveal(ref: React.RefObject<HTMLElement | null>, active: b
       t += dur + 45
       return r
     })
-    const lead = Math.min(200, (duration ?? t) * 0.12)
-    const room = duration !== undefined ? Math.max(120, duration - lead - 60) : t
+    const lead = 0 // the first symbol starts on the cue; the hand is brought there before it
+    const room = duration !== undefined ? Math.max(120, duration - 60) : t
     const k = t > room ? room / t : 1
     const toClient = (b: Box, f: number, i: number): Pt | null => {
       const rr = el.getBoundingClientRect()
@@ -292,7 +296,7 @@ export function useInkReveal(ref: React.RefObject<HTMLElement | null>, active: b
       },
       point: f => toClient(b, f, i),
     }))
-    const cancel = pen.run(segs)
+    const cancel = pen.run(segs, cue, `math:${(el.textContent ?? '').slice(0, 24)}`)
     return () => {
       cancel()
       el.style.clipPath = ''

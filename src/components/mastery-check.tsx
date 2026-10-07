@@ -1,6 +1,7 @@
 'use client'
 import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { UpNextCard } from './up-next'
 import { ArrowRight, Check, X } from 'lucide-react'
 import { RichText } from './whiteboard/check-card'
 import { Alert, Spinner, buttonClass, cx } from './ui'
@@ -90,10 +91,13 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
   return (
     <div className="mt-6">
       {mode === 'result' && (r.passed ? (
+        <>
         <div className="rounded-[14px] border border-accent-line bg-accent-soft p-5">
           <h2 className="font-display text-[24px] text-ink">Mastered.</h2>
           <p className="mt-1 text-[15px] text-ink-2">{Math.round((r.score ?? 0) * 4)} of 4. {r.next ? `Next up: ${r.next.title}.` : 'That was the last topic on your path.'}</p>
         </div>
+        {r.next?.lesson_id && <UpNextCard href={`/learn/${r.next.lesson_id}?autoplay=1`} title={r.next.title} note="Next lesson on your path" />}
+        </>
       ) : (
         <div className="rounded-[14px] border border-line bg-surface p-5">
           <h2 className="font-display text-[24px] text-ink">Not quite yet, and that’s useful to know.</h2>
@@ -115,7 +119,7 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
         ))}
       </ul>
       <div className="mt-8 flex flex-col gap-2 sm:flex-row">
-        {mode === 'result' && r.passed && <Link href={nextHref} className={buttonClass('primary', 'lg')}>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
+        {mode === 'result' && r.passed && !r.next?.lesson_id && <Link href={nextHref} className={buttonClass('primary', 'lg')}>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
         {mode === 'result' && !r.passed && r.recheck && <button type="button" onClick={() => load('recheck_start')} className={buttonClass('primary', 'lg')}>Check the basics</button>}
         {mode === 'result' && !r.passed && !r.recheck && <Link href={`/learn/${lessonId}`} className={buttonClass('primary', 'lg')}>Back to the lesson</Link>}
         {mode === 'result' && !r.passed && <button type="button" onClick={() => load('start')} className={buttonClass('secondary', 'lg')}>Try a fresh set</button>}
