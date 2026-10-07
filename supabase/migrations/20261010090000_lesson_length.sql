@@ -2,3 +2,4 @@
 -- lengthened (bounded) when they fall short. Idempotent: safe to re-run.
 alter table lesson_sections add column if not exists expansions integer not null default 0;
 alter table lesson_sections add column if not exists play_ms integer;
+alter table lesson_sections add column if not exists draft_model text;

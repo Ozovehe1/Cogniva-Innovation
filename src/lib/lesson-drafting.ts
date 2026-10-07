@@ -13,7 +13,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
 import { GeminiQuotaError } from './gemini'
-import { draftLessonOutline, draftLessonSection, expandLessonSection, type OutlineSection } from './lesson-ai'
+import { draftLessonOutline, draftLessonSection, expandLessonSection, type GenMeta, type OutlineSection } from './lesson-ai'
 import { flattenSections, validateSection, type Chapter } from './lesson-sections'
 import type { Step } from './lesson-schema'
 import { LENGTH_MIN_RATIO, lengthReport } from './lesson-timing'
@@ -28,7 +28,7 @@ const SECTION_RESERVE_MS = 125_000
 /** Don't start a length expansion with less than this left in the budget. */
 const EXPAND_RESERVE_MS = 115_000
 /** Length expansions per section before it is accepted as it is. */
-export const MAX_EXPANSIONS = 2
+export const MAX_EXPANSIONS = 3
 /** Short rate-limit waits are slept through inside the worker instead of pausing. */
 const MAX_INLINE_WAIT_MS = 65_000
 
@@ -50,6 +50,7 @@ export interface SectionRow {
   attempts: number
   expansions?: number | null
   play_ms?: number | null
+  draft_model?: string | null
   updated_at: string
 }
 
@@ -222,7 +223,9 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       if (Date.now() - t0 > RUN_BUDGET_MS - (expanding ? EXPAND_RESERVE_MS : SECTION_RESERVE_MS)) { handOver = true; return 'handover' }
 
       const notes = [lesson.draft_notes, next.notes].filter(Boolean).join('\n') || undefined
+      const meta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
       const finish = async (steps: Step[], expansions: number, note?: string) => {
+        const models = [next.draft_model, meta.model].filter(Boolean).join(', ').slice(0, 200) || null
         const len = lengthReport(steps, Number(next.minutes) || 6)
         const short = len.ratio < LENGTH_MIN_RATIO
         // The opening section is released as soon as it is written (the learner may be waiting to start);
@@ -231,18 +234,18 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         const maxExpansions = next.position === 0 ? (len.ratio < 0.6 ? 1 : 0) : MAX_EXPANSIONS
         if (short && expansions < maxExpansions) {
           // Keep the steps and come back to lengthen them (this run if time allows, otherwise the next).
-          await db.from('lesson_sections').update({ status: 'drafting', steps, expansions, play_ms: Math.round(len.ms), error: note ?? null }).eq('id', next.id)
+          await db.from('lesson_sections').update({ status: 'drafting', steps, expansions, play_ms: Math.round(len.ms), error: note ?? null, draft_model: models }).eq('id', next.id)
           return
         }
         await db.from('lesson_sections').update({
-          status: 'ready', steps, expansions, play_ms: Math.round(len.ms),
+          status: 'ready', steps, expansions, play_ms: Math.round(len.ms), draft_model: models,
           error: short ? `Plays ${len.minutes} of ${next.minutes} min after ${expansions} expansions; shortfall carried forward${note ? ` (${note})` : ''}` : null,
         }).eq('id', next.id)
         if (short) {
           // Carry the shortfall into the next section that is still to be written, so the lesson keeps its length.
           const later = rows.find(r => r.position > next.position && r.status === 'pending')
           const deficit = Math.round((len.targetMs - len.ms) / 6000) / 10
-          if (later && deficit > 0) await db.from('lesson_sections').update({ minutes: Math.min(12, Math.round((Number(later.minutes) + deficit) * 10) / 10) }).eq('id', later.id)
+          if (later && deficit > 0) await db.from('lesson_sections').update({ minutes: Math.min(10, Math.round((Number(later.minutes) + deficit) * 10) / 10) }).eq('id', later.id)
         }
         // A finished clip goes into this section before it is published (published sections never change).
         if (lesson.generated_by === 'ai') await attachReadyClips(db, lessonId, next.position).catch(() => false)
@@ -259,7 +262,7 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         const have = next.steps
         try {
           const len = lengthReport(have, Number(next.minutes) || 6)
-          const more = await expandLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, steps: have, playedMinutes: len.minutes, notes })
+          const more = await expandLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, steps: have, playedMinutes: len.minutes, notes, meta })
           const v = validateSection([...have, ...more], next.position)
           if (!v.ok) throw new Error(v.errors.slice(0, 2).join('; '))
           await finish(v.steps, expansions)
@@ -281,7 +284,7 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
 
       await db.from('lesson_sections').update({ status: 'drafting', error: null }).eq('id', next.id)
       try {
-        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes })
+        const steps = await draftLessonSection({ lesson: lite, outline: toOutline(rows), position: next.position, notes, meta })
         const v = validateSection(steps, next.position)
         if (!v.ok) throw new Error(v.errors.slice(0, 2).join('; '))
         await finish(v.steps, 0)
