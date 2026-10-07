@@ -316,6 +316,8 @@ export interface ParsedNumber { value: number; unit: string; decimals: number; s
  */
 export function parseOptionNumber(opt: string): ParsedNumber | null {
   let s = repairEscapes(opt).replace(/\$/g, ' ')
+  // "4\pi \times 10^{-7}" is a number too (and must not sit beside its own decimal value).
+  s = s.replace(/(\d+(?:\.\d+)?)?\s*(?:\\pi|π)(?![a-zA-Z])/g, (_m, a?: string) => String((a ? Number(a) : 1) * Math.PI))
   // Only plain numbers: any structural command (fractions, roots, sums...) means an expression.
   const cmds = s.match(/\\[a-zA-Z]+/g) ?? []
   if (cmds.some(c => !/^\\(text\w*|mathrm|times|cdot|mu|micro|Omega|circ|degree|quad|qquad|approx)$/.test(c))) return null
