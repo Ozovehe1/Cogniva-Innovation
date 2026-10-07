@@ -202,8 +202,11 @@ Neutral, global wording; examples may use Nigerian context. Return JSON {"subjec
 export function planFor(l: LearnerRow, topicCount: number): PathPlan {
   const hours = l.weekly_hours ?? 2
   const sessionsPerWeek = hours <= 1 ? 2 : hours <= 2 ? 3 : hours <= 5 ? 4 : 5
-  let lessonMinutes = Math.round((hours * 60) / sessionsPerWeek / 5) * 5
-  lessonMinutes = Math.max(10, Math.min(30, lessonMinutes))
+  // About half of each session is the lesson; the rest is practice and the mastery check.
+  let lessonMinutes = Math.round((hours * 60) / sessionsPerWeek / 2 / 5) * 5
+  // Low confidence or high anxiety: shorter chunks with more frequent wins.
+  const fragile = (l.efficacy ?? 3) <= 2 || (anxietyScore(l) ?? 0) >= 3.5
+  lessonMinutes = Math.max(10, Math.min(fragile ? 20 : 45, lessonMinutes))
   const scope: PathPlan['scope'] = l.purpose === 'exam' ? 'full' : l.purpose === 'curiosity' ? 'short' : 'path'
   let weeksLeft: number | null = null
   let pace: PathPlan['pace'] = l.purpose === 'curiosity' ? 'relaxed' : 'steady'
