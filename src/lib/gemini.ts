@@ -1,12 +1,40 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 
-// Primary model first; fall back when Google returns overload/quota errors.
-const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-2.5-flash'] as const
+// Verified from production on 2026-10-07 (see report); unknown models are skipped at runtime anyway.
+const MODEL_CHAIN = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-3.8-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'] as const
+
+// Primary model first; fall back when Google returns overload/quota errors or the
+// model is not available to this key. The lite models have their own free-tier quotas.
+export const GEMINI_MODELS = MODEL_CHAIN
 const ATTEMPT_TIMEOUT_MS = 25_000
 
-function isRetryable(err: unknown) {
+/** Errors where the next model in the chain may still succeed. */
+export function isRetryable(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err)
-  return /\b(503|429|500|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|timed? ?out|aborted/i.test(msg)
+  return /\b(503|429|500|504|404)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|NOT_FOUND|not found|is not supported|unsupported|overloaded|high demand|timed? ?out|aborted/i.test(msg)
+}
+
+/** True when the error is a quota / rate limit (429) rather than an outage. */
+export function isQuotaError(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /\b429\b|RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg)
+}
+
+/** Thrown when every model in the chain is out of quota. `retryAfterMs` comes from Google's RetryInfo when present. */
+export class GeminiQuotaError extends Error {
+  retryAfterMs: number | null
+  daily: boolean
+  constructor(message: string, retryAfterMs: number | null, daily: boolean) {
+    super(message)
+    this.name = 'GeminiQuotaError'
+    this.retryAfterMs = retryAfterMs
+    this.daily = daily
+  }
+}
+
+function retryDelayMs(msg: string): number | null {
+  const m = /retry(?:Delay)?["'\s:]*(?:in\s*)?["']?(\d+(?:\.\d+)?)\s*s/i.exec(msg)
+  return m ? Math.round(Number(m[1]) * 1000) : null
 }
 
 export interface GenerateOptions {
@@ -22,25 +50,51 @@ export interface GenerateOptions {
   primaryTimeoutMs?: number
   /** Collects short notes on models that failed before one succeeded (diagnostics). */
   trace?: string[]
+  /** Override the model chain (diagnostics). */
+  models?: readonly string[]
 }
+
+/** Per-instance memory of models that are out of quota or missing, so later calls skip them quickly. */
+const skipUntil = new Map<string, number>()
 
 /** Which model produced the last successful response (for diagnostics). */
 export let lastGeminiModel: string | null = null
 
-/** Calls Gemini with the primary model and falls back on overload/quota errors. Returns raw text. */
+/**
+ * Thinking settings per model family:
+ * - gemini-3.x (flash and flash-lite): thinkingLevel; flash rejects MINIMAL, so always LOW.
+ * - gemini-2.5-flash: thinkingBudget 0..24576 (0 = off).
+ * - gemini-2.5-flash-lite: thinking is off by default; budget is 0 or 512..24576, so 0.
+ * - gemini-2.0-*: no thinking support, send no thinkingConfig.
+ */
+export function thinkingFor(model: string, thinking: GenerateOptions['thinking']) {
+  if (model.startsWith('gemini-3')) return { thinkingLevel: ThinkingLevel.LOW }
+  if (model.startsWith('gemini-2.5-flash-lite')) return { thinkingBudget: 0 }
+  if (model.startsWith('gemini-2.5')) return { thinkingBudget: thinking === 'minimal' ? 0 : 128 }
+  return undefined
+}
+
+/** Calls Gemini with the primary model and falls back on overload/quota/not-found errors. Returns raw text. */
 export async function generateText(prompt: string, opts: GenerateOptions = {}): Promise<string> {
   let lastErr: unknown
-  for (const [i, model] of GEMINI_MODELS.entries()) {
+  let quotaCount = 0
+  let retryAfter: number | null = null
+  let daily = false
+  let otherFailures = 0
+  const chain = opts.models ?? GEMINI_MODELS
+  const now = Date.now()
+  const live = chain.filter(m => (skipUntil.get(m) ?? 0) <= now)
+  // If everything is marked as skipped, try the whole chain anyway (quota may have reset).
+  const order = opts.models ? chain : live.length ? live : chain
+  for (const [i, model] of order.entries()) {
     try {
+      const thinkingConfig = thinkingFor(model, opts.thinking)
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
         config: {
           httpOptions: { timeout: (i === 0 ? opts.primaryTimeoutMs : undefined) ?? opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS },
-          // gemini-3.8-flash rejects MINIMAL, so 'minimal' only lowers the 2.5 budget.
-          thinkingConfig: model.startsWith('gemini-3')
-            ? { thinkingLevel: ThinkingLevel.LOW }
-            : { thinkingBudget: opts.thinking === 'minimal' ? 0 : 128 },
+          ...(thinkingConfig ? { thinkingConfig } : {}),
           ...(opts.json ? { responseMimeType: 'application/json' } : {}),
           ...(opts.systemInstruction ? { systemInstruction: opts.systemInstruction } : {}),
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
@@ -50,10 +104,25 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
       return response.text ?? ''
     } catch (err) {
       lastErr = err
-      opts.trace?.push(`${model}: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`)
+      const msg = err instanceof Error ? err.message : String(err)
+      opts.trace?.push(`${model}: ${msg.slice(0, 160)}`)
       if (!isRetryable(err)) throw err
-      console.warn(`Gemini ${model} unavailable, trying next model:`, err instanceof Error ? err.message : err)
+      if (isQuotaError(err)) {
+        quotaCount++
+        const d = retryDelayMs(msg)
+        if (d !== null) retryAfter = retryAfter === null ? d : Math.min(retryAfter, d)
+        const isDaily = /PerDay|per day|daily/i.test(msg)
+        if (isDaily) daily = true
+        skipUntil.set(model, Date.now() + (isDaily ? 10 * 60_000 : Math.min(d ?? 30_000, 60_000)))
+      } else if (/\b404\b|NOT_FOUND|not found|not supported|unsupported/i.test(msg)) {
+        skipUntil.set(model, Date.now() + 6 * 3600_000)
+      } else otherFailures++
+      console.warn(`Gemini ${model} unavailable, trying next model:`, msg.slice(0, 200))
     }
+  }
+  // Every model that exists for this key is out of quota: report it as a quota error.
+  if (quotaCount > 0 && otherFailures === 0) {
+    throw new GeminiQuotaError(`Gemini quota reached on every model (${quotaCount} of ${order.length} tried)`, retryAfter, daily)
   }
   throw lastErr
 }
@@ -67,7 +136,7 @@ export async function generateStructuredJson(prompt: string, opts: Omit<Generate
   return generateJson(prompt, { ...opts, json: true })
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
+export const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 
 export function parseGeminiJson(raw: string) {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
