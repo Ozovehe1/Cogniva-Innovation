@@ -127,9 +127,11 @@ async function voiceScript(steps: Step[], budgetMs: number): Promise<{ lines: nu
   const lines = scriptLines(steps)
   let synthesized = 0
   try {
-    for (let k = 0; k < lines.length; k += 6) {
+    // The first line alone first: it is cached within a second or two (a batch of six takes ~10 s on CPU),
+    // so a lesson can start speaking as soon as its opening beat exists; then the rest in sixes.
+    for (let k = 0; k < lines.length; k += k === 0 ? 1 : 6) {
       if (Date.now() - t0 > budgetMs) return { lines: lines.length, synthesized, done: false }
-      const r = await ensureNarration(lines.slice(k, k + 6), { timeoutMs: Math.max(30_000, Math.min(120_000, budgetMs - (Date.now() - t0))) })
+      const r = await ensureNarration(lines.slice(k, k === 0 ? 1 : k + 6), { timeoutMs: Math.max(30_000, Math.min(120_000, budgetMs - (Date.now() - t0))) })
       synthesized += r.synthesized
     }
   } catch (err) {
