@@ -56,6 +56,7 @@ select_error: ${selectError?.message ?? 'none'}`}
   const navItems = [
     { href: '/tutor/dashboard', icon: 'home', label: 'Dashboard' },
     { href: '/tutor/students', icon: 'users', label: 'Students' },
+    { href: '/tutor/lessons', icon: 'lessons', label: 'Lessons' },
     { href: '/tutor/projects', icon: 'list', label: 'Projects' },
     { href: '/tutor/projects/new', icon: 'plus', label: 'New Project' },
   ]

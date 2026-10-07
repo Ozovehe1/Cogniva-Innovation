@@ -56,6 +56,7 @@ select_error: ${selectError?.message ?? 'none'}`}
   const navItems = [
     { href: '/dashboard', icon: 'home', label: 'Dashboard' },
     { href: '/assessment', icon: 'brain', label: 'Assessment' },
+    { href: '/learn', icon: 'learn', label: 'Learn' },
     { href: '/projects', icon: 'list', label: 'My Projects' },
   ]
 

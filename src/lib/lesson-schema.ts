@@ -1,0 +1,508 @@
+/**
+ * Live Tutor lesson "scene script".
+ *
+ * A lesson is an ordered array of steps that the whiteboard engine plays back.
+ * Coordinates are in board units: the board is BOARD_W x BOARD_H (16:10) with
+ * the origin at the top-left. A draw step may instead use the coordinate system
+ * of a previously drawn `axes` shape by setting `on` to that shape's id.
+ *
+ * The validator below is hand-written (no schema library) and is used both for
+ * scripts stored in Supabase and for anything Gemini returns.
+ */
+
+export const BOARD_W = 800
+export const BOARD_H = 500
+
+export const INKS = ['ink', 'accent', 'clay', 'navy', 'amber', 'muted'] as const
+export type Ink = (typeof INKS)[number]
+
+export const SIZES = ['sm', 'md', 'lg', 'xl'] as const
+export type TextSize = (typeof SIZES)[number]
+
+export type Pt = [number, number]
+export interface Frame { x: number; y: number; w: number; h: number }
+
+interface StepBase {
+  /** Optional element id so later steps can highlight, transform or clear it. */
+  id?: string
+  /** Spoken-style caption shown under the board while this step plays. */
+  say?: string
+}
+
+export interface WriteStep extends StepBase {
+  type: 'write'
+  text: string
+  x: number
+  y: number
+  size?: TextSize
+  color?: Ink
+  font?: 'serif' | 'sans'
+  /** Anchor of x: left edge (default), centre, or right edge. */
+  align?: 'left' | 'center' | 'right'
+  /** Max width in board units before wrapping. */
+  maxWidth?: number
+}
+
+export interface MathStep extends StepBase {
+  type: 'math'
+  tex: string
+  x: number
+  y: number
+  size?: TextSize
+  color?: Ink
+  align?: 'left' | 'center' | 'right'
+}
+
+export type Shape =
+  | { kind: 'line'; from: Pt; to: Pt }
+  | { kind: 'arrow'; from: Pt; to: Pt }
+  | { kind: 'circle'; center: Pt; r: number }
+  | { kind: 'rect'; x: number; y: number; w: number; h: number }
+  | { kind: 'polyline'; points: Pt[] }
+  | { kind: 'point'; at: Pt; label?: string; labelPos?: 'ne' | 'nw' | 'se' | 'sw' }
+  | {
+      kind: 'axes'
+      frame: Frame
+      xRange: [number, number]
+      yRange: [number, number]
+      xLabel?: string
+      yLabel?: string
+      /** Tick spacing in graph units; omitted = no ticks. */
+      xStep?: number
+      yStep?: number
+    }
+  | {
+      kind: 'function'
+      /** Expression in x, e.g. "x^2", "sin(x) + 0.5*x". */
+      expr: string
+      /** Defaults to the axes' x range. */
+      domain?: [number, number]
+    }
+
+export interface DrawStep extends StepBase {
+  type: 'draw'
+  shape: Shape
+  color?: Ink
+  width?: number
+  dashed?: boolean
+  /** Id of an axes shape whose graph coordinates this shape uses. Required for `function`. */
+  on?: string
+}
+
+export interface HighlightStep extends StepBase {
+  type: 'highlight'
+  target: string
+  style?: 'box' | 'underline'
+  color?: Ink
+}
+
+export interface TransformStep extends StepBase {
+  type: 'transform'
+  /** Id of the write/math element to morph. Keeps the same id afterwards. */
+  target: string
+  tex?: string
+  text?: string
+  x?: number
+  y?: number
+  color?: Ink
+}
+
+export interface ClearStep extends StepBase {
+  type: 'clear'
+  /** Ids to remove. Omit to clear the whole board. */
+  targets?: string[]
+}
+
+export interface PauseStep extends StepBase {
+  type: 'pause'
+  /** Milliseconds, 200..10000. */
+  ms: number
+}
+
+export interface CheckStep extends StepBase {
+  type: 'check'
+  kind: 'understand' | 'choice' | 'short'
+  prompt: string
+  /** For kind=choice. */
+  options?: string[]
+  /** For kind=choice: index of the correct option. */
+  answer?: number
+  /** For kind=short: accepted answers (case/space-insensitive). */
+  accept?: string[]
+  /** Shown after a correct answer. */
+  explanation?: string
+  /** Pre-written alternative explanation, used instantly or when the AI tutor is unavailable. */
+  reteach?: Step[]
+}
+
+export interface ManimClipStep extends StepBase {
+  type: 'manim_clip'
+  url: string
+  caption?: string
+  /** Id of the manim_jobs row the clip came from, when inserted by a tutor. */
+  jobId?: string
+}
+
+export type Step =
+  | WriteStep
+  | MathStep
+  | DrawStep
+  | HighlightStep
+  | TransformStep
+  | ClearStep
+  | PauseStep
+  | CheckStep
+  | ManimClipStep
+
+export type StepType = Step['type']
+export const STEP_TYPES: StepType[] = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'pause', 'check', 'manim_clip']
+
+/* ───────────── Validation ───────────── */
+
+export interface ValidationResult {
+  ok: boolean
+  steps: Step[]
+  errors: string[]
+}
+
+type Obj = Record<string, unknown>
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isStr = (v: unknown): v is string => typeof v === 'string'
+const isPt = (v: unknown): v is Pt => Array.isArray(v) && v.length === 2 && isNum(v[0]) && isNum(v[1])
+const isRange = (v: unknown): v is [number, number] => isPt(v) && (v as number[])[0] < (v as number[])[1]
+const ID_RE = /^[A-Za-z][\w-]{0,39}$/
+
+function optEnum<T extends string>(o: Obj, key: string, allowed: readonly T[], errs: string[], at: string) {
+  if (o[key] === undefined) return
+  if (!isStr(o[key]) || !allowed.includes(o[key] as T)) errs.push(`${at}.${key} must be one of ${allowed.join('|')}`)
+}
+function optStr(o: Obj, key: string, errs: string[], at: string, max = 2000) {
+  if (o[key] === undefined) return
+  if (!isStr(o[key])) errs.push(`${at}.${key} must be a string`)
+  else if ((o[key] as string).length > max) errs.push(`${at}.${key} is too long`)
+}
+function reqStr(o: Obj, key: string, errs: string[], at: string, max = 2000) {
+  if (!isStr(o[key]) || !(o[key] as string).trim()) errs.push(`${at}.${key} is required (string)`)
+  else if ((o[key] as string).length > max) errs.push(`${at}.${key} is too long`)
+}
+function reqNum(o: Obj, key: string, errs: string[], at: string, min = -10_000, max = 10_000) {
+  if (!isNum(o[key])) errs.push(`${at}.${key} is required (number)`)
+  else if ((o[key] as number) < min || (o[key] as number) > max) errs.push(`${at}.${key} out of range ${min}..${max}`)
+}
+function optNum(o: Obj, key: string, errs: string[], at: string, min = -10_000, max = 10_000) {
+  if (o[key] === undefined) return
+  reqNum(o, key, errs, at, min, max)
+}
+
+function validateShape(s: unknown, errs: string[], at: string) {
+  if (!isObj(s)) { errs.push(`${at} must be an object`); return }
+  switch (s.kind) {
+    case 'line':
+    case 'arrow':
+      if (!isPt(s.from)) errs.push(`${at}.from must be [x,y]`)
+      if (!isPt(s.to)) errs.push(`${at}.to must be [x,y]`)
+      break
+    case 'circle':
+      if (!isPt(s.center)) errs.push(`${at}.center must be [x,y]`)
+      reqNum(s, 'r', errs, at, 0, 2000)
+      break
+    case 'rect':
+      reqNum(s, 'x', errs, at); reqNum(s, 'y', errs, at)
+      reqNum(s, 'w', errs, at, 0); reqNum(s, 'h', errs, at, 0)
+      break
+    case 'polyline':
+      if (!Array.isArray(s.points) || s.points.length < 2 || s.points.length > 400 || !s.points.every(isPt))
+        errs.push(`${at}.points must be 2..400 [x,y] pairs`)
+      break
+    case 'point':
+      if (!isPt(s.at)) errs.push(`${at}.at must be [x,y]`)
+      optStr(s, 'label', errs, at, 60)
+      optEnum(s, 'labelPos', ['ne', 'nw', 'se', 'sw'] as const, errs, at)
+      break
+    case 'axes': {
+      const f = s.frame
+      if (!isObj(f) || !isNum(f.x) || !isNum(f.y) || !isNum(f.w) || !isNum(f.h) || f.w <= 0 || f.h <= 0)
+        errs.push(`${at}.frame must be {x,y,w,h} with positive w,h`)
+      if (!isRange(s.xRange)) errs.push(`${at}.xRange must be [min,max] with min<max`)
+      if (!isRange(s.yRange)) errs.push(`${at}.yRange must be [min,max] with min<max`)
+      optStr(s, 'xLabel', errs, at, 40); optStr(s, 'yLabel', errs, at, 40)
+      optNum(s, 'xStep', errs, at, 0.0001); optNum(s, 'yStep', errs, at, 0.0001)
+      break
+    }
+    case 'function':
+      reqStr(s, 'expr', errs, at, 200)
+      if (isStr(s.expr)) {
+        const e = compileExpr(s.expr)
+        if (!e.ok) errs.push(`${at}.expr: ${e.error}`)
+      }
+      if (s.domain !== undefined && !isRange(s.domain)) errs.push(`${at}.domain must be [min,max] with min<max`)
+      break
+    default:
+      errs.push(`${at}.kind must be one of line|arrow|circle|rect|polyline|point|axes|function`)
+  }
+}
+
+function validateStep(raw: unknown, errs: string[], at: string, ctx: { ids: Set<string>; axes: Set<string>; depth: number }): raw is Step {
+  const before = errs.length
+  if (!isObj(raw)) { errs.push(`${at} must be an object`); return false }
+  const s = raw
+  if (s.id !== undefined && (!isStr(s.id) || !ID_RE.test(s.id))) errs.push(`${at}.id must match ${ID_RE}`)
+  optStr(s, 'say', errs, at, 400)
+  switch (s.type) {
+    case 'write':
+      reqStr(s, 'text', errs, at, 300)
+      reqNum(s, 'x', errs, at, 0, BOARD_W); reqNum(s, 'y', errs, at, 0, BOARD_H)
+      optEnum(s, 'size', SIZES, errs, at); optEnum(s, 'color', INKS, errs, at)
+      optEnum(s, 'font', ['serif', 'sans'] as const, errs, at)
+      optEnum(s, 'align', ['left', 'center', 'right'] as const, errs, at)
+      optNum(s, 'maxWidth', errs, at, 40, BOARD_W)
+      break
+    case 'math':
+      reqStr(s, 'tex', errs, at, 400)
+      reqNum(s, 'x', errs, at, 0, BOARD_W); reqNum(s, 'y', errs, at, 0, BOARD_H)
+      optEnum(s, 'size', SIZES, errs, at); optEnum(s, 'color', INKS, errs, at)
+      optEnum(s, 'align', ['left', 'center', 'right'] as const, errs, at)
+      break
+    case 'draw':
+      validateShape(s.shape, errs, `${at}.shape`)
+      optEnum(s, 'color', INKS, errs, at)
+      optNum(s, 'width', errs, at, 0.5, 12)
+      if (s.dashed !== undefined && typeof s.dashed !== 'boolean') errs.push(`${at}.dashed must be boolean`)
+      if (s.on !== undefined) {
+        if (!isStr(s.on)) errs.push(`${at}.on must be an axes id`)
+        else if (!ctx.axes.has(s.on)) errs.push(`${at}.on refers to unknown axes "${s.on}"`)
+      }
+      if (isObj(s.shape) && s.shape.kind === 'function' && !isStr(s.on)) errs.push(`${at}: a function shape needs "on" (an axes id)`)
+      if (isObj(s.shape) && s.shape.kind === 'axes') {
+        if (!isStr(s.id)) errs.push(`${at}: axes need an "id" so plots can reference them`)
+        else ctx.axes.add(s.id)
+      }
+      break
+    case 'highlight':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an earlier element id`)
+      optEnum(s, 'style', ['box', 'underline'] as const, errs, at)
+      optEnum(s, 'color', INKS, errs, at)
+      break
+    case 'transform':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an earlier element id`)
+      if (s.tex === undefined && s.text === undefined && s.x === undefined && s.y === undefined)
+        errs.push(`${at} must change something (tex, text, x or y)`)
+      optStr(s, 'tex', errs, at, 400); optStr(s, 'text', errs, at, 300)
+      optNum(s, 'x', errs, at, 0, BOARD_W); optNum(s, 'y', errs, at, 0, BOARD_H)
+      optEnum(s, 'color', INKS, errs, at)
+      break
+    case 'clear':
+      if (s.targets !== undefined && (!Array.isArray(s.targets) || !s.targets.every(isStr)))
+        errs.push(`${at}.targets must be an array of ids`)
+      break
+    case 'pause':
+      reqNum(s, 'ms', errs, at, 200, 10_000)
+      break
+    case 'check': {
+      optEnum(s, 'kind', ['understand', 'choice', 'short'] as const, errs, at)
+      if (s.kind === undefined) errs.push(`${at}.kind is required (understand|choice|short)`)
+      reqStr(s, 'prompt', errs, at, 400)
+      if (s.kind === 'choice') {
+        if (!Array.isArray(s.options) || s.options.length < 2 || s.options.length > 6 || !s.options.every(o => isStr(o) && o.length <= 200))
+          errs.push(`${at}.options must be 2..6 strings`)
+        else if (!isNum(s.answer) || !Number.isInteger(s.answer) || s.answer < 0 || s.answer >= s.options.length)
+          errs.push(`${at}.answer must be the index of the correct option`)
+      }
+      if (s.kind === 'short' && (!Array.isArray(s.accept) || s.accept.length === 0 || !s.accept.every(isStr)))
+        errs.push(`${at}.accept must be a non-empty array of accepted answers`)
+      optStr(s, 'explanation', errs, at, 600)
+      if (s.reteach !== undefined) {
+        if (ctx.depth > 0) errs.push(`${at}.reteach cannot be nested`)
+        else if (!Array.isArray(s.reteach) || s.reteach.length > 30) errs.push(`${at}.reteach must be an array of up to 30 steps`)
+        else {
+          // reteach runs from the board state at this point; validate with a copy of the ids.
+          const sub = { ids: new Set(ctx.ids), axes: new Set(ctx.axes), depth: 1 }
+          s.reteach.forEach((r, i) => validateStep(r, errs, `${at}.reteach[${i}]`, sub))
+        }
+      }
+      break
+    }
+    case 'manim_clip':
+      reqStr(s, 'url', errs, at, 1000)
+      if (isStr(s.url) && !/^https:\/\/[^\s]+$/i.test(s.url) && !s.url.startsWith('/')) errs.push(`${at}.url must be an https URL`)
+      optStr(s, 'caption', errs, at, 300)
+      optStr(s, 'jobId', errs, at, 64)
+      break
+    default:
+      errs.push(`${at}.type must be one of ${STEP_TYPES.join('|')}`)
+  }
+  const ok = errs.length === before
+  if (ok && isStr(s.id) && ['write', 'math', 'draw'].includes(s.type as string)) ctx.ids.add(s.id)
+  if (ok && s.type === 'clear') {
+    if (Array.isArray(s.targets)) for (const t of s.targets) { ctx.ids.delete(t as string); ctx.axes.delete(t as string) }
+    else { ctx.ids.clear(); ctx.axes.clear() }
+  }
+  return ok
+}
+
+/**
+ * Validate a script. `knownIds` lets a continuation (AI next steps) refer to
+ * elements already on the board.
+ */
+export function validateScript(input: unknown, opts: { knownIds?: Iterable<string>; knownAxes?: Iterable<string>; maxSteps?: number } = {}): ValidationResult {
+  const errors: string[] = []
+  const arr = isObj(input) && Array.isArray(input.steps) ? input.steps : input
+  if (!Array.isArray(arr)) return { ok: false, steps: [], errors: ['script must be an array of steps (or {"steps": [...]})'] }
+  const max = opts.maxSteps ?? 200
+  if (arr.length === 0) errors.push('script has no steps')
+  if (arr.length > max) errors.push(`script has more than ${max} steps`)
+  const ctx = { ids: new Set(opts.knownIds ?? []), axes: new Set(opts.knownAxes ?? []), depth: 0 }
+  const steps: Step[] = []
+  arr.slice(0, max).forEach((raw, i) => {
+    if (validateStep(raw, errors, `steps[${i}]`, ctx)) steps.push(raw as Step)
+  })
+  return { ok: errors.length === 0, steps, errors }
+}
+
+/** The ids and axes that exist on the board after playing `steps`. */
+export function boardIdsAfter(steps: Step[]): { ids: string[]; axes: string[] } {
+  const ids = new Set<string>()
+  const axes = new Set<string>()
+  for (const s of steps) {
+    if ((s.type === 'write' || s.type === 'math' || s.type === 'draw') && s.id) {
+      ids.add(s.id)
+      if (s.type === 'draw' && s.shape.kind === 'axes') axes.add(s.id)
+    }
+    if (s.type === 'clear') {
+      if (s.targets) for (const t of s.targets) { ids.delete(t); axes.delete(t) }
+      else { ids.clear(); axes.clear() }
+    }
+  }
+  return { ids: [...ids], axes: [...axes] }
+}
+
+/* ───────────── Safe math expressions (for function plots) ───────────── */
+
+type Tok = { t: 'num'; v: number } | { t: 'id'; v: string } | { t: 'op'; v: string }
+const FUNCS: Record<string, (a: number) => number> = {
+  sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan,
+  exp: Math.exp, ln: Math.log, log: Math.log10, sqrt: Math.sqrt, abs: Math.abs,
+  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh, floor: Math.floor, ceil: Math.ceil,
+}
+const CONSTS: Record<string, number> = { pi: Math.PI, e: Math.E }
+
+function tokenize(src: string): Tok[] {
+  const out: Tok[] = []
+  let i = 0
+  while (i < src.length) {
+    const c = src[i]
+    if (/\s/.test(c)) { i++; continue }
+    if (/[0-9.]/.test(c)) {
+      let j = i
+      while (j < src.length && /[0-9.]/.test(src[j])) j++
+      const v = Number(src.slice(i, j))
+      if (!Number.isFinite(v)) throw new Error(`bad number "${src.slice(i, j)}"`)
+      out.push({ t: 'num', v }); i = j; continue
+    }
+    if (/[a-zA-Z]/.test(c)) {
+      let j = i
+      while (j < src.length && /[a-zA-Z]/.test(src[j])) j++
+      out.push({ t: 'id', v: src.slice(i, j).toLowerCase() }); i = j; continue
+    }
+    if ('+-*/^()'.includes(c)) { out.push({ t: 'op', v: c }); i++; continue }
+    throw new Error(`unexpected character "${c}"`)
+  }
+  return out
+}
+
+type Node = (x: number) => number
+
+/** Compile an expression in x without eval. Supports + - * / ^, parentheses, implicit multiplication (2x), and common functions. */
+export function compileExpr(src: string): { ok: true; fn: Node } | { ok: false; error: string } {
+  try {
+    const toks = tokenize(src)
+    let p = 0
+    const peek = () => toks[p]
+    const isOp = (v: string) => peek()?.t === 'op' && peek()!.v === v
+    const startsPrimary = () => { const t = peek(); return !!t && (t.t === 'num' || t.t === 'id' || (t.t === 'op' && t.v === '(')) }
+
+    function expr(): Node {
+      let left = term()
+      while (isOp('+') || isOp('-')) {
+        const op = toks[p++].v
+        const l = left, r = term()
+        left = op === '+' ? x => l(x) + r(x) : x => l(x) - r(x)
+      }
+      return left
+    }
+    function term(): Node {
+      let left = unary()
+      for (;;) {
+        if (isOp('*') || isOp('/')) {
+          const op = toks[p++].v
+          const l = left, r = unary()
+          left = op === '*' ? x => l(x) * r(x) : x => l(x) / r(x)
+        } else if (startsPrimary()) {
+          const l = left, r = power()
+          left = x => l(x) * r(x)
+        } else break
+      }
+      return left
+    }
+    function unary(): Node {
+      if (isOp('-')) { p++; const u = unary(); return x => -u(x) }
+      if (isOp('+')) { p++; return unary() }
+      return power()
+    }
+    function power(): Node {
+      const base = primary()
+      if (isOp('^')) { p++; const e = unary(); return x => Math.pow(base(x), e(x)) }
+      return base
+    }
+    function primary(): Node {
+      const t = toks[p++]
+      if (!t) throw new Error('unexpected end of expression')
+      if (t.t === 'num') return () => t.v
+      if (t.t === 'op' && t.v === '(') {
+        const e = expr()
+        if (!isOp(')')) throw new Error('missing ")"')
+        p++
+        return e
+      }
+      if (t.t === 'id') {
+        if (t.v === 'x') return x => x
+        if (t.v in CONSTS) { const v = CONSTS[t.v]; return () => v }
+        if (t.v in FUNCS) {
+          const f = FUNCS[t.v]
+          if (!isOp('(')) throw new Error(`${t.v} needs parentheses`)
+          const arg = primary()
+          return x => f(arg(x))
+        }
+        throw new Error(`unknown name "${t.v}"`)
+      }
+      throw new Error(`unexpected "${t.v}"`)
+    }
+    const fn = expr()
+    if (p !== toks.length) throw new Error(`unexpected "${(toks[p] as Tok).v}"`)
+    return { ok: true, fn }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/* ───────────── Prompt helper ───────────── */
+
+/** Compact description of the schema for Gemini prompts. */
+export const SCRIPT_SCHEMA_PROMPT = `Board: ${BOARD_W} wide x ${BOARD_H} tall units, origin top-left, y grows downward. Keep everything inside x 24..${BOARD_W - 24}, y 24..${BOARD_H - 24}. Text y is the TOP of the text line.
+Return a JSON object {"steps": Step[]}. Each Step is one of:
+- {"type":"write","id"?,"text","x","y","size"?:"sm|md|lg|xl","color"?,"font"?:"serif|sans","align"?:"left|center|right","maxWidth"?,"say"?}
+- {"type":"math","id"?,"tex" (KaTeX LaTeX, no $ delimiters),"x","y","size"?,"color"?,"align"?,"say"?}
+- {"type":"draw","id"?,"shape",...,"color"?,"width"? (0.5..12, default 2.5),"dashed"?,"on"? (axes id: shape coordinates are then GRAPH units),"say"?}
+  shape is one of {"kind":"line","from":[x,y],"to":[x,y]} | {"kind":"arrow","from","to"} | {"kind":"circle","center":[x,y],"r"} | {"kind":"rect","x","y","w","h"} | {"kind":"polyline","points":[[x,y],...]} | {"kind":"point","at":[x,y],"label"?,"labelPos"?:"ne|nw|se|sw"} | {"kind":"axes","frame":{"x","y","w","h"},"xRange":[min,max],"yRange":[min,max],"xLabel"?,"yLabel"?,"xStep"?,"yStep"?} (axes MUST have an id) | {"kind":"function","expr":"x^2 - 1","domain"?:[a,b]} (function MUST set "on" to an axes id; expr uses x, + - * / ^, sin cos tan exp ln log sqrt abs pi e).
+- {"type":"highlight","target": id of an element on the board,"style"?:"box|underline","color"?,"say"?}
+- {"type":"transform","target": id of a write/math element,"tex"? or "text"? (new content),"x"?,"y"? (new position),"color"?,"say"?}  — morphs the element, e.g. one equation into the next.
+- {"type":"clear","targets"?: [ids]} — omit targets to wipe the board.
+- {"type":"pause","ms": 200..10000}
+- {"type":"check","kind":"understand"|"choice"|"short","prompt","options"? (choice: 2..6),"answer"? (choice: index),"accept"? (short: accepted answers),"explanation"?}
+- {"type":"manim_clip","url","caption"?} — only reuse URLs you were given; never invent one.
+Colors: ink (default), accent (deep green, for the key idea), clay (warm red, for contrast/mistakes), navy, amber, muted.
+Sizes: sm 22, md 30, lg 40, xl 54 units tall. Roughly 0.5 x size units per character of width.
+Ids: letters, digits, - or _, start with a letter, unique on the board.`

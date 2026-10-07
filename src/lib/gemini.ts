@@ -9,7 +9,17 @@ function isRetryable(err: unknown) {
   return /\b(503|429|500|504)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|overloaded|high demand|timed? ?out|aborted/i.test(msg)
 }
 
-async function generateJson(prompt: string) {
+export interface GenerateOptions {
+  /** Ask the model for strict JSON output (responseMimeType application/json). */
+  json?: boolean
+  systemInstruction?: string
+  /** Per-attempt timeout; defaults to 25s. */
+  timeoutMs?: number
+  temperature?: number
+}
+
+/** Calls Gemini with the primary model and falls back on overload/quota errors. Returns raw text. */
+export async function generateText(prompt: string, opts: GenerateOptions = {}): Promise<string> {
   let lastErr: unknown
   for (const model of GEMINI_MODELS) {
     try {
@@ -17,13 +27,16 @@ async function generateJson(prompt: string) {
         model,
         contents: prompt,
         config: {
-          httpOptions: { timeout: ATTEMPT_TIMEOUT_MS },
+          httpOptions: { timeout: opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS },
           thinkingConfig: model.startsWith('gemini-3')
             ? { thinkingLevel: ThinkingLevel.LOW }
             : { thinkingBudget: 128 },
+          ...(opts.json ? { responseMimeType: 'application/json' } : {}),
+          ...(opts.systemInstruction ? { systemInstruction: opts.systemInstruction } : {}),
+          ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         },
       })
-      return parseGeminiJson(response.text ?? '')
+      return response.text ?? ''
     } catch (err) {
       lastErr = err
       if (!isRetryable(err)) throw err
@@ -33,9 +46,18 @@ async function generateJson(prompt: string) {
   throw lastErr
 }
 
+async function generateJson(prompt: string, opts: GenerateOptions = {}) {
+  return parseGeminiJson(await generateText(prompt, opts))
+}
+
+/** Strict-JSON generation (responseMimeType application/json) with the same model fallback. */
+export async function generateStructuredJson(prompt: string, opts: Omit<GenerateOptions, 'json'> = {}): Promise<unknown> {
+  return generateJson(prompt, { ...opts, json: true })
+}
+
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 
-function parseGeminiJson(raw: string) {
+export function parseGeminiJson(raw: string) {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
   try {
     return JSON.parse(text)

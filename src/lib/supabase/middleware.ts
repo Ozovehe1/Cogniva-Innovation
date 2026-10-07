@@ -21,7 +21,14 @@ export async function updateSession(request: NextRequest) {
   )
   const { data: { user } } = await supabase.auth.getUser()
   const path = request.nextUrl.pathname
-  if (!user && !path.startsWith('/login') && !path.startsWith('/signup') && path !== '/') {
+  const isPublic =
+    path === '/' ||
+    path.startsWith('/login') ||
+    path.startsWith('/signup') ||
+    path === '/learn/demo' ||
+    // Called by the Modal render service; authenticated with X-Render-Token instead of a session.
+    path === '/api/manim/callback'
+  if (!user && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
   return supabaseResponse

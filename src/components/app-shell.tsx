@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ClipboardList, FolderKanban, LayoutGrid, LogOut, Plus, Users, X } from 'lucide-react'
+import { BookOpen, ClipboardList, FolderKanban, LayoutGrid, LogOut, Plus, Presentation, Users, X } from 'lucide-react'
 import { IdleTimeout } from './idle-timeout'
 import { Avatar, Logo, cx } from './ui'
 
@@ -16,6 +16,8 @@ const icons: Record<string, React.ComponentType<{ className?: string; strokeWidt
   list: FolderKanban,
   users: Users,
   plus: Plus,
+  learn: BookOpen,
+  lessons: Presentation,
 }
 
 /** Short labels for the mobile tab bar. */
