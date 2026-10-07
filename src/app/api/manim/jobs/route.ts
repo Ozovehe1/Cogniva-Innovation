@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { generateManimCode, type ManimNarration } from '@/lib/lesson-ai'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { loadMaterialSources, sectionExcerpts, styleNotesPrompt, type StyleNotes } from '@/lib/materials'
 import { dispatchRender, withUrl, type ManimJob } from '@/lib/manim'
 import { ensureNarration } from '@/lib/tts-server'
 
@@ -36,19 +37,25 @@ export async function POST(request: Request) {
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim().slice(0, 2000) : ''
   if (prompt.length < 10) return NextResponse.json({ error: 'Describe the animation in a sentence or two.' }, { status: 400 })
 
-  let lessonCtx: { title?: string; subject?: string } = {}
+  let lessonCtx: { title?: string; subject?: string; style?: StyleNotes | null; fromMaterials?: boolean } = {}
   let lessonId: string | null = null
   if (typeof body.lessonId === 'string') {
-    const { data: lesson } = await supabase.from('lessons').select('id, title, subject').eq('id', body.lessonId).eq('tutor_id', profile.id).maybeSingle()
+    const { data: lesson } = await supabase.from('lessons').select('id, title, subject, style_notes, draft_from_materials').eq('id', body.lessonId).eq('tutor_id', profile.id).maybeSingle()
     if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 })
     lessonId = (lesson as { id: string }).id
-    lessonCtx = { title: (lesson as { title: string }).title, subject: (lesson as { subject: string }).subject }
+    const l = lesson as { title: string; subject: string; style_notes: StyleNotes | null; draft_from_materials: boolean }
+    lessonCtx = { title: l.title, subject: l.subject, style: l.style_notes, fromMaterials: l.draft_from_materials }
   }
 
   const str = (v: unknown, n: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : undefined)
   const narrationText = str(body.narration, 1200)
-  const sourceText = str(body.sourceText, 6000)
-  const styleNotes = str(body.styleNotes, 2000)
+  // Without explicit ones, a lesson built from class materials supplies its own style notes and the most relevant excerpt.
+  let sourceText = str(body.sourceText, 6000)
+  const styleNotes = str(body.styleNotes, 2000) ?? (styleNotesPrompt(lessonCtx.style) || undefined)
+  if (!sourceText && lessonId && lessonCtx.fromMaterials) {
+    const sources = await loadMaterialSources(supabase, lessonId)
+    if (sources.length) sourceText = sectionExcerpts(sources, prompt, 4000) || undefined
+  }
 
   const { data: job, error } = await supabase
     .from('manim_jobs').insert({ lesson_id: lessonId, requested_by: profile.id, prompt, status: 'queued', narration: narrationText ?? null }).select('*').single()
