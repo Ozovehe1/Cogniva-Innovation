@@ -33,7 +33,11 @@ export async function updateSession(request: NextRequest) {
     // Whiteboard assets (the 3D hand model and its fallback sprite).
     path.startsWith('/whiteboard/') ||
     // Called by the Modal render service; authenticated with X-Render-Token instead of a session.
-    path === '/api/manim/callback'
+    path === '/api/manim/callback' ||
+    // Lesson drafting hand-over (x-draft-key HMAC) and the cron / pg_cron ticks (bearer secrets): they
+    // authenticate themselves. Without this they were redirected to /login, so unattended drafting stalled.
+    /^\/api\/lessons\/[^/]+\/draft\/run$/.test(path) ||
+    path === '/api/cron/lesson-drafts'
   if (!user && !isPublic) {
     const login = new URL('/login', request.url)
     // Pages (not API calls) come back to where they were after signing in.
