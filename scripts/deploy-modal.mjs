@@ -39,8 +39,8 @@ function modalChanged() {
 
 function main() {
   if (process.env.VERCEL_ENV !== 'production') { log(`skipped (VERCEL_ENV=${process.env.VERCEL_ENV ?? 'unset'})`); return }
-  if (!process.env.MODAL_TOKEN_ID || !process.env.MODAL_TOKEN_SECRET) { warn('MODAL_TOKEN_ID / MODAL_TOKEN_SECRET not set; skipping Modal deploy.'); return }
-  if (!process.env.RENDER_TOKEN) { warn('RENDER_TOKEN not set; skipping Modal deploy.'); return }
+  const missing = ['MODAL_TOKEN_ID', 'MODAL_TOKEN_SECRET', 'RENDER_TOKEN'].filter(k => !(process.env[k] ?? '').trim())
+  if (missing.length) { warn(`not set or empty in the build env: ${missing.join(', ')}; skipping Modal deploy.`); return }
 
   const c = modalChanged()
   if (!c.changed) { log(`skipped (${c.why})`); return }
