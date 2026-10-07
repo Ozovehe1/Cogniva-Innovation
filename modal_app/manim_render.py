@@ -19,6 +19,7 @@ Web endpoint: https://<modal-workspace>--geniusmap-manim-render.modal.run
 """
 
 import hmac
+import json
 import os
 import modal
 
@@ -49,9 +50,18 @@ render_image = (
     )
     .pip_install("manim==0.19.0", "httpx==0.27.2")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pen_export.py"), "/root/pen_export.py")
+    # The scene grammar runtime + the AI visual composer (plan -> spec -> validate -> render -> gate -> repair).
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_scene.py"), "/root/gm_scene.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_compose.py"), "/root/gm_compose.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_grammar.md"), "/root/gm_grammar.md")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_llm.py"), "/root/gm_llm.py")
 )
 
-web_image = modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]==0.115.6", "httpx==0.27.2")
+web_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install("fastapi[standard]==0.115.6", "httpx==0.27.2")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_llm.py"), "/root/gm_llm.py")
+)
 
 secret = modal.Secret.from_name(SECRET_NAME)
 
@@ -104,7 +114,7 @@ def guard_manim_code(code: str) -> tuple[str, list[str], list[str]]:
 WARM_JOB = "__warm__"
 
 
-def _callback(job_id: str, status: str, error: str | None = None) -> None:
+def _callback(job_id: str, status: str, error: str | None = None, extra: dict | None = None) -> None:
     if job_id == WARM_JOB:
         return  # a warm-up spawn (POST /warm): nothing to report
     import httpx
@@ -118,7 +128,7 @@ def _callback(job_id: str, status: str, error: str | None = None) -> None:
         try:
             r = httpx.post(
                 f"{app_url}/api/manim/callback",
-                json={"job_id": job_id, "status": status, "error": error},
+                json={"job_id": job_id, "status": status, "error": error, **(extra or {})},
                 headers={"X-Render-Token": token},
                 timeout=60,
             )
@@ -143,6 +153,7 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str, paths_uploa
     pen_path = os.path.join(workdir, "pen.json")
     with open(src, "w") as f:
         f.write(code)
+    # Grammar scenes (`from gm_scene import build`) import the runtime from /root.
         # Records the drawing animations for the hand (no effect on the video). Appended, so traceback line numbers
         # still match the scene's own code; the CLI renders only after the whole module has run.
         f.write("\n\nimport sys as _pen_sys\n_pen_sys.path.insert(0, '/root')\ntry:\n    import pen_export  # noqa: F401,E402\nexcept Exception as _pen_err:  # noqa: BLE001\n    print('pen_export unavailable:', _pen_err)\n")
@@ -161,7 +172,7 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str, paths_uploa
         scene_name,
     ]
     try:
-        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=540, env={**os.environ, "PEN_EXPORT_PATH": pen_path})
+        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=540, env={**os.environ, "PEN_EXPORT_PATH": pen_path, "PYTHONPATH": "/root"})
     except subprocess.TimeoutExpired:
         _callback(job_id, "failed", "Render timed out after 9 minutes.")
         return {"ok": False}
@@ -209,6 +220,63 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str, paths_uploa
     return {"ok": True, "bytes": len(data), "pen_bytes": pen_bytes}
 
 
+def _put(url: str | None, data: bytes, ctype: str) -> bool:
+    if not url:
+        return False
+    import httpx
+
+    try:
+        r = httpx.put(url, content=data, headers={"Content-Type": ctype, "x-upsert": "true", "cache-control": "max-age=31536000"}, timeout=120)
+        return r.status_code < 300
+    except Exception as exc:  # noqa: BLE001
+        print(f"upload failed: {exc}")
+        return False
+
+
+@app.function(image=render_image, secrets=[secret], timeout=900, cpu=2.0, memory=4096, max_containers=4)
+def compose(job_id: str, description: str, narration: dict | None, context: str, upload_url: str, paths_upload_url: str | None,
+            report_upload_url: str | None, vision: str = "auto", callback: bool = True) -> dict:
+    """AI visual composer at render time (never on the learner's path): plan -> spec -> validate -> render -> gate -> repair (max 2 renders)."""
+    import sys
+    import time
+
+    sys.path.insert(0, "/root")
+    import gm_compose
+
+    if callback:
+        _callback(job_id, "rendering")
+    t0 = time.time()
+    log: list = []
+    try:
+        r = gm_compose.compose_and_render(description, narration, context, vision=vision, log=log)
+    except Exception as exc:  # noqa: BLE001
+        r = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    report = {k: r.get(k) for k in ("ok", "plan", "spec", "issues", "critique", "timings", "attempt", "error")}
+    report["log"] = log[-40:]
+    report["wall_s"] = round(time.time() - t0, 1)
+    if r.get("gate"):
+        report["gate"] = {"duration": r["gate"].get("duration"), "checks": r["gate"].get("checks")}
+    _put(report_upload_url, json.dumps(report).encode(), "application/json")
+    if not r.get("ok"):
+        if callback:
+            _callback(job_id, "failed", (r.get("error") or "composition failed") + "\n" + "\n".join(log[-8:]), {"composed": True})
+        return report
+    with open(r["video"], "rb") as f:
+        video = f.read()
+    if not _put(upload_url, video, "video/mp4"):
+        if callback:
+            _callback(job_id, "failed", "Upload failed", {"composed": True})
+        report["ok"] = False
+        return report
+    if r.get("pen") and os.path.exists(r["pen"]):
+        with open(r["pen"], "rb") as f:
+            _put(paths_upload_url, f.read(), "application/json")
+    report["bytes"] = len(video)
+    if callback:
+        _callback(job_id, "done", None, {"composed": True, "code": gm_compose.scene_code(r["spec"]), "issues": r.get("issues"), "timings": r.get("timings")})
+    return report
+
+
 @app.function(image=web_image, secrets=[secret])
 @modal.asgi_app(label="geniusmap-manim-render")
 def web():
@@ -227,6 +295,67 @@ def web():
     @api.get("/health")
     def health():
         return {"ok": True}
+
+    def _auth(tok):
+        expected = os.environ.get("RENDER_TOKEN", "")
+        if not expected or not tok or not hmac.compare_digest(tok, expected):
+            raise HTTPException(status_code=401, detail="unauthorized")
+
+    class ComposeRequest(BaseModel):
+        job_id: str = Field(min_length=1, max_length=64)
+        description: str = Field(min_length=3, max_length=4000)
+        narration: dict | None = None
+        context: str = Field(default="", max_length=3000)
+        upload_url: str = Field(min_length=10, max_length=4000)
+        paths_upload_url: str | None = Field(default=None, max_length=4000)
+        report_upload_url: str | None = Field(default=None, max_length=4000)
+        vision: str = Field(default="auto", pattern=r"^(auto|always|never)$")
+        callback: bool = True
+
+    @api.post("/compose", status_code=202)
+    def compose_endpoint(req: ComposeRequest, x_render_token: str | None = Header(default=None)):
+        # Concept + narration in; the composer plans, writes and validates a grammar spec, renders, gates and repairs.
+        _auth(x_render_token)
+        for u in (req.upload_url, req.paths_upload_url, req.report_upload_url):
+            if u and not u.startswith("https://"):
+                raise HTTPException(status_code=400, detail="upload urls must be https")
+        call = compose.spawn(req.job_id, req.description, req.narration, req.context, req.upload_url, req.paths_upload_url, req.report_upload_url, req.vision, req.callback)
+        return {"accepted": True, "call_id": call.object_id}
+
+    @api.get("/result/{call_id}")
+    def result(call_id: str, x_render_token: str | None = Header(default=None)):
+        _auth(x_render_token)
+        try:
+            out = modal.FunctionCall.from_id(call_id).get(timeout=0)
+        except TimeoutError:
+            return {"done": False}
+        except Exception as exc:  # noqa: BLE001
+            return {"done": True, "error": str(exc)[:500]}
+        return {"done": True, "result": out}
+
+    class GeminiRequest(BaseModel):
+        prompt: str = Field(min_length=1, max_length=60000)
+        json_out: bool = True
+        temperature: float = 0.4
+        images: list[str] = Field(default_factory=list, max_length=4)  # base64 jpeg
+
+    @api.post("/gemini")
+    def gemini_proxy(req: GeminiRequest, x_render_token: str | None = Header(default=None)):
+        # Token-protected access to the composer's Gemini client (offline evaluation of prompts without the key leaving Modal).
+        _auth(x_render_token)
+        import base64 as _b64
+        import sys as _sys
+        _sys.path.insert(0, "/root")
+        try:
+            from gm_llm import gemini as _gemini_call
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"client unavailable: {exc}")
+        log: list = []
+        try:
+            text = _gemini_call(req.prompt, json_out=req.json_out, images=[_b64.b64decode(i) for i in req.images], temperature=req.temperature, log=log)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=str(exc)[:300])
+        return {"text": text, "log": log}
 
     @api.post("/warm", status_code=202)
     def warm(x_render_token: str | None = Header(default=None)):
