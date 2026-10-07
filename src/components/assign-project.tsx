@@ -1,6 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import type { Project } from '@/types'
+import { ChevronDown, Plus } from 'lucide-react'
+import { Spinner, buttonClass, cx, inputClass } from './ui'
 
 export function AssignProject({ studentId }: { studentId: string }) {
   const [projects, setProjects] = useState<Project[]>([])
@@ -37,52 +39,44 @@ export function AssignProject({ studentId }: { studentId: string }) {
   const available = projects.filter(p => !done.includes(p.id))
 
   return (
-    <div>
+    <div className={cx(open && 'w-full')}>
       {!open ? (
-        <button
-          onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition"
-          style={{ background: 'rgba(5,150,105,0.15)', color: '#34D399', border: '1px solid rgba(5,150,105,0.25)' }}
-        >
-          + Assign Project
+        <button onClick={() => setOpen(true)} className={buttonClass('secondary', 'md')}>
+          <Plus className="h-4 w-4" strokeWidth={2} />
+          Assign project
         </button>
       ) : (
-        <div className="p-4 rounded-xl space-y-3" style={{ background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }}>
-          <p className="text-white text-sm font-medium">Select a project to assign</p>
+        <div className="w-full space-y-3 rounded-[14px] border border-line bg-surface p-4 shadow-[var(--shadow-card)] md:p-5">
+          <label htmlFor="assign-select" className="block text-[15px] font-semibold text-ink">Assign a project</label>
           {available.length === 0 ? (
-            <p className="text-zinc-500 text-xs">No unassigned projects available. Create one first.</p>
+            <p className="text-sm text-muted">No unassigned projects available. Create one first.</p>
           ) : (
-            <select
-              value={selected}
-              onChange={e => setSelected(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-              style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.1)', colorScheme: 'dark' }}
-            >
-              <option value="">Choose a project...</option>
-              {available.map(p => (
-                <option key={p.id} value={p.id}>{p.title} ({p.difficulty})</option>
-              ))}
-            </select>
+            <div className="relative">
+              <select
+                id="assign-select"
+                value={selected}
+                onChange={e => setSelected(e.target.value)}
+                className={cx(inputClass, 'appearance-none pr-10')}
+              >
+                <option value="">Choose a project…</option>
+                {available.map(p => (
+                  <option key={p.id} value={p.id}>{p.title} ({p.difficulty})</option>
+                ))}
+              </select>
+              <ChevronDown aria-hidden className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" strokeWidth={1.75} />
+            </div>
           )}
-          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {error && <p role="alert" className="text-sm text-danger">{error}</p>}
           <div className="flex gap-2">
-            <button
-              onClick={assign}
-              disabled={!selected || loading}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40 transition"
-              style={{ background: '#059669' }}
-            >
-              {loading ? 'Assigning...' : 'Assign'}
+            <button onClick={assign} disabled={!selected || loading} className={buttonClass('primary', 'md')}>
+              {loading ? <><Spinner /> Assigning…</> : 'Assign'}
             </button>
-            <button
-              onClick={() => { setOpen(false); setError('') }}
-              className="px-4 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition"
-            >
+            <button onClick={() => { setOpen(false); setError('') }} className={buttonClass('ghost', 'md')}>
               Cancel
             </button>
           </div>
           {done.length > 0 && (
-            <p className="text-emerald-400 text-xs">✓ {done.length} project{done.length > 1 ? 's' : ''} assigned this session</p>
+            <p className="tnum text-[13px] text-accent">{done.length} project{done.length > 1 ? 's' : ''} assigned this session</p>
           )}
         </div>
       )}

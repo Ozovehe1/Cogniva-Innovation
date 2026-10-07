@@ -2,34 +2,12 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { AssignProject } from '@/components/assign-project'
 import { TutorProjectActions } from '@/components/tutor-project-actions'
+import Link from 'next/link'
+import { ArrowLeft } from 'lucide-react'
+import { intelligenceLabel } from '@/components/intelligence'
+import { Alert, Avatar, Badge, Card, DifficultyBadge, Eyebrow, ProgressBar, RadarChart, ScoreBars, StatusBadge, cx, gradeTone } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
-
-const intelligenceMeta: Record<string, { label: string; emoji: string; hex: string }> = {
-  linguistic: { label: 'Linguistic', emoji: '📝', hex: '#3B82F6' },
-  logicalMathematical: { label: 'Logical-Math', emoji: '🔢', hex: '#22C55E' },
-  spatial: { label: 'Spatial', emoji: '🎨', hex: '#EAB308' },
-  musical: { label: 'Musical', emoji: '🎵', hex: '#EC4899' },
-  bodilyKinesthetic: { label: 'Kinesthetic', emoji: '⚡', hex: '#F97316' },
-  interpersonal: { label: 'Interpersonal', emoji: '🤝', hex: '#14B8A6' },
-  intrapersonal: { label: 'Intrapersonal', emoji: '🧘', hex: '#8B5CF6' },
-  naturalist: { label: 'Naturalist', emoji: '🌿', hex: '#10B981' },
-}
-
-const levelConfig: Record<string, { color: string; bg: string }> = {
-  Seed: { color: '#71717A', bg: 'rgba(113,113,122,0.1)' },
-  Sprout: { color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
-  Explorer: { color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
-  Master: { color: '#8B5CF6', bg: 'rgba(139,92,246,0.1)' },
-  Legend: { color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
-}
-
-const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-  assigned:       { label: 'Assigned',     color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
-  in_progress:    { label: 'In Progress',  color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
-  pending_review: { label: 'Needs Review', color: '#A78BFA', bg: 'rgba(124,58,237,0.15)' },
-  completed:      { label: 'Completed',    color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
-}
 
 export default async function StudentProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -65,189 +43,165 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
     ?.filter(a => a.status === 'pending_review') ?? []
 
   const level = growthData?.level || 'Seed'
-  const lc = levelConfig[level] || levelConfig['Seed']
   const initials = studentData.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
 
-  return (
-    <div className="max-w-5xl space-y-6">
-      {/* Header */}
-      <div className="flex items-start gap-4 flex-wrap">
-        <div className="w-14 h-14 rounded-2xl bg-emerald-900 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
-          {initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold text-white">{studentData.full_name}</h1>
-            <span className="text-sm px-3 py-1 rounded-full font-medium flex-shrink-0" style={{ background: lc.bg, color: lc.color }}>{level}</span>
-          </div>
-          <p className="text-zinc-500 text-sm mt-0.5">{studentData.email}</p>
-        </div>
-      </div>
+  const firstName = studentData.full_name.split(' ')[0]
+  const sublevel = growthData?.sublevel || 1
+  const avg = growthData?.average_score || 0
+  const assignmentList = (assignments as Array<{
+    id: string;
+    status: string;
+    project_id: string;
+    score?: number | null;
+    feedback?: string | null;
+    project?: { title?: string; subject?: string; difficulty?: string }
+  }> | null) ?? []
 
-      {/* Pending review alert */}
-      {pendingReviews.length > 0 && (
-        <div className="p-4 rounded-2xl" style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.25)' }}>
-          <p className="text-sm font-semibold mb-1" style={{ color: '#A78BFA' }}>
-            {pendingReviews.length} project{pendingReviews.length > 1 ? 's' : ''} awaiting your review
-          </p>
-          <p className="text-xs text-zinc-500">Scroll to Assigned Projects below to approve or return them.</p>
+  return (
+    <div className="space-y-6 md:space-y-8">
+      <Link href="/tutor/students" className="-ml-1 inline-flex h-9 items-center gap-1.5 rounded-md px-1 text-[13px] font-medium text-muted transition-colors hover:text-ink">
+        <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
+        All students
+      </Link>
+
+      {/* Header */}
+      <header className="flex items-center gap-4">
+        <Avatar initials={initials} size="lg" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="font-display text-[28px] leading-tight text-ink md:text-[36px]">{studentData.full_name}</h1>
+            <Badge className="border-accent-line bg-accent-soft text-accent">{level}</Badge>
+          </div>
+          <p className="mt-0.5 truncate text-sm text-muted">{studentData.email}</p>
         </div>
+      </header>
+
+      {pendingReviews.length > 0 && (
+        <Alert tone="warning" title={`${pendingReviews.length} project${pendingReviews.length > 1 ? 's' : ''} awaiting your review`}>
+          Approve and grade, or return with feedback, in Assigned projects below.
+        </Alert>
       )}
 
       {!intelData ? (
-        <div className="p-5 rounded-2xl" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
-          <p className="text-sm font-medium" style={{ color: '#F59E0B' }}>Assessment Pending</p>
-          <p className="text-xs text-zinc-500 mt-1">This student hasn&apos;t completed their intelligence assessment yet.</p>
-        </div>
+        <Alert tone="info" title="Assessment pending">
+          {firstName} hasn&apos;t completed the intelligence assessment yet.
+        </Alert>
       ) : (
         <>
-          {/* Genius Statement */}
-          <div className="relative p-5 rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(5,150,105,0.15) 0%, rgba(4,120,87,0.08) 100%)', border: '1px solid rgba(5,150,105,0.2)' }}>
-            <p className="text-xs font-medium mb-1 uppercase tracking-wider" style={{ color: '#34D399' }}>
-              {studentData.full_name.split(' ')[0]}&apos;s Genius Profile
-            </p>
-            <p className="text-white font-semibold text-lg leading-snug">
+          <figure className="rounded-[14px] border border-accent-line bg-accent-soft p-5 md:p-7">
+            <Eyebrow className="mb-3 text-accent">{firstName}&apos;s profile</Eyebrow>
+            <blockquote className="font-display text-[21px] leading-snug text-ink md:text-[26px]">
               {intelData.genius_statement
-                .replace(/^You are\b/i, `${studentData.full_name.split(' ')[0]} is`)
-                .replace(/^You\b/i, studentData.full_name.split(' ')[0])}
-            </p>
-          </div>
+                .replace(/^You are\b/i, `${firstName} is`)
+                .replace(/^You\b/i, firstName)}
+            </blockquote>
+          </figure>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Intelligence Profile */}
-            <div className="lg:col-span-2 p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-              <h2 className="text-white font-semibold mb-5">Intelligence Profile</h2>
-              <div className="space-y-3">
-                {Object.entries(intelData.intelligence_scores).sort((a, b) => b[1] - a[1]).map(([key, val]) => {
-                  const meta = intelligenceMeta[key]
-                  const pct = val * 10
-                  return (
-                    <div key={key}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm">{meta?.emoji}</span>
-                          <span className="text-xs text-zinc-400">{meta?.label}</span>
-                        </div>
-                        <span className="text-xs font-medium" style={{ color: meta?.hex }}>{val}/10</span>
-                      </div>
-                      <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                        <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: meta?.hex }} />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Right column */}
-            <div className="space-y-4">
-              {/* Progress */}
-              <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <h3 className="text-white font-semibold text-sm mb-3">Progress</h3>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-bold" style={{ color: lc.color }}>{level}</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: lc.bg, color: lc.color }}>
-                    {growthData?.sublevel || 1}/9
-                  </span>
-                </div>
-                <div className="h-2 rounded-full mb-1" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                  <div className="h-full rounded-full" style={{ width: `${((growthData?.sublevel || 1) / 9) * 100}%`, background: lc.color }} />
-                </div>
-                <p className="text-xs text-zinc-600 mb-4">sublevel {growthData?.sublevel || 1} of 9 in {level}</p>
-
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <div className="p-2.5 rounded-lg text-center" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.15)' }}>
-                    <p className="text-lg font-bold" style={{ color: '#22C55E' }}>{growthData?.projects_completed || 0}</p>
-                    <p className="text-xs text-zinc-600 mt-0.5">Approved</p>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <Card padded={false} className="lg:col-span-2">
+              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                <div className="border-b border-line p-5 md:border-b-0 md:border-r md:p-6">
+                  <h2 className="mb-2 text-[15px] font-semibold text-ink">Intelligence profile</h2>
+                  <div className="mx-auto max-w-[300px]">
+                    <RadarChart scores={intelData.intelligence_scores} />
                   </div>
-                  <div className="p-2.5 rounded-lg text-center" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <p className="text-lg font-bold" style={{ color: (growthData?.average_score || 0) >= 8 ? '#22C55E' : (growthData?.average_score || 0) >= 6 ? '#F59E0B' : '#71717A' }}>
+                </div>
+                <div className="p-5 md:p-6">
+                  <ScoreBars scores={intelData.intelligence_scores} highlight={intelData.dominant_intelligence} compact />
+                </div>
+              </div>
+            </Card>
+
+            <div className="space-y-6">
+              <Card>
+                <h3 className="text-[15px] font-semibold text-ink">Progress</h3>
+                <div className="mb-2 mt-4 flex items-baseline justify-between">
+                  <span className="font-display text-[24px] leading-none text-ink">{level}</span>
+                  <span className="tnum text-[13px] text-muted">Sublevel {sublevel} of 9</span>
+                </div>
+                <ProgressBar value={sublevel} max={9} label="Sublevel progress" />
+
+                <dl className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-[10px] border border-line bg-[#FBFAF7] p-3">
+                    <dt className="text-[12px] text-muted">Approved</dt>
+                    <dd className="tnum mt-1 font-display text-[24px] leading-none text-ink">{growthData?.projects_completed || 0}</dd>
+                  </div>
+                  <div className="rounded-[10px] border border-line bg-[#FBFAF7] p-3">
+                    <dt className="text-[12px] text-muted">Avg grade</dt>
+                    <dd className={cx('tnum mt-1 font-display text-[24px] leading-none', avg ? gradeTone(avg) : 'text-faint')}>
                       {growthData?.average_score ? growthData.average_score.toFixed(1) : '—'}
-                    </p>
-                    <p className="text-xs text-zinc-600 mt-0.5">Avg Grade</p>
+                    </dd>
                   </div>
-                </div>
+                </dl>
 
-                <div className="pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <p className="text-xs text-zinc-500">Dominant Intelligence</p>
-                  <p className="text-sm font-medium text-white mt-0.5">
-                    {intelligenceMeta[intelData.dominant_intelligence]?.emoji} {intelligenceMeta[intelData.dominant_intelligence]?.label}
-                  </p>
+                <div className="mt-5 border-t border-line pt-4">
+                  <p className="text-[12px] text-muted">Strongest intelligence</p>
+                  <p className="mt-0.5 text-[15px] font-medium text-ink">{intelligenceLabel(intelData.dominant_intelligence)}</p>
                 </div>
-              </div>
+              </Card>
 
-              {/* Study Tips */}
               {intelData.study_tips && intelData.study_tips.length > 0 && (
-                <div className="p-5 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <h3 className="text-white font-semibold text-sm mb-3">Study Tips</h3>
-                  <ul className="space-y-2">
+                <Card>
+                  <h3 className="mb-3 text-[15px] font-semibold text-ink">Study tips</h3>
+                  <ol className="space-y-2.5">
                     {intelData.study_tips.slice(0, 3).map((tip, i) => (
-                      <li key={i} className="flex gap-2 text-xs text-zinc-400">
-                        <span className="text-emerald-500 flex-shrink-0">✓</span>
+                      <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-ink-2">
+                        <span className="tnum font-display text-accent">{i + 1}.</span>
                         <span>{tip}</span>
                       </li>
                     ))}
-                  </ul>
-                </div>
+                  </ol>
+                </Card>
               )}
             </div>
           </div>
         </>
       )}
 
-      {/* Assigned Projects */}
-      <div className="p-6 rounded-2xl" style={{ background: '#111113', border: '1px solid rgba(255,255,255,0.08)' }}>
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h2 className="text-white font-semibold">
-            Assigned Projects
-            <span className="ml-2 text-xs text-zinc-600 font-normal">({(assignments as unknown[])?.length || 0})</span>
+      {/* Assigned projects */}
+      <section>
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <h2 className="text-[15px] font-semibold text-ink">
+            Assigned projects <span className="tnum font-normal text-muted">({assignmentList.length})</span>
           </h2>
           <AssignProject studentId={id} />
         </div>
-        {!assignments || (assignments as unknown[]).length === 0 ? (
-          <p className="text-zinc-600 text-sm">No projects assigned yet. Use the button above to assign one.</p>
+        {assignmentList.length === 0 ? (
+          <Card>
+            <p className="text-sm text-muted">No projects assigned yet. Use Assign project to give {firstName} one.</p>
+          </Card>
         ) : (
-          <div className="space-y-2">
-            {(assignments as Array<{
-              id: string;
-              status: string;
-              project_id: string;
-              score?: number | null;
-              feedback?: string | null;
-              project?: { title?: string; subject?: string; difficulty?: string }
-            }>).map(a => {
-              const sc = statusConfig[a.status] || statusConfig['assigned']
-              const isPending = a.status === 'pending_review'
-              return (
-                <div key={a.id} className="py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium">{a.project?.title}</p>
-                      <p className="text-zinc-600 text-xs mt-0.5">{a.project?.subject} · {a.project?.difficulty}</p>
+          <Card padded={false} className="overflow-hidden">
+            <ul className="divide-y divide-line">
+              {assignmentList.map(a => {
+                const isPending = a.status === 'pending_review'
+                return (
+                  <li key={a.id} className={cx('px-5 py-4 md:px-6', isPending && 'bg-[#FFFBF5]')}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[15px] font-medium text-ink">{a.project?.title}</p>
+                        <p className="mt-0.5 text-[13px] text-muted">{a.project?.subject}</p>
+                      </div>
+                      <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+                        {a.status === 'completed' && a.score != null && (
+                          <span className={cx('tnum text-sm font-semibold', gradeTone(a.score))}>{a.score}/10</span>
+                        )}
+                        <DifficultyBadge difficulty={a.project?.difficulty} />
+                        <StatusBadge status={a.status} label={isPending ? 'Needs review' : a.status === 'completed' ? 'Completed' : undefined} />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
-                      {a.status === 'completed' && a.score != null && (
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{
-                          background: a.score >= 8 ? 'rgba(34,197,94,0.1)' : a.score >= 6 ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-                          color: a.score >= 8 ? '#22C55E' : a.score >= 6 ? '#F59E0B' : '#EF4444',
-                        }}>
-                          {a.score}/10
-                        </span>
-                      )}
-                      <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: sc.bg, color: sc.color }}>
-                        {sc.label}
-                      </span>
-                      {isPending && (
+                    {isPending && (
+                      <div className="mt-3">
                         <TutorProjectActions projectId={a.project_id} studentId={id} />
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </Card>
         )}
-      </div>
+      </section>
     </div>
   )
 }

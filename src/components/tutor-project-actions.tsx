@@ -1,5 +1,7 @@
 'use client'
 import { useState } from 'react'
+import { Check, CornerUpLeft } from 'lucide-react'
+import { Spinner, buttonClass, cx, inputClass } from './ui'
 
 export function TutorProjectActions({ projectId, studentId }: { projectId: string; studentId: string }) {
   const [loading, setLoading] = useState<'approve' | 'return' | null>(null)
@@ -44,82 +46,76 @@ export function TutorProjectActions({ projectId, studentId }: { projectId: strin
   }
 
   if (done === 'approved') return (
-    <span className="text-xs text-emerald-400 font-medium">✓ Approved · {score}/10</span>
+    <p role="status" className="inline-flex items-center gap-1.5 text-[13px] font-medium text-accent">
+      <Check className="h-4 w-4" strokeWidth={2.25} /> Approved · <span className="tnum">{score}/10</span>
+    </p>
   )
   if (done === 'returned') return (
-    <span className="text-xs font-medium" style={{ color: '#F59E0B' }}>↩ Returned</span>
+    <p role="status" className="inline-flex items-center gap-1.5 text-[13px] font-medium text-amber">
+      <CornerUpLeft className="h-4 w-4" strokeWidth={2} /> Returned to student
+    </p>
   )
 
   if (mode === 'grading') {
     return (
-      <div className="mt-3 p-3 rounded-xl space-y-3" style={{ background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.15)' }}>
-        <div>
-          <p className="text-xs text-zinc-500 mb-2">Grade (1–10)</p>
-          <div className="flex gap-1 flex-wrap">
+      <div className="space-y-4 rounded-[12px] border border-line bg-surface p-4">
+        <fieldset>
+          <legend className="mb-2 text-[13px] font-medium text-ink-2">Grade (1–10)</legend>
+          <div className="grid grid-cols-5 gap-1.5 sm:flex sm:flex-wrap">
             {[1,2,3,4,5,6,7,8,9,10].map(n => (
-              <button key={n} onClick={() => setScore(n)}
-                className="w-8 h-8 rounded-lg text-xs font-semibold transition"
-                style={{
-                  background: score === n ? 'rgba(34,197,94,0.2)' : '#18181B',
-                  color: score === n ? '#22C55E' : '#71717A',
-                  border: `1px solid ${score === n ? 'rgba(34,197,94,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                }}>
+              <button key={n} type="button" onClick={() => setScore(n)} aria-pressed={score === n}
+                className={cx(
+                  'tnum h-11 rounded-[8px] border text-sm font-medium transition-colors duration-150 sm:h-9 sm:w-9',
+                  score === n ? 'border-accent bg-accent text-white' : 'border-line bg-surface text-ink-2 hover:border-line-strong',
+                )}>
                 {n}
               </button>
             ))}
           </div>
-          <p className="text-xs text-zinc-600 mt-1.5">
+          <p className="mt-2 text-[13px] text-muted">
             {score <= 3 ? 'Needs improvement' : score <= 6 ? 'Satisfactory' : score <= 8 ? 'Good work' : 'Excellent'}
           </p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={approve} disabled={loading !== null}
-            className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition disabled:opacity-50"
-            style={{ background: 'rgba(34,197,94,0.2)', color: '#22C55E', border: '1px solid rgba(34,197,94,0.3)' }}>
-            {loading === 'approve' ? '...' : `Approve · ${score}/10`}
+        </fieldset>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button onClick={approve} disabled={loading !== null} className={buttonClass('primary', 'md')}>
+            {loading === 'approve' ? <><Spinner /> Approving…</> : <>Approve · <span className="tnum">{score}/10</span></>}
           </button>
-          <button onClick={() => setMode('idle')} className="px-3 py-1.5 rounded-lg text-xs text-zinc-600 hover:text-zinc-400 transition">
+          <button onClick={() => setMode('idle')} className={buttonClass('ghost', 'md')}>
             Cancel
           </button>
         </div>
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       </div>
     )
   }
 
   if (mode === 'returning') {
     return (
-      <div className="mt-3 space-y-2">
-        <input autoFocus type="text" value={feedback} onChange={e => setFeedback(e.target.value)}
+      <div className="space-y-3 rounded-[12px] border border-line bg-surface p-4">
+        <label htmlFor={`fb-${projectId}`} className="block text-[13px] font-medium text-ink-2">Feedback for the student <span className="font-normal text-faint">· optional</span></label>
+        <input id={`fb-${projectId}`} autoFocus type="text" value={feedback} onChange={e => setFeedback(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && sendBack()}
-          placeholder="Feedback for student (optional)..."
-          className="w-full px-3 py-2 rounded-lg text-xs text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-amber-500/40"
-          style={{ background: '#18181B', border: '1px solid rgba(255,255,255,0.1)' }} />
-        <div className="flex gap-2">
-          <button onClick={sendBack} disabled={loading === 'return'}
-            className="flex-1 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-            style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.25)' }}>
-            {loading === 'return' ? '...' : 'Send Back'}
+          placeholder="What should they improve?"
+          className={inputClass} />
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button onClick={sendBack} disabled={loading === 'return'} className={buttonClass('primary', 'md')}>
+            {loading === 'return' ? <><Spinner /> Sending…</> : 'Send back'}
           </button>
-          <button onClick={() => setMode('idle')} className="px-3 py-1.5 rounded-lg text-xs text-zinc-600 hover:text-zinc-400 transition">
+          <button onClick={() => setMode('idle')} className={buttonClass('ghost', 'md')}>
             Cancel
           </button>
         </div>
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       </div>
     )
   }
 
   return (
-    <div className="flex gap-2">
-      <button onClick={() => setMode('grading')}
-        className="px-3 py-1 rounded-lg text-xs font-medium transition"
-        style={{ background: 'rgba(34,197,94,0.15)', color: '#22C55E', border: '1px solid rgba(34,197,94,0.25)' }}>
-        Approve + Grade
+    <div className="flex flex-wrap gap-2">
+      <button onClick={() => setMode('grading')} className={buttonClass('primary', 'sm')}>
+        Approve and grade
       </button>
-      <button onClick={() => setMode('returning')}
-        className="px-3 py-1 rounded-lg text-xs font-medium transition"
-        style={{ background: 'rgba(245,158,11,0.1)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.2)' }}>
+      <button onClick={() => setMode('returning')} className={buttonClass('secondary', 'sm')}>
         Return
       </button>
     </div>
