@@ -1,10 +1,13 @@
 /**
  * Voice narration for the whiteboard player.
  *
- * The player only talks to the `Narrator` interface, so a premium TTS provider
- * (streamed audio from a server route) can replace the browser engine later by
- * implementing the same five methods.
+ * The player only talks to the `Narrator` interface. The default narrator plays
+ * natural Kokoro audio (pre-generated and cached per line, or synthesized on
+ * demand) and falls back to the device's speech engine when no audio is
+ * available. Audio comes with word timings, which drive the animation clock.
  */
+import { MAX_TTS_CHARS, NARRATION_VOICE, audioPaths, audioPublicBase, narrationKey, normalizeSpoken, type NarrationClip, type NarrationTiming } from '@/lib/narration'
+
 export interface Narrator {
   /** False when this device cannot speak at all. */
   readonly supported: boolean
@@ -16,6 +19,14 @@ export interface Narrator {
   resume(): void
   /** Stop and drop the current utterance (its onEnd still fires). */
   cancel(): void
+  /** Get the real audio for `text` ready; resolves its word timings, or null when only the device voice is available. */
+  prepare?(text: string, timeoutMs?: number): Promise<NarrationTiming | null>
+  /** Start fetching audio for upcoming lines. */
+  preload?(texts: string[]): void
+  /** ms into the line being spoken, or -1 when unknown (device voice). */
+  position?(): number
+  /** What spoke the last line: natural audio or the device voice. */
+  readonly source?: 'audio' | 'device' | null
 }
 
 const PREFERRED_VOICES = [
@@ -149,13 +160,201 @@ class WebSpeechNarrator implements Narrator {
   }
 }
 
+/* ───────────── Natural voice (Kokoro audio) ───────────── */
+
+/** Lesson the current page plays, so on-demand synthesis can be attributed (and allowed) server-side. */
+let currentLessonId: string | null = null
+export function setNarrationLesson(id: string | null) { currentLessonId = id }
+
+const SILENT_MP3 = 'data:audio/mpeg;base64,SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYxLjcuMTAzAAAAAAAAAAAAAAD/84TAAAAAAAAAAAAASW5mbwAAAA8AAAAHAAADYABVVVVVVVVVVVVVVVVVVXFxcXFxcXFxcXFxcXFxjo6Ojo6Ojo6Ojo6Ojo6qqqqqqqqqqqqqqqqqqqrHx8fHx8fHx8fHx8fHx+Pj4+Pj4+Pj4+Pj4+Pj//////////////////8AAAAATGF2YzYxLjE5AAAAAAAAAAAAAAAAJAQgAAAAAAAAA2CZUOnQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/80TEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TEUwAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TEpgAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TErAAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVMQU1FMy7/80TErAAAA0gAAAAAMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/80TErAAAA0gAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/80TErAAAA0gAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU='
+
+/**
+ * Plays cached Kokoro narration from public storage (content-addressed by the
+ * line's text), synthesizes missing lines through /api/tts (signed-in users),
+ * and falls back to the device voice. One <audio> element is reused so mobile
+ * browsers keep it unlocked after the first tap.
+ */
+class AudioNarrator implements Narrator {
+  readonly supported = true
+  private device: WebSpeechNarrator
+  private audio: HTMLAudioElement | null = null
+  private clips = new Map<string, Promise<NarrationClip | null>>()
+  private ready = new Map<string, NarrationClip | null>()
+  private queue: { text: string; resolve: (c: NarrationClip | null) => void }[] = []
+  private flushTimer: ReturnType<typeof setTimeout> | null = null
+  private onEnd: (() => void) | null = null
+  private mode: 'audio' | 'device' | null = null
+  private token = 0
+  /** On-demand synthesis refused (signed out or rate limited): stop asking for a while. */
+  private demandBlockedUntil = 0
+  source: 'audio' | 'device' | null = null
+
+  constructor() {
+    this.device = new WebSpeechNarrator()
+    if (typeof window !== 'undefined') {
+      this.audio = new Audio()
+      this.audio.preload = 'auto'
+    }
+  }
+
+  unlock() {
+    this.device.unlock()
+    const a = this.audio
+    if (!a) return
+    try {
+      a.src = SILENT_MP3
+      const p = a.play()
+      if (p) p.then(() => a.pause()).catch(() => {})
+    } catch { /* ignore */ }
+  }
+
+  private base() { return audioPublicBase() }
+
+  /** Cached clip for `text` (storage lookup, then on-demand synthesis). */
+  private resolve(text: string): Promise<NarrationClip | null> {
+    const t = normalizeSpoken(text).slice(0, MAX_TTS_CHARS)
+    let p = this.clips.get(t)
+    if (!p) {
+      p = this.lookup(t).then(c => c ?? this.demand(t)).catch(() => null)
+      p.then(c => { this.ready.set(t, c); if (c) void fetch(c.url, { cache: 'force-cache' }).catch(() => {}) })
+      this.clips.set(t, p)
+    }
+    return p
+  }
+
+  private async lookup(text: string): Promise<NarrationClip | null> {
+    const base = this.base()
+    if (!base.startsWith('http')) return null
+    const key = await narrationKey(text)
+    const paths = audioPaths(key)
+    const res = await fetch(`${base}/${paths.json}`, { cache: 'force-cache' }).catch(() => null)
+    if (!res || !res.ok) return null
+    const j = await res.json().catch(() => null) as { ms?: number; words?: NarrationTiming['words'] } | null
+    if (!j || typeof j.ms !== 'number' || !Array.isArray(j.words)) return null
+    return { key, url: `${base}/${paths.mp3}`, ms: j.ms, words: j.words }
+  }
+
+  private demand(text: string): Promise<NarrationClip | null> {
+    if (Date.now() < this.demandBlockedUntil) return Promise.resolve(null)
+    return new Promise(resolve => {
+      this.queue.push({ text, resolve })
+      if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(), 30)
+    })
+  }
+
+  /** Send queued lines to /api/tts: the first line alone (so it plays soon), the rest together. */
+  private flush() {
+    this.flushTimer = null
+    const all = this.queue.splice(0)
+    if (!all.length) return
+    const batches = [all.slice(0, 1), ...chunk(all.slice(1), 6)].filter(b => b.length)
+    let chain = Promise.resolve()
+    for (const b of batches) {
+      chain = chain.then(async () => {
+        try {
+          const res = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ texts: b.map(x => x.text), lessonId: currentLessonId }),
+          })
+          if (res.status === 401 || res.status === 403 || res.status === 429) this.demandBlockedUntil = Date.now() + (res.status === 429 ? 60_000 : 10 * 60_000)
+          const j = res.ok ? await res.json().catch(() => null) as { clips?: (NarrationClip | null)[] } | null : null
+          b.forEach((x, i) => x.resolve(j?.clips?.[i] ?? null))
+        } catch {
+          b.forEach(x => x.resolve(null))
+        }
+      })
+    }
+  }
+
+  preload(texts: string[]) {
+    for (const t of texts) if (t.trim()) void this.resolve(t)
+  }
+
+  async prepare(text: string, timeoutMs = 5000): Promise<NarrationTiming | null> {
+    if (!text.trim()) return null
+    const t = normalizeSpoken(text).slice(0, MAX_TTS_CHARS)
+    if (this.ready.has(t)) { const c = this.ready.get(t); return c ? { ms: c.ms, words: c.words } : null }
+    const c = await Promise.race([this.resolve(t), new Promise<null>(r => setTimeout(() => r(null), timeoutMs))])
+    return c ? { ms: c.ms, words: c.words } : null
+  }
+
+  speak(text: string, onEnd: () => void) {
+    this.cancel()
+    if (!text.trim()) { onEnd(); return }
+    const t = normalizeSpoken(text).slice(0, MAX_TTS_CHARS)
+    const clip = this.ready.get(t)
+    this.onEnd = onEnd
+    const token = ++this.token
+    if (clip && this.audio) {
+      const a = this.audio
+      this.mode = 'audio'
+      this.source = 'audio'
+      a.onended = () => { if (token === this.token) this.finish() }
+      a.onerror = () => {
+        if (token !== this.token || this.mode !== 'audio') return
+        // Audio failed (network, codec): say it with the device voice instead.
+        this.mode = 'device'
+        this.source = 'device'
+        this.device.speak(text, () => { if (token === this.token) this.finish() })
+      }
+      a.src = clip.url
+      a.currentTime = 0
+      const p = a.play()
+      if (p) p.catch(() => { a.onerror?.(new Event('error')) })
+      return
+    }
+    this.mode = 'device'
+    this.source = 'device'
+    this.device.speak(text, () => { if (token === this.token) this.finish() })
+  }
+
+  private finish() {
+    const cb = this.onEnd
+    this.onEnd = null
+    this.mode = null
+    cb?.()
+  }
+
+  position() {
+    if (this.mode === 'audio' && this.audio && !this.audio.paused) return this.audio.currentTime * 1000
+    if (this.mode === 'audio' && this.audio) return this.audio.currentTime * 1000
+    return -1
+  }
+
+  pause() {
+    if (this.mode === 'audio') this.audio?.pause()
+    else if (this.mode === 'device') this.device.pause()
+  }
+
+  resume() {
+    if (this.mode === 'audio') void this.audio?.play().catch(() => {})
+    else if (this.mode === 'device') this.device.resume()
+  }
+
+  cancel() {
+    this.token++
+    if (this.mode === 'audio' && this.audio) { this.audio.onended = null; this.audio.onerror = null; this.audio.pause() }
+    if (this.mode === 'device') this.device.cancel()
+    this.finish()
+  }
+}
+
+function chunk<T>(a: T[], n: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n))
+  return out
+}
+
 let shared: Narrator | null = null
 
-/** The narrator for this page. Swap the implementation here to use a premium provider. */
+/** The narrator for this page: natural Kokoro audio with the device voice as fallback. */
 export function getNarrator(): Narrator {
-  if (!shared) shared = new WebSpeechNarrator()
+  if (!shared) shared = typeof window !== 'undefined' && typeof Audio !== 'undefined' ? new AudioNarrator() : new WebSpeechNarrator()
   return shared
 }
+
+export { NARRATION_VOICE }
 
 const PREF_KEY = 'gm.whiteboard.sound'
 

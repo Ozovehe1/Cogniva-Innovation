@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { nextTutorSteps, type GenMeta, type StudentProfileLite, type TutorReason } from '@/lib/lesson-ai'
 import { validateScript, type CheckStep, type Step } from '@/lib/lesson-schema'
+import { warmTts } from '@/lib/tts-server'
 
 export const maxDuration = 60
 
@@ -15,6 +16,8 @@ const REASONS: TutorReason[] = ['explain_differently', 'wrong_answer', 'continue
 export async function POST(request: Request) {
   const { supabase, profile } = await getSessionProfile()
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Wake the voice while Gemini writes the new explanation, so its narration is quick to synthesize.
+  warmTts()
 
   const raw = await request.text()
   if (raw.length > 200_000) return NextResponse.json({ error: 'Request too large' }, { status: 413 })
@@ -34,6 +37,7 @@ export async function POST(request: Request) {
 
   // The played steps are the client's view of the board; validate them before using them as context.
   const playedCheck = validateScript(Array.isArray(body.played) ? body.played.slice(0, 250) : [], { maxSteps: 250 })
+  // (validated with cues and variables; continuations may refer to both)
   const played: Step[] = playedCheck.steps
   // The client sends the script up to and including the check being answered.
   const checkIndex = played.length - 1

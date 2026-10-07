@@ -16,6 +16,7 @@ import { GeminiQuotaError } from './gemini'
 import { draftLessonOutline, draftLessonSection, type OutlineSection } from './lesson-ai'
 import { flattenSections, validateSection, type Chapter } from './lesson-sections'
 import type { Step } from './lesson-schema'
+import { pregenerateNarration } from './tts-server'
 
 const LOCK_MS = 295_000
 /** Work budget of one invocation (routes run with maxDuration 300). */
@@ -214,6 +215,8 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         if (!v.ok) throw new Error(v.errors.slice(0, 2).join('; '))
         await db.from('lesson_sections').update({ status: 'ready', steps: v.steps, error: null }).eq('id', next.id)
         await syncLessonScript(db, lessonId)
+        // Voice the section in the background while the next one is drafted (unchanged lines are reused).
+        void pregenerateNarration(v.steps, Math.max(20_000, RUN_BUDGET_MS - (Date.now() - t0))).catch(() => {})
       } catch (err) {
         if (err instanceof GeminiQuotaError) {
           await db.from('lesson_sections').update({ status: 'pending' }).eq('id', next.id)

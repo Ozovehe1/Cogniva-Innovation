@@ -4,6 +4,7 @@ import { loadSections, restartDraft, runDraftWork, selfOrigin, syncLessonScript 
 import { LESSON_MAX_STEPS, MAX_TARGET, MIN_TARGET, chapterAt, estimateMs, flattenSections, normalizeChapters, validateSection } from '@/lib/lesson-sections'
 import { validateScript, type ManimClipStep, type Step } from '@/lib/lesson-schema'
 import { publicClipUrl } from '@/lib/supabase/admin'
+import { pregenerateNarration } from '@/lib/tts-server'
 
 export const maxDuration = 300
 
@@ -76,10 +77,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         const flat = flattenSections(sections.map(x => ({ title: x.title, steps: x.steps })))
         const v = validateScript(flat.steps, { maxSteps: LESSON_MAX_STEPS })
         if (!v.ok) return NextResponse.json({ error: `The script has problems and cannot be approved: ${v.errors.slice(0, 3).join('; ')}` }, { status: 400 })
+        // Pre-generate the narration (natural voice) for every step; cached lines are reused.
+        after(() => pregenerateNarration(flat.steps, 280_000).then(r => console.log('Narration pre-generated:', r)))
         return save({ script: flat.steps, chapters: flat.chapters, status: 'approved' })
       }
       const v = validateScript(lesson.script, { maxSteps: LESSON_MAX_STEPS })
       if (!v.ok) return NextResponse.json({ error: `The script has problems and cannot be approved: ${v.errors.slice(0, 3).join('; ')}` }, { status: 400 })
+      after(() => pregenerateNarration(v.steps, 280_000).then(r => console.log('Narration pre-generated:', r)))
       return save({ status: 'approved', chapters: normalizeChapters(null, v.steps.length, lesson.title, v.steps) })
     }
     case 'unapprove':
