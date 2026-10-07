@@ -31,7 +31,7 @@ GRAMMAR = open(os.path.join(HERE, "gm_grammar.md")).read()
 VISION_SAMPLE = float(os.environ.get("GM_VISION_SAMPLE", "0.25"))
 
 
-from gm_llm import gemini, parse_json  # noqa: E402
+from gm_llm import ask_json, gemini, parse_json  # noqa: E402,F401
 
 
 # ───────────── Narration ─────────────
@@ -97,13 +97,18 @@ Grammar reminder (follow it exactly):
 {grammar}
 """
 
-CRITIC_PROMPT = """You are reviewing key frames (in time order, left to right, top to bottom) of an educational animation drawn on a light board.
+CRITIC_PROMPT = """You are a strict reviewer of key frames (in time order, left to right, top to bottom) of a 3Blue1Brown-style educational animation drawn on a light board.
 Intended idea: {idea}
 Quantities and their colours: {quantities}
+Planned objects: {objects}
+Planned changes: {changes}
+Planned equations: {equations}
+A planned key element (object, equation or change) that never appears in any frame is a defect.
 Check only for real defects a learner would notice: text or labels overlapping each other or a drawing so they cannot be read;
 things cut off by the frame edge; an empty or nearly empty frame where the idea should be visible; unreadable/tiny text;
 raw LaTeX code shown as text; a quantity drawn in two different colours; a drawing that does not resemble what it should be.
-Return JSON: {{"pass": true|false, "score": 1-10 for clarity and beauty, "issues": ["specific defect and which object / where"], "fixes": ["concrete spec change"]}}"""
+Return JSON: {{"pass": true|false, "score": 1-10 for clarity, completeness and beauty, "issues": ["specific defect and which object / where"], "fixes": ["concrete spec change"]}}
+pass is true only if score >= 7 and there is no defect above."""
 
 
 # ───────────── Deterministic repairs ─────────────
@@ -125,7 +130,15 @@ def _has_latex(s: str) -> bool:
     return bool(re.search(r"\\[a-zA-Z]+|[\^_]\{|\$", s))
 
 
-def normalize(spec: dict, notes: list[str]) -> dict:
+def normalize(spec, notes: list[str]) -> dict:
+    while isinstance(spec, list) and spec:
+        spec = next((x for x in spec if isinstance(x, dict) and x.get("objects")), spec[0])
+    if isinstance(spec, dict) and "objects" not in spec:
+        inner = next((v for v in spec.values() if isinstance(v, dict) and "objects" in v), None)
+        if inner:
+            spec = inner
+    if not isinstance(spec, dict):
+        raise RuntimeError("model returned no scene spec")
     s = copy.deepcopy(spec)
     s.setdefault("objects", [])
     s.setdefault("timeline", [])
@@ -209,9 +222,7 @@ def normalize(spec: dict, notes: list[str]) -> dict:
     s["objects"] = objs
     # actions
     acts = []
-    for a in s["timeline"]:
-        if not isinstance(a, dict):
-            continue
+    for a in _flatten_actions(s["timeline"], notes):
         do = str(a.get("do", "")).lower()
         do = DO_ALIASES.get(do, do)
         if do not in ACTIONS:
@@ -256,6 +267,42 @@ def normalize(spec: dict, notes: list[str]) -> dict:
     s["timeline"] = acts
     # objects that are morph/match targets must not be shown first; objects never shown are fine (unused)
     return s
+
+
+def _flatten_actions(timeline, notes: list[str]) -> list[dict]:
+    """Accept the shapes models drift into: {"show": [ids]}, {"set": {...}}, {"show": {"targets": [...]}}, lists of those."""
+    out = []
+    keys = ACTIONS | set(DO_ALIASES)
+    for a in timeline if isinstance(timeline, list) else []:
+        if isinstance(a, list):
+            out += _flatten_actions(a, notes)
+            continue
+        if not isinstance(a, dict):
+            continue
+        if "do" in a or "action" in a or "type" in a:
+            a = dict(a)
+            a["do"] = a.get("do") or a.pop("action", None) or a.pop("type", None)
+            out.append(a)
+            continue
+        found = [k for k in a if str(k).lower() in keys]
+        if not found:
+            continue
+        rest = {k: v for k, v in a.items() if k not in found}
+        for k in found:
+            v = a[k]
+            act = {**rest, "do": str(k).lower()}
+            if isinstance(v, dict):
+                if str(k).lower() in ("set", "animate"):
+                    act["values"] = v.get("values", v)
+                else:
+                    act.update(v)
+            elif isinstance(v, list):
+                act["targets"] = v
+            elif isinstance(v, str):
+                act["targets"] = [v]
+            out.append(act)
+        notes.append(f"reshaped action {list(a)[:3]}")
+    return out
 
 
 def _mixed_to_tex(t: str) -> str:
@@ -325,7 +372,7 @@ def _latex_culprit(spec: dict, media_dir: str) -> str | None:
     return None
 
 
-def fix_latex(spec: dict, media_dir: str, notes: list[str]) -> bool:
+def fix_latex(spec: dict, media_dir: str, notes: list[str], allow_remove: bool = False) -> bool:
     """Deterministic LaTeX repair for the culprit snippet: common slips, else remove the object."""
     bad = _latex_culprit(spec, media_dir)
     if not bad:
@@ -345,11 +392,11 @@ def fix_latex(spec: dict, media_dir: str, notes: list[str]) -> bool:
                     t2 += "}" * (opens - closes)
                 o[key] = t2
         notes.append(f"latex repair on {oid}")
-        if _latex_culprit({"objects": [o]}, media_dir):
+        if allow_remove and _latex_culprit({"objects": [o]}, media_dir):
             spec["objects"] = [x for x in spec["objects"] if x["id"] != oid]
             spec["timeline"] = [a for a in spec["timeline"] if oid not in (a.get("targets") or []) and oid not in (a.get("from"), a.get("to"), a.get("eq"), a.get("target"))]
             notes.append(f"removed {oid}: LaTeX did not compile")
-        return True
+        return not _latex_culprit({"objects": [o]}, media_dir) or allow_remove
     return False
 
 
@@ -440,10 +487,26 @@ def heuristics(r: dict, spec: dict) -> list[str]:
     return issues
 
 
+def plan_gaps(plan: dict, spec: dict) -> list[str]:
+    """Planned equations that never reach the screen (a frequent loss when LaTeX had to be repaired)."""
+    out = []
+    kinds = {o["id"]: o["kind"] for o in spec.get("objects", [])}
+    shown = {t for a in spec.get("timeline", []) if a.get("do") in ("show", "morph", "match_tex") for t in (a.get("targets") or []) + [a.get("to")] if t}
+    if plan.get("equations") and not any(kinds.get(t) == "tex" for t in shown):
+        out.append("the planned equation never appears; add it as a tex object with its terms and show it")
+    return out
+
+
 def critique(sheet: bytes, plan: dict, log: list) -> dict:
     qs = ", ".join(f"{q.get('name', q.get('id'))}={q.get('color')}" for q in plan.get("quantities", []))
     try:
-        return parse_json(gemini(CRITIC_PROMPT.format(idea=plan.get("idea", ""), quantities=qs), images=[sheet], temperature=0.2, timeout=45, log=log))
+        objs = "; ".join(f"{o.get('id')}: {o.get('what', '')}" for o in plan.get("objects", []))[:900]
+        chg = "; ".join(f"{c.get('when', '')}: {c.get('what', '')}" for c in plan.get("changes", []))[:900]
+        eqs = "; ".join(str(e.get("tex", "")) for e in plan.get("equations", []))[:400] or "none"
+        out = ask_json(CRITIC_PROMPT.format(idea=plan.get("idea", ""), quantities=qs, objects=objs, changes=chg, equations=eqs), images=[sheet], temperature=0.2, timeout=45, log=log)
+        if isinstance(out, dict) and out.get("score") is not None and float(out.get("score", 10)) < 7:
+            out["pass"] = False
+        return out
     except Exception as exc:  # noqa: BLE001
         log.append(f"critique skipped: {exc}")
         return {"pass": True, "skipped": True}
@@ -453,33 +516,41 @@ def critique(sheet: bytes, plan: dict, log: list) -> dict:
 def make_spec(desc: str, narr: dict | None, context: str, media_dir: str, log: list, plan: dict | None = None) -> tuple[dict, dict]:
     b = beats(narr)
     if plan is None:
-        plan = parse_json(gemini(PLAN_PROMPT.format(desc=desc[:2500], context=context[:1500], beats=b), temperature=0.5, log=log))
-    raw = parse_json(gemini(COMPOSE_PROMPT.format(plan=json.dumps(plan)[:6000], beats=b, grammar=GRAMMAR), temperature=0.3, timeout=90, log=log))
+        plan = ask_json(PLAN_PROMPT.format(desc=desc[:2500], context=context[:1500], beats=b), temperature=0.5, log=log)
+    raw = ask_json(COMPOSE_PROMPT.format(plan=json.dumps(plan)[:6000], beats=b, grammar=GRAMMAR), temperature=0.3, timeout=90, log=log)
     spec = prepare(raw, narr, media_dir, log, plan)
     return plan, spec
 
 
 def prepare(raw: dict, narr: dict | None, media_dir: str, log: list, plan: dict | None = None) -> dict:
+    """Normalize, then validate with a dry run (every LaTeX snippet compiled, every expression evaluated).
+    LaTeX slips are repaired deterministically; anything left goes back to the model once with the exact errors;
+    only after that may a still-broken LaTeX object be dropped. Raw backslash commands never reach a Text object."""
     notes: list[str] = []
-    spec = normalize(raw, notes)
-    if narr:
-        spec["narration"] = {"ms": narr.get("ms"), "words": narr.get("words")}
-    errs = validate(spec, media_dir)
-    tries = 0
-    while errs and any("LaTeX" in e for e in errs) and tries < 3 and fix_latex(spec, media_dir, notes):
-        tries += 1
-        errs = validate(spec, media_dir)
+
+    def norm(r):
+        sp = normalize(r, notes)
+        if narr:
+            sp["narration"] = {"ms": narr.get("ms"), "words": narr.get("words")}
+        return sp
+
+    def check(sp, allow_remove):
+        errs = validate(sp, media_dir)
+        for _ in range(4):
+            if not (errs and any("LaTeX" in e for e in errs)):
+                break
+            if not fix_latex(sp, media_dir, notes, allow_remove=allow_remove):
+                break
+            errs = validate(sp, media_dir)
+        return errs
+
+    spec = norm(raw)
+    errs = check(spec, False)
     if errs:
         log.append("validate: " + " | ".join(errs)[:400])
-        # one re-ask with the exact errors
-        raw2 = parse_json(gemini(REPAIR_PROMPT.format(why="validation before rendering", problems="\n".join(errs), spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log))
-        spec = normalize(raw2, notes)
-        if narr:
-            spec["narration"] = {"ms": narr.get("ms"), "words": narr.get("words")}
-        errs = validate(spec, media_dir)
-        while errs and any("LaTeX" in e for e in errs) and tries < 5 and fix_latex(spec, media_dir, notes):
-            tries += 1
-            errs = validate(spec, media_dir)
+        raw2 = ask_json(REPAIR_PROMPT.format(why="validation before rendering", problems="\n".join(errs), spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log)
+        spec = norm(raw2)
+        errs = check(spec, True)
         if errs:
             raise RuntimeError("spec invalid after repair: " + " | ".join(errs)[:800])
     if notes:
@@ -504,12 +575,12 @@ def compose_and_render(desc: str, narr: dict | None = None, context: str = "", w
         if not r["ok"]:
             log.append(f"render {attempt} failed: {r['error'][-300:]}")
             if attempt == 0:
-                raw = parse_json(gemini(REPAIR_PROMPT.format(why="to render", problems=r["error"][-2500:], spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log))
+                raw = ask_json(REPAIR_PROMPT.format(why="to render", problems=r["error"][-2500:], spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log)
                 spec = prepare(raw, narr, media, log, plan)
                 continue
             break
         t2 = time.time()
-        issues = heuristics(r, spec)
+        issues = heuristics(r, spec) + plan_gaps(plan, spec)
         crit = None
         if vision == "always" or (vision == "auto" and (issues or random.random() < VISION_SAMPLE)):
             sheet = keyframes(r["video"], r["gate"], os.path.join(workdir, f"r{attempt}"))
@@ -526,7 +597,7 @@ def compose_and_render(desc: str, narr: dict | None = None, context: str = "", w
         # one repair round with the gate's findings
         try:
             fixes = (crit or {}).get("fixes") or []
-            raw = parse_json(gemini(REPAIR_PROMPT.format(why="the quality check after rendering", problems="\n".join(issues + [f"suggested: {f}" for f in fixes]), spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log))
+            raw = ask_json(REPAIR_PROMPT.format(why="the quality check after rendering", problems="\n".join(issues + [f"suggested: {f}" for f in fixes]), spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log)
             spec = prepare(raw, narr, media, log, plan)
         except Exception as exc:  # noqa: BLE001
             log.append(f"repair skipped: {exc}")

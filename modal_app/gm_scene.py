@@ -182,7 +182,7 @@ class _Ctx:
             if names_in(v) & keys:
                 return True
         for ref in (o.get("on"), o.get("graph"), (o.get("next_to") or [None])[0] if isinstance(o.get("next_to"), list) else None, o.get("target")):
-            if ref and ref in self.dynamic:
+            if isinstance(ref, str) and ref in self.dynamic:
                 return True
         return False
 
@@ -254,6 +254,9 @@ def _anchor(ctx, ref, target, nt):
 
 def _term(tex, term: str):
     for sm in tex.get_family():
+        if getattr(sm, "gm_terms", None) and term in sm.gm_terms:
+            return sm.gm_terms[term]
+    for sm in tex.get_family():
         if sm is not tex and getattr(sm, "tex_string", None) == term:
             return sm
     return None
@@ -300,20 +303,94 @@ def split_terms(raw: str) -> list[str]:
     return out
 
 
+def _glyphs(m):
+    return [g for g in m.family_members_with_points()]
+
+
+def _sig(g):
+    pts = g.points[:, :2]
+    if len(pts) == 0:
+        return None
+    c = (pts.max(0) + pts.min(0)) / 2
+    size = max(float(np.ptp(pts[:, 0])), float(np.ptp(pts[:, 1])), 1e-6)
+    return len(pts), (pts - c) / size, float(np.ptp(pts[:, 0])) / size, float(np.ptp(pts[:, 1])) / size
+
+
+def _same(a, b):
+    if a is None or b is None or a[0] != b[0]:
+        return False
+    if abs(a[2] - b[2]) > 0.12 or abs(a[3] - b[3]) > 0.12:
+        return False
+    return float(np.mean(np.abs(a[1] - b[1]))) < 0.05
+
+
+def find_term_glyphs(full, term: str, used: set, style: str = ""):
+    """Glyphs of `term` inside a formula compiled as one string (3Blue1Brown's select-part, by shape)."""
+    try:
+        t = MathTex(style + term)
+    except Exception:  # noqa: BLE001
+        return None
+    tg = [_sig(g) for g in _glyphs(t)]
+    fg = _glyphs(full)
+    fs = [_sig(g) for g in fg]
+    n = len(tg)
+    if not n:
+        return None
+    for i in range(len(fs) - n + 1):
+        if any((i + j) in used for j in range(n)):
+            continue
+        if all(_same(fs[i + j], tg[j]) for j in range(n)):
+            for j in range(n):
+                used.add(i + j)
+            grp = VGroup(*fg[i : i + n])
+            grp.tex_string = term
+            return grp
+    return None
+
+
 def _tex(ctx: _Ctx, o: dict):
     raw = o["tex"]
     pieces = [p for p in split_terms(raw) if p.strip()]
-    for p in pieces:
-        if p.count("{") != p.count("}") or (len(pieces) > 1 and re.search(r"\\(begin|end)\b|\\left|\\right", p)):
-            raise SpecError(f"tex {o['id']}: each {{{{...}}}} group and the text between groups must be complete LaTeX on its own (balanced braces, no \\begin/\\end or \\left/\\right across groups); use a matrix object for matrices. Bad piece: {p!r}")
-    m = MathTex(*pieces, font_size=float(o.get("size", 40)), color=NEUTRAL["ink"])
-    for term, q in (o.get("terms") or {}).items():
+    terms = o.get("terms") or {}
+    for term, q in terms.items():
         if q not in ctx.quantities:
             raise SpecError(f"tex {o['id']} term {term!r} bound to unknown quantity {q!r}")
-        sm = _term(m, term)
-        if sm is None:
-            raise SpecError(f"tex {o['id']}: term {term!r} must appear as its own {{{{...}}}} group")
-        sm.set_color(QCOLORS[ctx.quantities[q]["color"]])
+    split_ok = all(p.count("{") == p.count("}") and not (len(pieces) > 1 and re.search(r"\\(begin|end)\b|\\left|\\right", p)) for p in pieces)
+    m = None
+    if split_ok and len(pieces) > 1:
+        try:
+            m = MathTex(*pieces, font_size=float(o.get("size", 40)), color=NEUTRAL["ink"])
+        except Exception:  # noqa: BLE001 - a group that only compiles inside its formula (\\frac{..}{{x}}, x^{{2}}): whole mode
+            m = None
+    elif len(pieces) <= 1:
+        m = MathTex(*pieces, font_size=float(o.get("size", 40)), color=NEUTRAL["ink"])
+    if m is not None:
+        for term, q in terms.items():
+            sm = _term(m, term)
+            if sm is None:
+                raise SpecError(f"tex {o['id']}: term {term!r} must appear as its own {{{{...}}}} group")
+            sm.set_color(QCOLORS[ctx.quantities[q]["color"]])
+        return m
+    # Terms nested inside \frac{...}, \sqrt{...}, environments: compile the formula whole and find each term's glyphs by shape.
+    m = MathTex("".join(pieces), font_size=float(o.get("size", 40)), color=NEUTRAL["ink"])
+    m.gm_whole = True
+    m.gm_terms = {}
+    used: set = set()
+    for term in sorted(set(p for p in pieces if p in terms or "{{" + p + "}}" in raw), key=len, reverse=True):
+        found = []
+        for style in ("", "\\scriptstyle ", "\\scriptscriptstyle "):  # sub/superscript glyphs are drawn differently
+            while True:
+                g = find_term_glyphs(m, term, used, style)
+                if g is None:
+                    break
+                found.append(g)
+        if not found:
+            raise SpecError(f"tex {o['id']}: term {term!r} not found in the compiled formula")
+        grp = VGroup(*found)
+        grp.tex_string = term
+        m.gm_terms[term] = grp
+        if term in terms:
+            grp.set_color(QCOLORS[ctx.quantities[terms[term]]["color"]])
     return m
 
 
@@ -426,8 +503,12 @@ def _build(ctx: _Ctx, o: dict):
         g = ctx.mobs[o["graph"]]
         a, b = (float(ctx.ev(x)) for x in o["x"])
         dx = max(float(ctx.ev(o.get("dx", 0.5))), (b - a) / 400)
-        m = axm.get_riemann_rectangles(g, x_range=[a, b], dx=dx, input_sample_type=o.get("sample", "left"), stroke_width=float(o.get("width", 1)), stroke_color=NEUTRAL["ink"], fill_opacity=float(o.get("fill", 0.35)))
-        m.set_fill(col, opacity=float(o.get("fill", 0.35)))
+        # strokes thin out with the rectangles so a fine sum reads as a solid area, not hatching
+        px = dx * axm.x_axis.unit_size
+        sw = 1.2 if px > 0.25 else max(0.0, px * 4)
+        m = axm.get_riemann_rectangles(g, x_range=[a, b], dx=dx, input_sample_type=o.get("sample", "left"), stroke_width=sw, stroke_color=col, fill_opacity=float(o.get("fill", 0.45)))
+        m.set_fill(col, opacity=float(o.get("fill", 0.45)))
+        m.set_stroke(col, width=sw, opacity=0.9)
         return m
     if k == "tangent":
         axm = ctx.mobs[on]
@@ -458,7 +539,7 @@ def _build(ctx: _Ctx, o: dict):
         yr = [float(ctx.ev(v)) for v in o.get("y", [-3, 3, 1])]
         size = o.get("size", [10, 6])
         m = Axes(x_range=xr, y_range=yr, x_length=float(size[0]), y_length=float(size[1]),
-                 axis_config={"color": col, "stroke_width": 2, "include_tip": bool(o.get("tips", True)), "tip_length": 0.18, "font_size": 22},
+                 axis_config={"color": col, "stroke_width": 2, "include_tip": bool(o.get("tips", True)), "tip_length": 0.13, "tip_width": 0.11, "font_size": 22},
                  x_axis_config={"include_numbers": bool(o.get("numbers", False))}, y_axis_config={"include_numbers": bool(o.get("numbers", False))})
         if o.get("numbers"):
             for ax in (m.x_axis, m.y_axis):
@@ -841,7 +922,12 @@ def _action(ctx: _Ctx, scene, a: dict, dur: float, visible: set, fixed: set, aft
         src, dst = a["from"], a["to"]
         visible.discard(src)
         visible.add(dst)
-        return [TransformMatchingTex(need(src), need(dst), run_time=dur, key_map=a.get("key_map") or {}, path_arc=float(a.get("arc", 0)) * DEGREES)]
+        ms_, md_ = need(src), need(dst)
+        whole = any(getattr(x, "gm_whole", False) for f in (ms_, md_) for x in f.get_family())
+        if whole or not all(isinstance(x, MathTex) for x in (ms_, md_)):
+            from manim import TransformMatchingShapes
+            return [TransformMatchingShapes(ms_, md_, run_time=dur, path_arc=float(a.get("arc", 0)) * DEGREES)]
+        return [TransformMatchingTex(ms_, md_, run_time=dur, key_map=a.get("key_map") or {}, path_arc=float(a.get("arc", 0)) * DEGREES)]
     if do == "move":
         out = []
         for i in _ids(a):

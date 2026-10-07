@@ -65,7 +65,10 @@ Real objects (a transformer core, a mitochondrion, a gear, a guitar string, a he
 presets: build a simplified, recognisable construction from these primitives (rects, ellipses, bezier
 outlines, paths, arrays of repeated parts, curves for coils and waves), labelled sparingly.
 
-## Timeline (each action: "cue": a word or short phrase from the narration where it starts, "dur": seconds, "do": ...)
+## Timeline — every entry is ONE flat object: {"cue": "<exact narration word or phrase>", "dur": seconds, "do": "<action>", ...fields}
+Example: {"cue": "slide", "dur": 3.5, "do": "set", "values": {"h": 0.05}, "rate": "smooth"}
+         {"cue": "secant", "dur": 1.2, "do": "show", "targets": ["sec", "secLabel"]}
+         {"cue": "derivative", "dur": 1.5, "do": "match_tex", "from": "slope", "to": "deriv"}
 - show {targets: [ids]}      (draws lines/curves, writes text and maths, grows arrows, fades in fills and particles)
 - hide {targets}
 - set {values: {trackerId: value}, rate?: "linear"|"smooth"}     // drives every live object
@@ -79,7 +82,7 @@ outlines, paths, arrays of repeated parts, curves for coils and waves), labelled
 - indicate {targets}   circle {targets}   link {eq, term, target}  // ties an equation term to the object it describes
 - color {targets, q}   drift {targets: [array id], box: [x0,y0,x1,y1], fraction?}  // particles wander into the box
 - wait {}
-Actions with the same cue run together. Something should be moving whenever the voice is talking.
+Actions with the same cue run together. Objects appear only through a "show" action (nothing is visible before). Something should be moving whenever the voice is talking.
 
 ## Craft rules (3Blue1Brown, on a light board)
 1. One colour per quantity, the same in shapes, labels and equation terms, for the whole clip.
@@ -90,3 +93,24 @@ Actions with the same cue run together. Something should be moving whenever the 
 5. Link each equation term to its object (terms + link) the moment it is spoken.
 6. Clean layout: titles top-left or none, labels beside (not on) what they name, nothing overlapping,
    nothing outside the frame.
+
+## Complete minimal example
+{"title": "Slope of a secant", "mode": "2d", "params": {"x0": 1},
+ "quantities": [{"id": "f", "name": "the curve", "color": "navy"}, {"id": "m", "name": "slope", "color": "clay"}],
+ "trackers": [{"id": "h", "value": 1.5}],
+ "objects": [
+  {"id": "ax", "kind": "axes", "x": [-1, 4, 1], "y": [-1, 5, 1], "size": [7, 5], "center": [-2.5, -0.3], "labels": ["x", "y"]},
+  {"id": "curve", "kind": "graph", "on": "ax", "fn": "0.4*x^2 + 0.5", "x": [-0.8, 3.4], "q": "f"},
+  {"id": "P", "kind": "dot", "on": "ax", "at": ["x0", "0.4*x0^2 + 0.5"]},
+  {"id": "Q", "kind": "dot", "on": "ax", "at": ["x0 + h", "0.4*(x0 + h)^2 + 0.5"]},
+  {"id": "sec", "kind": "secant", "on": "ax", "graph": "curve", "x": "x0", "h": "h", "q": "m"},
+  {"id": "slope", "kind": "tex", "tex": "{{m}} = \\frac{f(x+h) - f(x)}{h}", "terms": {"m": "m"}, "at": [3.6, 1.5]},
+  {"id": "mval", "kind": "number", "value": "0.4*(2*x0 + h)", "decimals": 2, "prefix": "m =", "q": "m", "next_to": ["slope", "down"]}
+ ],
+ "timeline": [
+  {"cue": "curve", "dur": 1.5, "do": "show", "targets": ["ax", "curve"]},
+  {"cue": "point", "dur": 0.8, "do": "show", "targets": ["P", "Q"]},
+  {"cue": "line", "dur": 1.0, "do": "show", "targets": ["sec", "slope", "mval"]},
+  {"cue": "slope", "dur": 1.2, "do": "link", "eq": "slope", "term": "m", "target": "sec"},
+  {"cue": "shrink", "dur": 4.0, "do": "set", "values": {"h": 0.02}}
+ ]}
