@@ -77,11 +77,11 @@ export function AppShell({
   )
 
   return (
-    <div className="flex h-dvh bg-canvas">
+    <div className="flex min-h-dvh bg-canvas">
       <IdleTimeout />
 
       {/* ── Desktop sidebar ── */}
-      <aside className="hidden w-[248px] flex-shrink-0 flex-col border-r border-line bg-[#FBFAF7] md:flex">
+      <aside className="sticky top-0 hidden h-dvh w-[248px] flex-shrink-0 flex-col border-r border-line bg-[#FBFAF7] md:flex">
         <div className="flex h-16 items-center px-5">
           <Logo href={homeHref} />
         </div>
@@ -122,7 +122,7 @@ export function AppShell({
       {/* ── Content ── */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <header className="pt-safe flex-shrink-0 border-b border-line bg-canvas/95 md:hidden">
+        <header className="pt-safe sticky top-0 z-30 flex-shrink-0 border-b border-line bg-canvas/95 backdrop-blur-sm md:hidden">
           <div className="flex h-14 items-center justify-between px-4">
             <Logo href={homeHref} />
             <button
@@ -138,7 +138,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main id="main" className="flex-1 overflow-y-auto overflow-x-hidden">
+        <main id="main" className="min-w-0 flex-1 overflow-x-clip">
           <div className="mx-auto w-full max-w-[1120px] px-4 pb-[calc(88px+env(safe-area-inset-bottom))] pt-6 sm:px-6 md:px-10 md:pb-16 md:pt-10">
             {children}
           </div>

@@ -1,9 +1,12 @@
 import React from 'react'
 import Link from 'next/link'
-import clsx from 'clsx'
+import clsx, { type ClassValue } from 'clsx'
+import { twMerge } from 'tailwind-merge'
 import { intelligenceLabel, intelligenceMeta, intelligenceOrder } from './intelligence'
 
-export const cx = clsx
+export function cx(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
 
 /* ───────────── Brand ───────────── */
 
@@ -333,7 +336,7 @@ export function RadarChart({ scores, size = 280, className }: { scores: Record<s
   const keys = intelligenceOrder.filter(k => k in scores).length === 8 ? intelligenceOrder : Object.keys(scores)
   const n = keys.length
   if (n < 3) return null
-  const pad = 44
+  const pad = 64
   const vb = size + pad * 2
   const c = vb / 2
   const r = size / 2
@@ -350,7 +353,7 @@ export function RadarChart({ scores, size = 280, className }: { scores: Record<s
       viewBox={`0 0 ${vb} ${vb}`}
       role="img"
       aria-label={`Intelligence profile: ${keys.map(k => `${intelligenceLabel(k)} ${scores[k]} of 10`).join(', ')}`}
-      className={cx('h-auto w-full', className)}
+      className={cx('h-auto w-full overflow-visible', className)}
     >
       {rings.map(rv => (
         <polygon
@@ -380,7 +383,7 @@ export function RadarChart({ scores, size = 280, className }: { scores: Record<s
             y={y}
             textAnchor={anchor}
             dominantBaseline="middle"
-            fontSize={12}
+            fontSize={14}
             fill={k === top ? '#14141A' : '#66666F'}
             fontWeight={k === top ? 600 : 400}
             style={{ fontFamily: 'var(--font-sans)' }}

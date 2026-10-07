@@ -2,7 +2,7 @@
 // Keys match the intelligence_scores object stored in Supabase.
 
 export const intelligenceMeta: Record<string, { label: string; short: string; desc: string }> = {
-  linguistic:          { label: 'Linguistic',         short: 'Ling.',   desc: 'Words, reading, writing and explaining' },
+  linguistic:          { label: 'Linguistic',         short: 'Words',   desc: 'Words, reading, writing and explaining' },
   logicalMathematical: { label: 'Logical–mathematical', short: 'Logic',  desc: 'Reasoning, patterns, numbers and systems' },
   spatial:             { label: 'Spatial',            short: 'Spatial', desc: 'Visualising, mapping, design and form' },
   musical:             { label: 'Musical',            short: 'Music',   desc: 'Rhythm, pitch and sensitivity to sound' },

@@ -130,7 +130,7 @@ export default async function StudentDashboard() {
                     <li key={a.id}>
                       <Link href="/projects" className="flex items-center gap-4 px-5 py-4 transition-colors duration-150 hover:bg-[#FBFAF7] md:px-6">
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[15px] font-medium text-ink">{a.project?.title}</p>
+                          <p className="line-clamp-2 text-[15px] font-medium leading-snug text-ink sm:line-clamp-1">{a.project?.title}</p>
                           <p className="tnum mt-0.5 truncate text-[13px] text-muted">
                             {a.project?.subject} · {a.project?.estimated_hours}h
                           </p>
