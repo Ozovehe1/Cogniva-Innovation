@@ -46,6 +46,13 @@ const BEAT_SPACING_MS = 7_500
 const HEAD_START_BEATS = 3
 /** A beat that fails this many times is dropped (later beats never wait on it). */
 const BEAT_ATTEMPTS = 3
+/**
+ * A first lesson drafted ahead during the diagnostic (not yet attached to a path topic, see
+ * speculation.ts) stops after this many ready beats: enough for an instant start, little quota
+ * lost if the diagnostic lands elsewhere. It carries on when the diagnostic attaches it.
+ */
+export const SPECULATIVE_BEATS = 4
+export const SPECULATIVE_PAUSE = 'speculative'
 export type DraftStatus = 'idle' | 'outlining' | 'drafting' | 'paused' | 'ready' | 'partial' | 'failed'
 export type SectionStatus = 'pending' | 'drafting' | 'ready' | 'failed' | 'skipped'
 
@@ -198,6 +205,8 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
   if (!(await claim(db, lessonId))) return 'busy'
   let handOver = false
   let lastBeatAt = 0
+  /** Set once the lesson is known to belong to a path topic (it never becomes unattached again). */
+  let attached = false
   /** Narration being voiced in the background while later beats are written. */
   const voicing: Promise<unknown>[] = []
   const voice = (steps: Step[], budget: number) => { voicing.push(pregenerateNarration(steps, budget).catch(() => null)) }
@@ -300,6 +309,21 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         return status
       }
       if (Date.now() + BEAT_RESERVE_MS > hardEnd) { handOver = true; return 'handover' }
+
+      // A speculative first lesson waits after its opening beats until the diagnostic attaches it.
+      if (!attached && lesson.generated_by === 'ai' && ready.length >= SPECULATIVE_BEATS) {
+        const { data: topic } = await db.from('path_topics').select('id').eq('lesson_id', lessonId).limit(1)
+        if (topic?.length) attached = true
+        else if (Date.now() - new Date(lesson.created_at ?? Date.now()).getTime() > 3 * 3600_000) {
+          // The diagnostic it was written for was abandoned: stop for good.
+          await db.from('lessons').update({ draft_status: 'partial', draft_error: SPECULATIVE_PAUSE, draft_retry_at: null }).eq('id', lessonId)
+          return 'partial'
+        } else {
+          await db.from('lessons').update({ draft_status: 'paused', draft_error: SPECULATIVE_PAUSE, draft_retry_at: new Date(Date.now() + 20 * 60_000).toISOString() }).eq('id', lessonId)
+          console.log(`Lesson ${lessonId}: speculative draft waits after ${ready.length} beats`)
+          return 'paused'
+        }
+      }
 
       // Length is steered here, not by the model: optional beats only when behind schedule…
       const plannedBefore = HOOK_SECONDS * 1000 + rows.filter(r => r.position > 0 && r.position < next.position && !r.optional).reduce((a, r) => a + (r.seconds ?? 60) * 1000, 0)

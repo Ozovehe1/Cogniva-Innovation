@@ -1,9 +1,12 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildGraph, diagnosticPath, learnerForPath, learnerSnapshot, listPaths, loadLearner, sameGoal, type PathRow } from '@/lib/learner'
 import { buildPath } from '@/lib/path'
 import { GeminiQuotaError } from '@/lib/gemini'
+import { dropSpeculativeLesson, planSpeculation, type Speculation } from '@/lib/speculation'
+import { runDraftWork, selfOrigin } from '@/lib/lesson-drafting'
+import { warmServices } from '@/lib/warm'
 import { applyAnswer, emptyState, knownSkills, nextItem, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type Confidence, type DiagState } from '@/lib/diagnostic-core'
 
 export const maxDuration = 300
@@ -29,6 +32,24 @@ function view(path: PathRow) {
     known: st.done || path.status === 'ready' ? knownSkills(g, st).map(title) : undefined,
     next: st.done || path.status === 'ready' ? readyToLearn(g, st).map(title) : undefined,
   }
+}
+
+/**
+ * Build the path from a finished diagnostic and start (or carry on) drafting the first lesson.
+ * The first lesson is usually drafted already (speculation.ts), so this is a few quick writes.
+ */
+async function finishPath(db: ReturnType<typeof createAdminClient>, request: Request, learner: NonNullable<Awaited<ReturnType<typeof loadLearner>>>, path: PathRow, st: DiagState) {
+  if (!st.done) { st.done = true; st.current = null }
+  path.diagnostic = { ...path.diagnostic, state: st }
+  const t0 = Date.now()
+  const r = await buildPath(db, learnerForPath(learner, path), path)
+  console.log(`Path ${path.id} built in ${Date.now() - t0} ms; first lesson ${r.firstLessonId ?? 'none'} (speculative draft: ${r.speculation ?? 'n/a'})`)
+  if (r.firstLessonId) {
+    // Carry on drafting now (a no-op while a worker holds the lesson) so it is ready when they open it.
+    const origin = selfOrigin(request)
+    after(() => runDraftWork(r.firstLessonId!, { origin }).then(() => undefined).catch(err => console.error('First lesson draft failed:', err)))
+  }
+  return { path: view({ ...r.path, diagnostic: { state: st } }), firstLessonId: r.firstLessonId, speculation: r.speculation }
 }
 
 /** GET /api/diagnostic — the current diagnostic (resume) without answers. */
@@ -57,6 +78,8 @@ export async function POST(request: Request) {
   let path = await diagnosticPath(db, profile.id, body.pathId)
 
   if (body.action === 'start') {
+    // Wake the voice and the render container now: the first lesson is drafted (and voiced) during the check.
+    warmServices()
     // A learner can have many paths. Starting a check for the goal of an unfinished check resumes it;
     // the goal of a finished path opens that path; any other goal adds a new path. Only "Retake the
     // check" replaces a path (that one path, nothing else).
@@ -78,7 +101,9 @@ export async function POST(request: Request) {
     }
     // Retake: replace only the path being retaken. Unfinished checks for other goals are dropped; finished paths stay.
     if (body.restart && path) await db.from('learning_paths').update({ status: 'archived' }).eq('id', path.id)
-    await db.from('learning_paths').update({ status: 'archived' }).eq('student_id', profile.id).eq('status', 'diagnosing')
+    const { data: dropped } = await db.from('learning_paths').update({ status: 'archived' }).eq('student_id', profile.id).eq('status', 'diagnosing').select('speculation')
+    // First lessons drafted ahead for checks that will never finish.
+    for (const d of (dropped ?? []) as { speculation: Speculation | null }[]) if (d.speculation?.lessonId) after(() => dropSpeculativeLesson(db, d.speculation!.lessonId!).catch(() => undefined))
     const st = emptyState()
     st.current = nextItem(graph, st)
     const { data, error } = await db.from('learning_paths').insert({
@@ -101,8 +126,26 @@ export async function POST(request: Request) {
     const choice = typeof body.choice === 'number' && body.choice >= 0 && body.choice < it.options.length ? Math.floor(body.choice) : null
     const confidence = (['guess', 'fairly', 'sure'] as const).includes(body.confidence as Confidence) ? (body.confidence as Confidence) : null
     const next = applyAnswer(path.graph, st, { node: node.id, item: st.current.item, choice, correct: choice === it.answer, confidence })
-    const { data } = await db.from('learning_paths').update({ diagnostic: { ...path.diagnostic, state: next } }).eq('id', path.id).select('*').single()
+    warmServices({ everyMs: 60_000 })
+    // Draft the likely first lesson ahead once the starting topic is fairly clear (saved with the answer).
+    let spec: Awaited<ReturnType<typeof planSpeculation>> | null = null
+    try { spec = await planSpeculation(db, learner, path, next) } catch (err) { console.warn('Speculation skipped:', err instanceof Error ? err.message : err) }
+    const { data } = await db.from('learning_paths').update({ diagnostic: { ...path.diagnostic, state: next }, ...(spec ? { speculation: spec.spec } : {}) }).eq('id', path.id).select('*').single()
     path = data as PathRow
+    if (spec?.drop) { const drop = spec.drop; after(() => dropSpeculativeLesson(db, drop).catch(() => undefined)) }
+    if (spec?.start) {
+      const id = spec.start
+      const origin = selfOrigin(request)
+      after(() => runDraftWork(id, { origin }).then(r => console.log(`Speculative draft ${id}: ${r}`)).catch(err => console.error('Speculative draft failed:', err)))
+    }
+    // The last answer builds the path in the same request, so the results screen opens with its Start button ready.
+    if (next.done) {
+      try {
+        return NextResponse.json(await finishPath(db, request, learner, path, next))
+      } catch (err) {
+        console.error('Path build after the last answer failed:', err instanceof Error ? err.message : err)
+      }
+    }
     return NextResponse.json({ path: view(path) })
   }
 
@@ -113,18 +156,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ path: view(path), firstLessonId: (t ?? [])[0]?.lesson_id ?? null })
     }
     if (!st.done && st.asked.length < MIN_ITEMS) return NextResponse.json({ error: 'A few more questions first.' }, { status: 400 })
-    if (!st.done) { st.done = true; st.current = null }
-    path.diagnostic = { ...path.diagnostic, state: st }
     try {
-      const r = await buildPath(db, learnerForPath(learner, path), path)
-      // Start drafting the first lesson now so it is ready (or nearly) when they open it.
-      if (r.firstLessonId) {
-        const { after } = await import('next/server')
-        const { runDraftWork, selfOrigin } = await import('@/lib/lesson-drafting')
-        const origin = selfOrigin(request)
-        after(() => runDraftWork(r.firstLessonId!, { origin }).then(() => undefined).catch(err => console.error('First lesson draft failed:', err)))
-      }
-      return NextResponse.json({ path: view({ ...r.path, diagnostic: { state: st } }), firstLessonId: r.firstLessonId })
+      return NextResponse.json(await finishPath(db, request, learner, path, st))
     } catch (err) {
       return NextResponse.json({ error: 'Could not build your path. Please try again.', detail: (err instanceof Error ? err.message : String(err)).slice(0, 200) }, { status: 500 })
     }

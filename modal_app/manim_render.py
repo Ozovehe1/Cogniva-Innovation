@@ -101,7 +101,12 @@ def guard_manim_code(code: str) -> tuple[str, list[str], list[str]]:
     return code, rewrites, problems
 
 
+WARM_JOB = "__warm__"
+
+
 def _callback(job_id: str, status: str, error: str | None = None) -> None:
+    if job_id == WARM_JOB:
+        return  # a warm-up spawn (POST /warm): nothing to report
     import httpx
 
     app_url = os.environ.get("APP_URL", "").rstrip("/")
@@ -222,6 +227,16 @@ def web():
     @api.get("/health")
     def health():
         return {"ok": True}
+
+    @api.post("/warm", status_code=202)
+    def warm(x_render_token: str | None = Header(default=None)):
+        # Boots a render container ahead of a lesson's first clip: the spawned call renders an empty
+        # scene (fails at once, nothing uploaded, no callback), which also loads manim from disk.
+        expected = os.environ.get("RENDER_TOKEN", "")
+        if not expected or not x_render_token or not hmac.compare_digest(x_render_token, expected):
+            raise HTTPException(status_code=401, detail="unauthorized")
+        render.spawn(WARM_JOB, "", "GeneratedScene", "")
+        return {"warming": True}
 
     @api.post("/render", status_code=202)
     def render_endpoint(req: RenderRequest, x_render_token: str | None = Header(default=None)):

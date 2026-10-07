@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { answersToColumns, loadLearner } from '@/lib/learner'
 import { INTAKE, isMinor, type Answers } from '@/lib/intake'
 import { detectDistress } from '@/lib/safety'
+import { warmServices } from '@/lib/warm'
 
 const IDS = new Set([...INTAKE.map(i => i.id)])
 const FREE_TEXT = ['goal', 'why', 'barriers']
@@ -60,6 +61,8 @@ export async function POST(request: Request) {
   Object.assign(row, answersToColumns(store), { answers: store })
   if (typeof body.currentItem === 'string' && IDS.has(body.currentItem)) row.current_item = body.currentItem
   if (body.complete) {
+    // The diagnostic (and the first lesson, drafted during it) comes next: keep the voice and render containers awake.
+    warmServices()
     if (minor && !consented) return NextResponse.json({ error: 'A parent or guardian needs to agree first.' }, { status: 400 })
     row.completed_at = new Date().toISOString()
   }

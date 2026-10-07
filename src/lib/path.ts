@@ -14,16 +14,27 @@ export async function recentLowMood(db: SupabaseClient, studentId: string): Prom
   return !!r && ((r.mood ?? 3) <= 2 || (r.energy ?? 3) <= 2 || (r.confidence ?? 3) <= 2)
 }
 
-/** Finish the diagnostic: known / ready sets, plan, topics; the first lesson is created right away. */
-export async function buildPath(db: SupabaseClient, learner: LearnerRow, path: PathRow): Promise<{ path: PathRow; topics: TopicRow[]; firstLessonId: string | null }> {
-  const st = path.diagnostic.state as DiagState
-  const g = path.graph
+/**
+ * Which skill the path starts on for a (possibly partial) diagnostic state: the first topic, in path
+ * order, that is ready to learn (else the first topic). Used by buildPath and, mid-diagnostic, to
+ * predict the first lesson so it can be drafted ahead (see speculation.ts).
+ */
+export function startPlan(learner: LearnerRow, g: PathRow['graph'], st: DiagState) {
   const known = knownSkills(g, st)
   const ready = readyToLearn(g, st)
   const provisional = planFor(learner, g.nodes.length)
   const nodes = pathNodes(g, known, provisional.scope)
   const plan = planFor(learner, nodes.length)
   const readySet = new Set(ready)
+  const first = nodes.find(n => readySet.has(n.id)) ?? nodes[0] ?? null
+  return { known, ready, nodes, plan, readySet, first }
+}
+
+/** Finish the diagnostic: known / ready sets, plan, topics; the first lesson is created right away (or a draft written ahead is reused). */
+export async function buildPath(db: SupabaseClient, learner: LearnerRow, path: PathRow): Promise<{ path: PathRow; topics: TopicRow[]; firstLessonId: string | null; speculation?: string }> {
+  const st = path.diagnostic.state as DiagState
+  const g = path.graph
+  const { known, ready, nodes, plan, readySet } = startPlan(learner, g, st)
 
   // Due dates: spread over the deadline when there is one, otherwise by sessions per week.
   const perTopicDays = plan.weeksLeft && plan.weeksLeft > 0
@@ -43,25 +54,38 @@ export async function buildPath(db: SupabaseClient, learner: LearnerRow, path: P
   const list = ((topics ?? []) as TopicRow[]).sort((a, b) => a.position - b.position)
   const first = list.find(t => t.status === 'ready') ?? null
   let firstLessonId: string | null = null
-  if (first) firstLessonId = await createTopicLesson(db, learner, updated as PathRow, first, { firstLesson: true })
-  return { path: updated as PathRow, topics: list, firstLessonId }
+  let speculation: string | undefined
+  if (first) {
+    // A first lesson drafted ahead during the diagnostic is reused when it is for this topic; otherwise it is dropped.
+    const { settleSpeculation } = await import('./speculation')
+    const r = await settleSpeculation(db, learner, updated as PathRow, first)
+    speculation = r.outcome
+    firstLessonId = r.lessonId ?? await createTopicLesson(db, learner, updated as PathRow, first, { firstLesson: true })
+  }
+  return { path: updated as PathRow, topics: list, firstLessonId, speculation }
 }
 
-/** Create the AI lesson for a topic (drafting starts in the background). Returns the lesson id. */
-export async function createTopicLesson(db: SupabaseClient, learner: LearnerRow, path: PathRow, topic: TopicRow, opts: { firstLesson?: boolean; prefetch?: boolean } = {}): Promise<string> {
-  if (topic.lesson_id) return topic.lesson_id
+/** The lesson row for a topic's AI lesson (personalised notes, objectives, length). */
+export async function lessonFields(db: SupabaseClient, learner: LearnerRow, path: Pick<PathRow, 'graph' | 'known' | 'plan' | 'goal' | 'subject' | 'student_id' | 'learner_snapshot'>, topic: Pick<TopicRow, 'node_id' | 'title' | 'summary' | 'target_minutes'>, opts: { firstLesson?: boolean } = {}) {
   learner = learnerForPath(learner, path)
   const lowMood = await recentLowMood(db, path.student_id)
   const notes = teachingNotes({ learner, path, nodeId: topic.node_id, firstLesson: !!opts.firstLesson, lowMood })
   let minutes = topic.target_minutes ?? path.plan.lessonMinutes ?? 15
   if (opts.firstLesson && lowMood) minutes = Math.min(minutes, 10)
   const objectives = [topic.summary || `Understand ${topic.title}`, `Use ${topic.title.toLowerCase()} on the way to: ${path.goal}`].map(s => s.slice(0, 300))
-  const { data, error } = await db.from('lessons').insert({
+  return {
     tutor_id: null, owner_student_id: path.student_id, generated_by: 'ai',
     title: topic.title, subject: path.subject || learner.subject || '', objectives,
     status: 'approved', target_minutes: Math.max(5, Math.min(180, minutes)),
-    draft_status: 'outlining', draft_notes: notes, script: [], chapters: [],
-  }).select('id').single()
+    draft_notes: notes,
+  }
+}
+
+/** Create the AI lesson for a topic (drafting starts in the background). Returns the lesson id. */
+export async function createTopicLesson(db: SupabaseClient, learner: LearnerRow, path: PathRow, topic: TopicRow, opts: { firstLesson?: boolean; prefetch?: boolean } = {}): Promise<string> {
+  if (topic.lesson_id) return topic.lesson_id
+  const fields = await lessonFields(db, learner, path, topic, opts)
+  const { data, error } = await db.from('lessons').insert({ ...fields, draft_status: 'outlining', script: [], chapters: [] }).select('id').single()
   if (error || !data) throw new Error(error?.message ?? 'Could not create the lesson')
   const id = (data as { id: string }).id
   // A prefetched lesson (written ahead while an earlier one plays) leaves the topic's status alone: a locked topic stays locked.

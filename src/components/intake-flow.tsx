@@ -72,6 +72,7 @@ export function IntakeFlow({
   const [phase, setPhase] = useState<Phase>(initialPhase)
   const [diag, setDiag] = useState<DiagView | null>(initialPath)
   const [firstLessonId, setFirstLessonId] = useState<string | null>(null)
+  const [finishing, setFinishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [safety, setSafety] = useState(false)
@@ -80,6 +81,14 @@ export function IntakeFlow({
 
   const item = items[Math.min(idx, items.length - 1)]
   const minor = isMinor(answers)
+
+  // A new learner's first lesson is drafted and voiced during the check: wake the voice and the
+  // animation render containers now, so neither cold-starts on the critical path.
+  useEffect(() => {
+    if (initialPhase === 'result') return
+    void fetch('/api/tts/warm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ manim: true }), keepalive: true }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   /** Save one answer, move on, and show a reflection of it. */
   const answer = useCallback(async (it: IntakeItem, a: Answer, extra: Record<string, unknown> = {}) => {
@@ -126,24 +135,31 @@ export function IntakeFlow({
     setPhase(r.data.path.done ? 'finishing' : 'diag')
   }, [])
 
-  const finish = useCallback(async () => {
-    setPhase('finishing'); setError(null)
+  /** Builds the path. With `inPlace` the results screen is already showing (it has what it needs) and only the Start button waits. */
+  const finish = useCallback(async (inPlace = false) => {
+    if (!inPlace) setPhase('finishing')
+    setError(null); setFinishing(true)
     const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'finish' })
-    if (!r.ok || !r.data.path) { setError(r.data.error ?? 'Could not build your path. Please try again.'); return }
+    setFinishing(false)
+    if (!r.ok || !r.data.path) { if (inPlace) setPhase('finishing'); setError(r.data.error ?? 'Could not build your path. Please try again.'); return }
     setDiag(r.data.path); setFirstLessonId(r.data.firstLessonId ?? null); setPhase('result')
   }, [])
 
   const answerDiag = useCallback(async (choice: number | null, confidence: string | null) => {
     if (!diag?.item) return
     setBusy(true); setError(null)
-    const r = await post<{ path?: DiagView; error?: string }>('/api/diagnostic', { action: 'answer', node: diag.item.node, item: diag.item.item, choice, confidence })
+    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'answer', node: diag.item.node, item: diag.item.item, choice, confidence })
     setBusy(false)
     if (!r.ok || !r.data.path) { setError(r.data.error ?? 'That didn’t save. Try again.'); return }
     setDiag(r.data.path)
-    if (r.data.path.done) void finish()
+    if (!r.data.path.done) return
+    // The last answer comes back with the path built and the first lesson (drafted during the check) attached.
+    setPhase('result')
+    if (r.data.firstLessonId) setFirstLessonId(r.data.firstLessonId)
+    else if (r.data.path.status !== 'ready') void finish(true)
   }, [diag, finish])
 
-  useEffect(() => { if (phase === 'finishing' && diag?.done && diag.status !== 'ready') void finish() // resume
+  useEffect(() => { if (phase === 'finishing' && diag?.done && diag.status !== 'ready') setTimeout(() => void finish(), 0) // resume
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -272,7 +288,9 @@ export function IntakeFlow({
             <div className="mt-8 flex flex-col gap-2 sm:flex-row">
               {firstLessonId
                 ? <Link href={`/learn/${firstLessonId}`} className={buttonClass('primary', 'lg', 'sm:flex-1')}>Start your first lesson<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
-                : <Link href="/learn" className={buttonClass('primary', 'lg', 'sm:flex-1')}>See your path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
+                : finishing
+                  ? <span aria-live="polite" className={buttonClass('primary', 'lg', 'sm:flex-1 pointer-events-none opacity-80')}><Spinner className="h-4 w-4" />Setting up your first lesson…</span>
+                  : <Link href="/learn" className={buttonClass('primary', 'lg', 'sm:flex-1')}>See your path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
               <Link href="/dashboard" className={buttonClass('secondary', 'lg')}>Go to your dashboard</Link>
             </div>
             <div className="mt-8 border-t border-line pt-5 text-[14px] text-muted">
