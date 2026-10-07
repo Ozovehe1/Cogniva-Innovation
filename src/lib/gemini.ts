@@ -16,7 +16,12 @@ export interface GenerateOptions {
   /** Per-attempt timeout; defaults to 25s. */
   timeoutMs?: number
   temperature?: number
+  /** 'minimal' trades depth for latency (live tutoring); default 'low'. */
+  thinking?: 'minimal' | 'low'
 }
+
+/** Which model produced the last successful response (for diagnostics). */
+export let lastGeminiModel: string | null = null
 
 /** Calls Gemini with the primary model and falls back on overload/quota errors. Returns raw text. */
 export async function generateText(prompt: string, opts: GenerateOptions = {}): Promise<string> {
@@ -29,13 +34,14 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
         config: {
           httpOptions: { timeout: opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS },
           thinkingConfig: model.startsWith('gemini-3')
-            ? { thinkingLevel: ThinkingLevel.LOW }
-            : { thinkingBudget: 128 },
+            ? { thinkingLevel: opts.thinking === 'minimal' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW }
+            : { thinkingBudget: opts.thinking === 'minimal' ? 0 : 128 },
           ...(opts.json ? { responseMimeType: 'application/json' } : {}),
           ...(opts.systemInstruction ? { systemInstruction: opts.systemInstruction } : {}),
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         },
       })
+      lastGeminiModel = model
       return response.text ?? ''
     } catch (err) {
       lastErr = err

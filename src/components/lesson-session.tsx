@@ -59,7 +59,10 @@ export function LessonSession({
         played: req.played,
         history: history.current,
       }),
-    })
+      // Past this, the player falls back to the lesson's own alternative explanation.
+      signal: AbortSignal.timeout(30_000),
+    }).catch(() => null)
+    if (!res) return []
     if (!res.ok) return []
     const data = await res.json().catch(() => ({}))
     return Array.isArray(data.steps) ? (data.steps as Step[]) : []

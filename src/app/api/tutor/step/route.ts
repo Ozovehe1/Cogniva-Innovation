@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
-import { nextTutorSteps, type StudentProfileLite, type TutorReason } from '@/lib/lesson-ai'
+import { nextTutorSteps, type GenMeta, type StudentProfileLite, type TutorReason } from '@/lib/lesson-ai'
 import { validateScript, type CheckStep, type Step } from '@/lib/lesson-schema'
 
 export const maxDuration = 60
@@ -55,8 +55,10 @@ export async function POST(request: Request) {
   }
 
   const l = lesson as { title: string; subject: string; objectives: string[] | null }
+  const meta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
   try {
     const steps = await nextTutorSteps({
+      meta,
       lesson: { title: l.title, subject: l.subject, objectives: l.objectives ?? [] },
       played: played.slice(0, checkIndex + 1),
       reason,
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
       profile: studentProfile,
       history,
     })
-    return NextResponse.json({ steps })
+    return NextResponse.json({ steps, meta })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('Tutor step error:', message)

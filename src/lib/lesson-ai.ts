@@ -1,4 +1,4 @@
-import { generateStructuredJson, generateText } from './gemini'
+import { generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, type Step } from './lesson-schema'
 import { intelligenceLabel } from '@/components/intelligence'
 
@@ -52,16 +52,26 @@ function representationHint(p: StudentProfileLite | null | undefined) {
   return map[k] ?? 'Switch representation: if the first explanation was symbolic, go visual; if visual, use a concrete numeric example.'
 }
 
-async function generateSteps(prompt: string, opts: { knownIds?: string[]; knownAxes?: string[]; maxSteps: number; timeoutMs?: number }): Promise<Step[]> {
+export interface GenMeta { ms: number; repaired: boolean; model: string | null; dropped: number }
+
+async function generateSteps(
+  prompt: string,
+  opts: { knownIds?: string[]; knownAxes?: string[]; maxSteps: number; timeoutMs?: number; thinking?: GenerateOptions['thinking']; meta?: GenMeta },
+): Promise<Step[]> {
+  const t0 = Date.now()
+  const meta = opts.meta ?? { ms: 0, repaired: false, model: null, dropped: 0 }
+  const done = (steps: Step[]) => { meta.ms = Date.now() - t0; meta.model = lastGeminiModel; return steps }
+  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, thinking: opts.thinking }
   let raw: unknown
   try {
-    raw = await generateStructuredJson(prompt, { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs })
+    raw = await generateStructuredJson(prompt, gen)
   } catch (err) {
     // Malformed JSON: fall through to repair with the error message.
     raw = { __error: err instanceof Error ? err.message : String(err) }
   }
   let result = validateScript(raw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, maxSteps: opts.maxSteps })
-  if (result.ok) return result.steps
+  if (result.ok) return done(result.steps)
+  meta.repaired = true
 
   // One repair attempt: show the model its output and the validator errors.
   const repairPrompt = `${prompt}
@@ -74,16 +84,17 @@ ${JSON.stringify(raw).slice(0, 12000)}
 
 Return the corrected JSON object {"steps": [...]} only.`
   try {
-    raw = await generateStructuredJson(repairPrompt, { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs })
+    raw = await generateStructuredJson(repairPrompt, gen)
     result = validateScript(raw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, maxSteps: opts.maxSteps })
   } catch (err) {
     console.warn('Lesson repair failed:', err instanceof Error ? err.message : err)
   }
-  if (result.ok) return result.steps
+  if (result.ok) return done(result.steps)
   // Keep the valid steps if most of the answer survived; otherwise fail.
   if (result.steps.length >= 3) {
     console.warn('Using partially valid steps; dropped errors:', result.errors.slice(0, 5))
-    return result.steps
+    meta.dropped = result.errors.length
+    return done(result.steps)
   }
   throw new Error(`AI returned an invalid lesson script (${result.errors.slice(0, 3).join('; ')})`)
 }
@@ -117,6 +128,7 @@ export async function nextTutorSteps(input: {
   answer?: string
   profile?: StudentProfileLite | null
   history?: { reason: string; answer?: string }[]
+  meta?: GenMeta
 }): Promise<Step[]> {
   const { ids, axes } = boardIdsAfter(input.played)
   // Keep the prompt small: the last ~25 steps carry the visible board.
@@ -150,10 +162,10 @@ Situation: ${situation}
 ${SCRIPT_SCHEMA_PROMPT}
 
 ${LAYOUT_RULES}
-- Return 4 to 12 steps. You may clear part of the board first. New ids must not clash with existing ones unless you clear them first.
+- Return 4 to 9 steps; keep it brisk. You may clear part of the board first. New ids must not clash with existing ones unless you clear them first.
 - End with a check (kind "understand", or a short "choice" question) so the student can confirm. Do not add "reteach" to it.
 Return {"steps": [...]} only.`
-  return generateSteps(prompt, { knownIds: ids, knownAxes: axes, maxSteps: 16, timeoutMs: 20_000 })
+  return generateSteps(prompt, { knownIds: ids, knownAxes: axes, maxSteps: 14, timeoutMs: 20_000, thinking: 'minimal', meta: input.meta })
 }
 
 /* ───────────── Manim ───────────── */
