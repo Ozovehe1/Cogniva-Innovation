@@ -84,7 +84,7 @@ export default async function LessonPage({ params }: { params: Promise<{ id: str
         <LessonPreparing lessonId={l.id} own={own} />
       ) : (
         <>
-          {drafting && <LessonPreparing lessonId={l.id} own={own} compact readySections={chapters.length} />}
+          {drafting && <LessonPreparing lessonId={l.id} own={own} compact readySteps={steps.length} />}
           <LessonSession lessonId={l.id} steps={steps} chapters={chapters} title={l.title} resumeAt={resumeAt} answered={answered} furthest={furthest} mode="student"
             checkHref={topicRow ? `/learn/${l.id}/check` : undefined} minor={minor} partial={drafting} />
         </>

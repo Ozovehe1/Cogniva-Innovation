@@ -23,6 +23,8 @@ export interface SectionLite {
   title: string
   status?: string
   steps: Step[]
+  /** Beats of one chapter share a board and are shown as one chapter; omitted = its own chapter. */
+  chapter?: string | null
 }
 
 /** Per-section and whole-lesson step caps (a 2 hour lesson is roughly 600-900 steps). */
@@ -63,14 +65,29 @@ export function withSectionStart(steps: Step[], position: number): Step[] {
   return [{ type: 'clear' }, ...steps]
 }
 
-/** Flatten ready sections into one playable script plus its chapter index. */
+/**
+ * Flatten ready sections (or beats) into one playable script plus its chapter index.
+ * Consecutive beats of the same chapter continue on the same board and form one
+ * chapter; every later chapter opens with a full clear. Appending beats only ever
+ * appends to the script, so a learner's player carries on in place.
+ */
 export function flattenSections(sections: SectionLite[]): { steps: Step[]; chapters: Chapter[] } {
   const steps: Step[] = []
   const chapters: Chapter[] = []
+  let current: string | null = null
   for (const s of sections) {
     if (!Array.isArray(s.steps) || s.steps.length === 0) continue
+    const key = s.chapter ?? `\u0000${s.id ?? s.title}:${chapters.length}`
+    if (chapters.length > 0 && key === current) {
+      const ch = chapters[chapters.length - 1]
+      ch.count += s.steps.length
+      steps.push(...s.steps)
+      ch.ms = estimateMs(steps, ch.start, ch.start + ch.count)
+      continue
+    }
+    current = key
     const own = withSectionStart(s.steps, chapters.length)
-    chapters.push({ title: s.title, start: steps.length, count: own.length, ms: estimateMs(own) })
+    chapters.push({ title: s.chapter ?? s.title, start: steps.length, count: own.length, ms: estimateMs(own) })
     steps.push(...own)
   }
   return { steps, chapters }

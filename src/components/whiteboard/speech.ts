@@ -166,10 +166,14 @@ export function stepLines(step: Step, index: number): Line[] {
   if (step.say?.trim()) out.push({ index, text: step.say.trim(), kind: 'say' })
   else if (step.type === 'write') out.push({ index, text: liveAsExpr(step.text).replace(/\s*\n\s*/g, ' '), kind: 'say' })
   if (step.type === 'check') out.push({ index, text: step.prompt, kind: 'check' })
-  if (step.type === 'math' && !/\\begin\{/.test(step.tex)) out.push({ index, text: `$${liveAsExpr(step.tex)}$`, kind: 'math' })
-  if (step.type === 'transform' && step.tex && !/\\begin\{/.test(step.tex)) out.push({ index, text: `$${liveAsExpr(step.tex)}$`, kind: 'math' })
+  // A live readout ({{t:2}}) is a number that changes on the board, not a line of working: shown as its
+  // expression it reads "t = t s", so it stays out of the transcript.
+  if (step.type === 'math' && !/\\begin\{/.test(step.tex) && !hasLive(step.tex)) out.push({ index, text: `$${step.tex}$`, kind: 'math' })
+  if (step.type === 'transform' && step.tex && !/\\begin\{/.test(step.tex) && !hasLive(step.tex)) out.push({ index, text: `$${step.tex}$`, kind: 'math' })
   return out
 }
+
+const hasLive = (text: string) => /\{\{[^{}]+\}\}/.test(text)
 
 /** Live values ({{expr}} / {{expr:2}}) shown as their expression, for the transcript and the voice. */
 export function liveAsExpr(text: string): string {
@@ -192,8 +196,8 @@ export function stepNarration(step: Step): { text: string; map: number[] } {
       const spoken = w === '=' ? 'equals' : toSpeech(w)
       if (spoken) { parts.push(spoken); count += spoken.split(/\s+/).filter(Boolean).length }
     }
-  } else if (step.type === 'math') parts.push(texToWords(liveAsExpr(step.tex)))
-  else if (step.type === 'transform' && step.tex) parts.push(texToWords(liveAsExpr(step.tex)))
+  } else if (step.type === 'math' && !hasLive(step.tex)) parts.push(texToWords(step.tex))
+  else if (step.type === 'transform' && step.tex && !hasLive(step.tex)) parts.push(texToWords(step.tex))
   if (step.type === 'check') parts.push(toSpeech(step.prompt))
   return { text: tidy(parts.filter(Boolean).join(' ')), map }
 }

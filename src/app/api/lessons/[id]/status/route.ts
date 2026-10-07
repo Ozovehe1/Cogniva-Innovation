@@ -20,15 +20,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     .eq('id', id).eq('owner_student_id', profile.id).maybeSingle()
   const l = data as { id: string; draft_status: string; draft_error: string | null; draft_retry_at: string | null; draft_lock_until: string | null; chapters: unknown[] } | null
   if (!l) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  // A section that failed validation (e.g. too much text, not enough demonstration) gets more tries, bounded.
-  if (l.draft_status === 'partial') {
-    const db = createAdminClient()
-    const { data: retry } = await db.from('lesson_sections').update({ status: 'pending', error: null }).eq('lesson_id', id).eq('status', 'failed').lt('attempts', 5).select('id')
-    if (retry?.length) {
-      await db.from('lessons').update({ draft_status: 'drafting' }).eq('id', id)
-      l.draft_status = 'drafting'
-    }
-  }
+  // Beats that failed are dropped, never retried later: later beats are already published after them.
   if (needsWorker(l)) {
     const origin = selfOrigin(request)
     after(() => runDraftWork(id, { origin }).then(() => undefined).catch(err => console.error('Draft worker failed:', err)))
@@ -41,6 +33,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   return NextResponse.json({
     status: l.draft_status,
     sectionsReady: Array.isArray(l.chapters) ? l.chapters.length : 0,
+    // Beats append to the current chapter, so the page reloads on new steps, not new chapters.
+    stepsReady: Array.isArray(l.chapters) ? (l.chapters as { count?: number }[]).reduce((a, c) => a + (Number(c?.count) || 0), 0) : 0,
     retryAt: l.draft_status === 'paused' ? l.draft_retry_at : null,
     error: l.draft_status === 'failed' ? 'This lesson could not be written. Try again from your path.' : null,
   })

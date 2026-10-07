@@ -8,27 +8,28 @@ import { Spinner } from './ui'
  * keeps the background drafting going) and refreshes the page when a new section
  * is ready, so the lesson can start as soon as its first section exists.
  */
-export function LessonPreparing({ lessonId, own, compact = false, readySections = 0 }: { lessonId: string; own: boolean; compact?: boolean; readySections?: number }) {
+export function LessonPreparing({ lessonId, own, compact = false, readySteps = 0 }: { lessonId: string; own: boolean; compact?: boolean; readySteps?: number }) {
   const router = useRouter()
-  const [state, setState] = useState<{ status: string; sectionsReady: number; retryAt: string | null; error: string | null } | null>(null)
+  const [state, setState] = useState<{ status: string; sectionsReady: number; stepsReady?: number; retryAt: string | null; error: string | null } | null>(null)
   useEffect(() => {
     if (!own) return
     let stop = false
-    let seen = readySections
+    let seen = readySteps
     const tick = async () => {
       const res = await fetch(`/api/lessons/${lessonId}/status`, { cache: 'no-store' }).catch(() => null)
       const data = res?.ok ? await res.json().catch(() => null) : null
       if (stop || !data) return
       setState(data)
-      // Reload as soon as a new section exists. Mid-lesson the player appends it in place, so playback
+      // Reload as soon as a new beat exists. Mid-lesson the player appends it in place, so playback
       // carries straight on into it (no reset, no button).
-      if (data.sectionsReady > seen) { seen = data.sectionsReady; router.refresh() }
+      const have = data.stepsReady ?? 0
+      if (have > seen) { seen = have; router.refresh() }
       if (['ready', 'partial', 'failed'].includes(data.status)) return
-      setTimeout(tick, compact ? 8_000 : 4_000)
+      setTimeout(tick, compact ? 8_000 : 2_500)
     }
     void tick()
     return () => { stop = true }
-  }, [lessonId, own, compact, readySections, router])
+  }, [lessonId, own, compact, readySteps, router])
 
   // Mid-lesson nothing is shown: later sections stream in behind the one being taught.
   if (compact) return null
@@ -44,7 +45,7 @@ export function LessonPreparing({ lessonId, own, compact = false, readySections 
           <p className="mt-2 max-w-[34rem] text-[15px] leading-relaxed text-muted">
             {paused
               ? 'The AI service is busy right now. Writing picks up again automatically in a few minutes; you can leave this page and come back.'
-              : 'It’s pitched at your level, with examples from your interests, and sized to your week. The first section is usually ready in about a minute; the rest is written while you learn.'}
+              : 'It’s pitched at your level, with examples from your interests, and sized to your week. The first part is usually ready in under a minute; the rest is written while you learn.'}
           </p>
         </>
       )}

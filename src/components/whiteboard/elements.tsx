@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import katex from 'katex'
-import type { Num, Shape, Vars } from '@/lib/lesson-schema'
+import { BOARD_H, type Num, type Shape, type Vars } from '@/lib/lesson-schema'
 import {
   INK_HEX,
   SIZE_PX,
@@ -44,7 +44,13 @@ export function useMinUnits(units: number, minPx: number) {
 /** On-screen sizes (px) of reflowed notes under the diagram on a phone. */
 export const FLOW_PX: Record<TextEl['size'], number> = { sm: 17, md: 19, lg: 23, xl: 27 }
 
+/** Multiplication typed as * (AI-written maths, live expressions) is shown as ×, never KaTeX's ∗. */
+export function texTimes(tex: string): string {
+  return tex.replace(/\^\s*\*|\^\{\s*\*\s*\}|\*/g, m => (m === '*' ? ' \\times ' : m))
+}
+
 export function renderTex(tex: string, display = false): string {
+  tex = texTimes(tex)
   try {
     return katex.renderToString(display ? `\\displaystyle ${tex}` : tex, { throwOnError: false, displayMode: false, output: 'html', strict: 'ignore' })
   } catch {
@@ -638,6 +644,12 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
       const xticks = niceTicks(xRange[0], xRange[1] - (xRange[1] - xRange[0]) * 0.04, shape.xStep)
       const yticks = niceTicks(yRange[0], yRange[1] - (yRange[1] - yRange[0]) * 0.04, shape.yStep)
       const axisColor = INK_HEX[step.color ?? 'muted']
+      // The x label never sits on the tick numbers (e.g. "t (s)" over the 3): it goes on its own row
+      // under them when that fits on the board, otherwise tick numbers under the label are left out.
+      const belowY = xb[1] + 10 + tickPx + axisLabelPx
+      const labelBelow = !!shape.xLabel && belowY <= BOARD_H - 4
+      const xLabelY = labelBelow ? belowY : xb[1] + 4 + axisLabelPx
+      const labelLeft = shape.xLabel && !labelBelow ? xb[0] - 2 - shape.xLabel.length * axisLabelPx * 0.5 - tickPx * 0.6 : Infinity
       return (
         <g>
           <Stroke {...base} color={axisColor} d={pathFromPoints([xa, xb])} duration={dur * 0.55} />
@@ -650,7 +662,7 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
               return (
                 <g key={`x${v}`}>
                   <line x1={tx} y1={ty - 4} x2={tx} y2={ty + 4} stroke={axisColor} strokeWidth={1.2} />
-                  <text x={tx} y={ty + 6 + tickPx} fontSize={tickPx} textAnchor="middle" fill={INK_HEX.muted} style={{ fontFamily: 'var(--font-sans)' }}>{v}</text>
+                  {tx < labelLeft && <text x={tx} y={ty + 6 + tickPx} fontSize={tickPx} textAnchor="middle" fill={INK_HEX.muted} style={{ fontFamily: 'var(--font-sans)' }}>{v}</text>}
                 </g>
               )
             })}
@@ -664,7 +676,7 @@ export function ShapeElement({ el, animate, reduced, duration, vars: boardVars =
               )
             })}
             {shape.xLabel && (
-              <text x={xb[0] - 2} y={xb[1] + 4 + axisLabelPx} fontSize={axisLabelPx} textAnchor="end" fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
+              <text x={xb[0] - 2} y={xLabelY} fontSize={axisLabelPx} textAnchor="end" fontStyle="italic" fill={INK_HEX.ink} style={{ fontFamily: 'var(--font-serif)' }}>
                 {shape.xLabel}
               </text>
             )}

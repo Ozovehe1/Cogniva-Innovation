@@ -30,9 +30,9 @@ export interface LessonLite {
   objectives: string[]
 }
 
-const TUTOR_VOICE = `You are a patient, precise tutor who teaches on a whiteboard in the style of 3Blue1Brown: build intuition visually first, then formalise. Short spoken narration ("say", read aloud by a voice) of one or two sentences, plain language, no hype, no emoji. Global audience: no exam-board references.`
+export const TUTOR_VOICE = `You are a patient, precise tutor who teaches on a whiteboard in the style of 3Blue1Brown: build intuition visually first, then formalise. Short spoken narration ("say", read aloud by a voice) of one or two sentences, plain language, no hype, no emoji. Global audience: no exam-board references.`
 
-const LAYOUT_RULES = `Layout rules:
+export const LAYOUT_RULES = `Layout rules:
 - Everything stays on the board until a clear step removes it. Keep a mental list of what is on the board and where.
 - Use regions: title band y 24..80 (one line, size lg, under ~34 characters); diagram region x 24..440, y 100..476; notes column x 460..776, y 100..476 (size sm or md, maxWidth 300, about 55 units per line of sm text).
 - Never place an element where another one still is. Stack notes downward; when the notes column is full, clear it (clear with the ids) before writing more. Text may sit inside a graph only as a short label.
@@ -64,7 +64,7 @@ function representationHint(p: StudentProfileLite | null | undefined) {
 }
 
 /** The core teaching principle: every concept is shown, not just told. */
-const SHOW_DONT_TELL = `Show, don't tell (the core of this tutor's teaching):
+export const SHOW_DONT_TELL = `Show, don't tell (the core of this tutor's teaching):
 - Every concept is SHOWN on the board: an animated diagram, a graph that changes, a shape that moves, or a worked demonstration where an equation transforms step by step. Text and narration support the picture; they never replace it.
 - For each idea: draw the picture first (draw), make it move as you explain (animate a variable, move, scale, transform, highlight), and let the "say" narrate what is happening on screen at that moment ("watch the point slide…", "see the area grow…").
 - Word problems are drawn too: sketch the situation (a roof and panels, a ball's path, a bar model of the quantities) before any algebra.
@@ -73,7 +73,7 @@ const SHOW_DONT_TELL = `Show, don't tell (the core of this tutor's teaching):
 
 export interface GenMeta { ms: number; repaired: boolean; model: string | null; dropped: number; trace?: string[] }
 
-async function generateSteps(
+export async function generateSteps(
   prompt: string,
   opts: {
     knownIds?: string[]; knownAxes?: string[]; knownVars?: string[]; maxSteps: number; timeoutMs?: number; primaryTimeoutMs?: number; thinking?: GenerateOptions['thinking']; meta?: GenMeta
@@ -81,6 +81,8 @@ async function generateSteps(
     played?: Step[]
     /** Allow one extra model call to fix overlapping layout (drafts only; costs latency). */
     layoutRepair?: boolean
+    /** Absolute deadline for every model call this makes (see GenerateOptions.deadline). */
+    deadline?: number
   },
 ): Promise<Step[]> {
   const t0 = Date.now()
@@ -89,12 +91,13 @@ async function generateSteps(
   const offset = opts.played?.length ?? 0
   const done = (steps: Step[]) => {
     meta.ms = Date.now() - t0
-    meta.model = lastGeminiModel
+    meta.model = answered ?? lastGeminiModel
     // Last resort: clear whatever a new element would be drawn on top of.
     return autoFixLayout(steps, start, offset)
   }
   meta.trace = []
-  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace }
+  let answered: string | null = null
+  const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace, deadline: opts.deadline, onModel: (m: string) => { answered = m } }
   let raw: unknown
   try {
     raw = await generateStructuredJson(prompt, gen)

@@ -57,6 +57,33 @@ export interface GenerateOptions {
   trace?: string[]
   /** Override the model chain (diagnostics). */
   models?: readonly string[]
+  /** Absolute time (ms since epoch) after which no further model is tried; attempts are cut to fit. */
+  deadline?: number
+  /** Called with the model that answered (safe under concurrency, unlike lastGeminiModel). */
+  onModel?: (model: string) => void
+}
+
+/* ───────────── Free-tier pacing ─────────────
+ * Free-tier limits per model (AI Studio, 2026-10-07): flash models 5 requests a minute,
+ * flash-lite models 15. Calls are spread so one instance never bursts past them: a model
+ * whose last-minute window is full is skipped for the next model in the chain, and when
+ * every model is full the call waits for the first free slot. Other instances are
+ * covered by the 429 handling (skipUntil + backoff). */
+const RPM_LITE = 15
+const RPM_FLASH = 5
+export function modelRpm(model: string) { return /lite/.test(model) ? RPM_LITE : RPM_FLASH }
+const recent = new Map<string, number[]>()
+/** ms until `model` has a free request slot in this instance (0 = free now). */
+export function slotWaitMs(model: string, now = Date.now()) {
+  const list = (recent.get(model) ?? []).filter(t => now - t < 60_000)
+  recent.set(model, list)
+  if (list.length < modelRpm(model)) return 0
+  return 60_000 - (now - list[0]) + 50
+}
+function takeSlot(model: string) {
+  const list = recent.get(model) ?? []
+  list.push(Date.now())
+  recent.set(model, list)
 }
 
 /** Per-instance memory of models that are out of quota or missing, so later calls skip them quickly. */
@@ -90,15 +117,33 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
   const now = Date.now()
   const live = chain.filter(m => (skipUntil.get(m) ?? 0) <= now)
   // If everything is marked as skipped, try the whole chain anyway (quota may have reset).
-  const order = opts.models ? chain : live.length ? live : chain
-  for (const [i, model] of order.entries()) {
+  let order = opts.models ? [...chain] : live.length ? live : [...chain]
+  // Spread calls under the free-tier per-minute limits: prefer models with a free slot,
+  // and when none has one, wait for the first slot (bounded by the deadline).
+  for (let waits = 0; waits < 3; waits++) {
+    const free = order.filter(m => slotWaitMs(m) === 0)
+    if (free.length) { order = [...free, ...order.filter(m => !free.includes(m))]; break }
+    const wait = Math.min(...order.map(m => slotWaitMs(m)))
+    if (opts.deadline && Date.now() + wait > opts.deadline - 5_000) break
+    await new Promise(r => setTimeout(r, Math.min(wait, 30_000)))
+  }
+  let attempted = 0
+  for (const model of order) {
+    let timeout = (attempted === 0 ? opts.primaryTimeoutMs : undefined) ?? opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS
+    if (opts.deadline) {
+      const left = opts.deadline - Date.now()
+      if (left < 6_000) break
+      timeout = Math.min(timeout, left)
+    }
+    attempted++
+    takeSlot(model)
     try {
       const thinkingConfig = thinkingFor(model, opts.thinking)
       const response = await ai.models.generateContent({
         model,
         contents: prompt,
         config: {
-          httpOptions: { timeout: (i === 0 ? opts.primaryTimeoutMs : undefined) ?? opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS },
+          httpOptions: { timeout },
           ...(thinkingConfig ? { thinkingConfig } : {}),
           ...(opts.json ? { responseMimeType: 'application/json' } : {}),
           ...(opts.systemInstruction ? { systemInstruction: opts.systemInstruction } : {}),
@@ -106,6 +151,7 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
         },
       })
       lastGeminiModel = model
+      opts.onModel?.(model)
       return response.text ?? ''
     } catch (err) {
       lastErr = err
@@ -129,7 +175,7 @@ export async function generateText(prompt: string, opts: GenerateOptions = {}): 
   if (quotaCount > 0 && otherFailures === 0) {
     throw new GeminiQuotaError(`Gemini quota reached on every model (${quotaCount} of ${order.length} tried)`, retryAfter, daily)
   }
-  throw lastErr
+  throw lastErr ?? new Error('Gemini: no model could be tried before the deadline (timed out)')
 }
 
 async function generateJson(prompt: string, opts: GenerateOptions = {}) {
