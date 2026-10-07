@@ -904,6 +904,19 @@ def prepare(raw: dict, narr: dict | None, media_dir: str, log: list, plan: dict 
         raw2 = ask_json(REPAIR_PROMPT.format(why="validation before rendering", problems="\n".join(errs), spec=json.dumps({k: v for k, v in spec.items() if k != "narration"})[:14000], grammar=GRAMMAR), temperature=0.2, timeout=90, log=log)
         spec = norm(raw2)
         errs = check(spec, True)
+        for _ in range(3):  # last resort: drop the one object that still fails (with every reference to it), keep the rest
+            m = re.search(r"object (\S+) \(", " ".join(errs))
+            if not errs or not m or m.group(1) not in {o["id"] for o in spec["objects"]}:
+                break
+            bad = m.group(1)
+            spec["objects"] = [o for o in spec["objects"] if o["id"] != bad and (o.get("on"), o.get("graph"), o.get("target"), (o.get("next_to") or [None])[0]).count(bad) == 0]
+            ids = {o["id"] for o in spec["objects"]}
+            for a in spec["timeline"]:
+                if a.get("targets"):
+                    a["targets"] = [t for t in a["targets"] if t in ids or "." in str(t)]
+            spec["timeline"] = [a for a in spec["timeline"] if a.get("targets") != [] and all(a.get(k) in ids for k in ("from", "to", "eq", "target", "path") if isinstance(a.get(k), str))]
+            notes.append(f"dropped {bad}: {' '.join(errs)[:160]}")
+            errs = check(spec, True)
         if errs:
             raise RuntimeError("spec invalid after repair: " + " | ".join(errs)[:800])
     left = fill_motion(spec, notes)

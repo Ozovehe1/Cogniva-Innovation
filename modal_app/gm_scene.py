@@ -71,13 +71,18 @@ class SpecError(ValueError):
 
 
 # ───────────── Safe expressions ─────────────
+def _smooth(a):
+    return 0.0 if a <= 0 else 1.0 if a >= 1 else a * a * (3 - 2 * a)
+
+
 _FUNCS = {
     "sin": np.sin, "cos": np.cos, "tan": np.tan, "asin": np.arcsin, "acos": np.arccos, "atan": np.arctan, "atan2": np.arctan2,
     "sinh": np.sinh, "cosh": np.cosh, "tanh": np.tanh, "exp": np.exp, "log": np.log, "ln": np.log, "log10": np.log10,
     "sqrt": np.sqrt, "abs": np.abs, "floor": np.floor, "ceil": np.ceil, "sign": np.sign, "min": min, "max": max,
-    "clip": lambda v, a, b: min(max(v, a), b), "step": lambda v: 1.0 if v >= 0 else 0.0, "mod": lambda a, b: a % b,
+    "clip": lambda v, a, b: min(max(v, a), b), "step": lambda *a: (1.0 if a[0] >= 0 else 0.0) if len(a) == 1 else (1.0 if a[1] >= a[0] else 0.0), "mod": lambda a, b: a % b,
     "deg": lambda r: r * 180 / math.pi, "rad": lambda d: d * math.pi / 180, "erf": math.erf, "gauss": lambda x, m, s: math.exp(-((x - m) ** 2) / (2 * s * s)) / (s * math.sqrt(2 * math.pi)),
-    "smoothstep": lambda a: 0.0 if a <= 0 else 1.0 if a >= 1 else a * a * (3 - 2 * a), "lerp": lambda a, b, s: a + (b - a) * s,
+    "smoothstep": lambda *a: _smooth(a[0]) if len(a) == 1 else _smooth((a[2] - a[0]) / ((a[1] - a[0]) or 1e-9)), "lerp": lambda a, b, s: a + (b - a) * s,
+    "pulse": lambda x, a, b: 1.0 if a <= x <= b else 0.0, "pow": lambda a, b: a ** b, "hypot": math.hypot,
     "saw": lambda v: v - math.floor(v), "tri": lambda v: 1 - abs(2 * (v - math.floor(v)) - 1),
 }
 _CONSTS = {"pi": math.pi, "e": math.e, "tau": 2 * math.pi}
