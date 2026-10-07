@@ -28,6 +28,8 @@ export async function updateSession(request: NextRequest) {
     path === '/about' ||
     path === '/learn/demo' ||
     path === '/learn/demo/frame' ||
+    // Wakes the narration voice when a lesson opens (public demo too); only voices lessons for signed-in users.
+    path === '/api/tts/warm' ||
     // Called by the Modal render service; authenticated with X-Render-Token instead of a session.
     path === '/api/manim/callback'
   if (!user && !isPublic) {
