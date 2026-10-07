@@ -18,6 +18,11 @@ export interface ManimJob {
   updated_at: string
 }
 
+/** Storage path of a clip's pen paths (the whiteboard hand traces them): next to the video, `.pen.json`. */
+export function penPathFor(videoPath: string) {
+  return videoPath.replace(/\.mp4$/i, '') + '.pen.json'
+}
+
 /** Initial render + up to 2 AI-fixed retries. */
 export const MAX_RENDER_ATTEMPTS = 3
 
@@ -69,6 +74,9 @@ export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 
     return { ok: false as const, error }
   }
 
+  // Where the hand's pen paths for this clip go (see modal_app/pen_export.py); optional, the clip plays without them.
+  const { data: penSigned } = await admin.storage.from(MANIM_BUCKET).createSignedUploadUrl(penPathFor(path), { upsert: true })
+
   await admin.from('manim_jobs').update({ status: 'rendering', error: null, attempts: attempt, video_path: path }).eq('id', job.id)
 
   try {
@@ -76,7 +84,7 @@ export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 
     const res = await fetch(`${base}/render`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN! },
-      body: JSON.stringify({ job_id: job.id, code: job.code, scene_name: MANIM_SCENE_NAME, upload_url: signed.signedUrl }),
+      body: JSON.stringify({ job_id: job.id, code: job.code, scene_name: MANIM_SCENE_NAME, upload_url: signed.signedUrl, ...(penSigned ? { paths_upload_url: penSigned.signedUrl } : {}) }),
       signal: AbortSignal.timeout(20_000),
     })
     if (res.status === 422) {

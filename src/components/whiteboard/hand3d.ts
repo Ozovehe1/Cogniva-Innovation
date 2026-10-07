@@ -42,8 +42,10 @@ export function loadHandModel(): Promise<GLTF> {
   return gltfPromise
 }
 
-const SKIN = '#8a5638'
-const CUFF = '#ece5d8'
+const SKIN = '#8a5a44'
+const NAIL = '#c99583'
+const CREASE = '#6d3d27'
+const SLEEVE = '#e8e3d9'
 
 /** Finger flexion in degrees: knuckle, middle joint, last joint; then spread at the knuckle. */
 type Finger = [number, number, number, number]
@@ -156,6 +158,10 @@ export async function createHand3D(root: HTMLElement, onLost?: () => void): Prom
   }
   const palm = dorsal.clone().negate()
 
+  // Joint positions at rest (= the skin's bind space), for the nails and knuckle creases painted on below.
+  const restP = new Map<string, THREE.Vector3>()
+  bones.forEach((_, n) => restP.set(n, P(n)))
+
   const joints = new Map<string, Joint>()
   const worldQ = (o: THREE.Object3D) => o.getWorldQuaternion(new THREE.Quaternion())
   /** Make bone n a joint turning about the given model-space directions (fixed in its parent's frame). */
@@ -231,66 +237,106 @@ export async function createHand3D(root: HTMLElement, onLost?: () => void): Prom
   /** A unit direction across the marker, toward v. */
   const across = (v: THREE.Vector3) => v.clone().addScaledVector(axisDir, -v.dot(axisDir)).normalize()
 
-  // ---- Skin: drawn as a plain mesh skinned on the CPU, re-skinned only when the fingers move
-  // (no bone textures or skinning shaders, which some mobile GPUs choke on).
+  // ---- Skin: the low-poly rig mesh is subdivided once (Loop) for a smooth silhouette, painted per vertex (nails,
+  // knuckle creases, a little unevenness in tone and gloss) and drawn as a plain mesh skinned on the CPU, re-skinned
+  // only when the fingers move (no bone textures or skinning shaders, which some mobile GPUs choke on). Normals are
+  // recomputed from the posed surface, so shading stays smooth through every pose.
   sk.visible = false
-  const skinMat = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.58, metalness: 0 })
-  const baked = new THREE.Mesh(sk.geometry.clone(), skinMat)
-  baked.geometry.deleteAttribute('skinIndex')
-  baked.geometry.deleteAttribute('skinWeight')
-  // Posed positions and normals are written as floats (the compressed model stores them quantized).
-  const nV = sk.geometry.getAttribute('position').count
-  baked.geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(nV * 3), 3))
-  baked.geometry.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(nV * 3), 3))
+  const sub = subdivideSkinned(sk.geometry)
+  const nV = sub.pos.length / 3
+  {
+    // Paint: warm skin, lighter and glossier nails on the backs of the last finger bones, fine creases over the knuckles.
+    const col = new Float32Array(nV * 3), rough = new Float32Array(nV)
+    const base = new THREE.Color(SKIN), nail = new THREE.Color(NAIL), crease = new THREE.Color(CREASE), c = new THREE.Color()
+    const v = new THREE.Vector3(), seg = new THREE.Vector3(), rel = new THREE.Vector3()
+    const tipOf: [string, string][] = [...FINGERS.map(f => [JOINTS[f][3], JOINTS[f][4]] as [string, string]), [JOINTS.thumb[2], JOINTS.thumb[3]]]
+    const creaseAt = [...FINGERS.flatMap(f => [[JOINTS[f][1], JOINTS[f][2]], [JOINTS[f][2], JOINTS[f][3]], [JOINTS[f][3], JOINTS[f][4]]]), [JOINTS.thumb[1], JOINTS.thumb[2]], [JOINTS.thumb[2], JOINTS.thumb[3]]] as [string, string][]
+    const fw = handLen * 0.05
+    for (let i = 0; i < nV; i++) {
+      v.set(sub.pos[i * 3], sub.pos[i * 3 + 1], sub.pos[i * 3 + 2]).applyMatrix4(sk.bindMatrix)
+      c.copy(base)
+      // Slow variation in tone (a little redder over the knuckles and fingertips, as real skin is).
+      const n1 = hash3(v.x * 9 / handLen, v.y * 9 / handLen, v.z * 9 / handLen)
+      c.offsetHSL(0, (n1 - 0.5) * 0.04, (n1 - 0.5) * 0.025)
+      let r = 0.52 + (hash3(v.x * 31 / handLen, v.y * 31 / handLen, v.z * 31 / handLen) - 0.5) * 0.16
+      for (const [j0, j1] of creaseAt) {
+        const a0 = restP.get(j0)!, a1 = restP.get(j1)!
+        seg.subVectors(a1, a0)
+        const L0 = seg.length(); seg.normalize()
+        rel.subVectors(v, a0)
+        const along = rel.dot(seg)
+        if (along < -fw || along > fw) continue
+        rel.addScaledVector(seg, -along)
+        const side = rel.dot(dorsal) / Math.max(1e-6, rel.length())
+        // Back of the knuckle: a few fine folds; palm side: one deeper line.
+        const fall = Math.exp(-((along / (fw * 0.55)) ** 2))
+        const k = side > 0.2 ? fall * (0.55 + 0.45 * Math.cos((along / (L0 * 0.035)) * Math.PI * 2)) * 0.5 : side < -0.3 ? Math.exp(-((along / (fw * 0.18)) ** 2)) * 0.42 : 0
+        if (k > 0) { c.lerp(crease, k); r += k * 0.1 }
+        if (side > 0.2) c.offsetHSL(0.0, 0.02 * fall, -0.012 * fall)
+      }
+      for (const [j0, j1] of tipOf) {
+        const a0 = restP.get(j0)!, a1 = restP.get(j1)!
+        seg.subVectors(a1, a0)
+        const L0 = seg.length(); seg.normalize()
+        rel.subVectors(v, a0)
+        const t = rel.dot(seg) / L0
+        if (t < 0.3 || t > 1.08) continue
+        rel.addScaledVector(seg, -t * L0)
+        const side = rel.dot(dorsal) / Math.max(1e-6, rel.length())
+        if (side > 0.45) {
+          // Nail plate, with a paler free edge at the tip.
+          const k = Math.min(1, (side - 0.45) / 0.2) * Math.min(1, (t - 0.3) / 0.12)
+          c.lerp(nail, k)
+          if (t > 0.92) c.offsetHSL(0, -0.05 * k, 0.06 * k)
+          r = r * (1 - k) + 0.24 * k
+        }
+      }
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b
+      rough[i] = r
+    }
+    sub.color = col
+    sub.rough = rough
+  }
+  const skinMat = makeSkinMaterial()
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(nV * 3), 3))
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(nV * 3), 3))
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(sub.color!, 3))
+  geo.setAttribute('aRough', new THREE.Float32BufferAttribute(sub.rough!, 1))
+  geo.setIndex(new THREE.BufferAttribute(sub.index, 1))
+  const baked = new THREE.Mesh(geo, skinMat)
   baked.castShadow = true
   baked.frustumCulled = false
   sk.parent!.add(baked)
   baked.position.copy(sk.position); baked.quaternion.copy(sk.quaternion); baked.scale.copy(sk.scale)
-  const srcPos = sk.geometry.getAttribute('position') as THREE.BufferAttribute
-  const srcNor = sk.geometry.getAttribute('normal') as THREE.BufferAttribute
-  const sIdx = sk.geometry.getAttribute('skinIndex') as THREE.BufferAttribute
-  const sW = sk.geometry.getAttribute('skinWeight') as THREE.BufferAttribute
-  const outPos = baked.geometry.getAttribute('position') as THREE.BufferAttribute
-  const outNor = baked.geometry.getAttribute('normal') as THREE.BufferAttribute
-  const tv = new THREE.Vector3(), tn = new THREE.Vector3(), acc = new THREE.Vector3(), accN = new THREE.Vector3(), tmp = new THREE.Vector3()
-  const boneM: THREE.Matrix4[] = [], boneN: THREE.Matrix3[] = []
-  const bindN = new THREE.Matrix3(), bindInvN = new THREE.Matrix3()
+  const outPos = geo.getAttribute('position') as THREE.BufferAttribute
+  const tv = new THREE.Vector3(), acc = new THREE.Vector3(), tmp = new THREE.Vector3()
+  const boneM: THREE.Matrix4[] = []
   const modelInv = new THREE.Matrix4()
   const bake = () => {
     // Bone matrices relative to the model (the rig's placement in the scene is applied by the scene graph).
     modelInv.copy(model.matrixWorld).invert()
     const bs = sk.skeleton.bones, inv = sk.skeleton.boneInverses
-    for (let i = 0; i < bs.length; i++) {
-      boneM[i] = (boneM[i] ?? new THREE.Matrix4()).multiplyMatrices(modelInv, bs[i].matrixWorld).multiply(inv[i])
-      boneN[i] = (boneN[i] ?? new THREE.Matrix3()).setFromMatrix4(boneM[i])
-    }
-    // Bind matrices are relative to the mesh's parent chain in model space.
-    bindN.setFromMatrix4(sk.bindMatrix)
-    bindInvN.setFromMatrix4(sk.bindMatrixInverse)
+    for (let i = 0; i < bs.length; i++) boneM[i] = (boneM[i] ?? new THREE.Matrix4()).multiplyMatrices(modelInv, bs[i].matrixWorld).multiply(inv[i])
     const meshToModel = tmpM.multiplyMatrices(modelInv, sk.matrixWorld)
     const modelToMesh = tmpM2.copy(meshToModel).invert()
-    const m2mN = tmpN.setFromMatrix4(modelToMesh)
-    for (let v = 0; v < srcPos.count; v++) {
-      tv.fromBufferAttribute(srcPos, v).applyMatrix4(sk.bindMatrix)
-      tn.fromBufferAttribute(srcNor, v).applyMatrix3(bindN)
-      acc.set(0, 0, 0); accN.set(0, 0, 0)
+    const P3 = sub.pos, SI = sub.skinIndex, SW = sub.skinWeight
+    for (let v = 0; v < nV; v++) {
+      tv.set(P3[v * 3], P3[v * 3 + 1], P3[v * 3 + 2]).applyMatrix4(sk.bindMatrix)
+      acc.set(0, 0, 0)
       for (let k = 0; k < 4; k++) {
-        const w = sW.getComponent(v, k)
+        const w = SW[v * 4 + k]
         if (!w) continue
-        const b = sIdx.getComponent(v, k)
-        acc.addScaledVector(tmp.copy(tv).applyMatrix4(boneM[b]), w)
-        accN.addScaledVector(tmp.copy(tn).applyMatrix3(boneN[b]), w)
+        acc.addScaledVector(tmp.copy(tv).applyMatrix4(boneM[SI[v * 4 + k]]), w)
       }
       // boneM maps bind space into model space; bring the result into the mesh's own space.
       acc.applyMatrix4(modelToMesh)
-      accN.applyMatrix3(m2mN).normalize()
       outPos.setXYZ(v, acc.x, acc.y, acc.z)
-      outNor.setXYZ(v, accN.x, accN.y, accN.z)
     }
     outPos.needsUpdate = true
-    outNor.needsUpdate = true
+    geo.computeVertexNormals()
   }
-  const tmpM = new THREE.Matrix4(), tmpM2 = new THREE.Matrix4(), tmpN = new THREE.Matrix3()
+  const tmpM = new THREE.Matrix4(), tmpM2 = new THREE.Matrix4()
 
   // ---- Marker: tip at the origin of its group, body along +Y; a whiteboard marker with a felt chisel nib,
   // a tapered collar, a grey barrel with a green band and a cap posted on the back end.
@@ -315,29 +361,45 @@ export async function createHand3D(root: HTMLElement, onLost?: () => void): Prom
   marker.position.copy(tipP)
   marker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axisDir.clone().negate())
 
-  // Forearm and shirt cuff behind the wrist.
+  // Forearm and shirt sleeve behind the wrist: a forearm that tapers into the wrist, and a soft cotton cuff with a
+  // rounded, slightly rolled opening (no hard rim) and loose folds that bunch just behind it.
   const forearmDir = wristP.clone().sub(P('middle-finger-phalanx-proximal')).normalize()
   const arm = new THREE.Group()
-  const fore = new THREE.Mesh(new THREE.CylinderGeometry(handLen * 0.15, handLen * 0.135, handLen * 0.7, 24, 1, true), skinMat)
-  fore.position.y = handLen * 0.25
-  const cuff = new THREE.Mesh(new THREE.CylinderGeometry(handLen * 0.21, handLen * 0.25, handLen * 1.4, 28, 1, false), new THREE.MeshStandardMaterial({ color: CUFF, roughness: 0.92 }))
-  cuff.position.y = handLen * (0.06 + 0.7)
-  // A turned-back hem at the sleeve's opening.
-  const hem = new THREE.Mesh(new THREE.TorusGeometry(handLen * 0.215, handLen * 0.022, 10, 32), cuff.material)
-  hem.rotation.x = Math.PI / 2
-  hem.position.y = -handLen * 0.7
-  cuff.add(hem)
-  fore.castShadow = cuff.castShadow = hem.castShadow = true
-  arm.add(fore, cuff)
-  arm.position.copy(wristP).addScaledVector(forearmDir, -handLen * 0.12)
+  const lathe = (pts: [number, number][], segs: number, n: number) =>
+    new THREE.LatheGeometry(new THREE.SplineCurve(pts.map(([r, y]) => new THREE.Vector2(r * handLen, y * handLen))).getPoints(n), segs)
+  const foreGeo = lathe([[0.118, -0.16], [0.124, -0.02], [0.133, 0.12], [0.146, 0.3], [0.158, 0.5], [0.166, 0.7], [0.17, 0.9]], 32, 40)
+  foreGeo.computeVertexNormals()
+  const fore = new THREE.Mesh(foreGeo, makeSkinMaterial(false))
+  const sleeveGeo = lathe([[0.15, 0.3], [0.158, 0.215], [0.172, 0.178], [0.19, 0.172], [0.205, 0.19], [0.214, 0.24], [0.222, 0.36], [0.232, 0.62], [0.242, 1.0], [0.25, 1.4], [0.255, 1.8]], 56, 90)
+  {
+    // Folds: two slow waves around the sleeve that drift along it, a couple of soft rings where the cuff bunches.
+    const pos = sleeveGeo.getAttribute('position') as THREE.BufferAttribute
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i) / handLen, z = pos.getZ(i)
+      const r = Math.hypot(x, z)
+      if (r < 1e-6 || y < 0.19) continue
+      const th = Math.atan2(z, x)
+      const grow = Math.min(1, (y - 0.19) / 0.25)
+      const wave = Math.sin(3 * th + y * 4.2) * 0.6 + Math.sin(5 * th - y * 2.7 + 1.3) * 0.4
+      const bunch = Math.sin((y - 0.19) * 26) * Math.exp(-((y - 0.42) ** 2) / 0.03)
+      const k = 1 + grow * (0.065 * wave + 0.045 * bunch)
+      pos.setX(i, x * k); pos.setZ(i, z * k)
+    }
+    sleeveGeo.computeVertexNormals()
+  }
+  const sleeveMat = new THREE.MeshPhysicalMaterial({ color: SLEEVE, roughness: 0.86, sheen: 1, sheenRoughness: 0.75, sheenColor: new THREE.Color('#fffaf0'), side: THREE.DoubleSide })
+  const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat)
+  fore.castShadow = sleeve.castShadow = true
+  arm.add(fore, sleeve)
+  arm.position.copy(wristP).addScaledVector(forearmDir, -handLen * 0.1)
   arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), forearmDir)
   // Flatten the forearm a little to an oval like a real wrist (wider across the hand than through it).
   {
     const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(arm.quaternion)
     const ang = Math.atan2(ax.clone().cross(towardThumb).dot(forearmDir), ax.dot(towardThumb))
-    fore.rotation.y = -ang; cuff.rotation.y = -ang
-    fore.scale.set(1.15, 1, 0.78)
-    cuff.scale.set(1.08, 1, 0.86)
+    fore.rotation.y = -ang; sleeve.rotation.y = -ang
+    fore.scale.set(1.18, 1, 0.8)
+    sleeve.scale.set(1.08, 1, 0.88)
   }
 
   // anchor: at the pen point, turns with the wrist. orient: the grip's orientation. holder: hand + marker, tip at origin.
@@ -460,4 +522,142 @@ export async function createHand3D(root: HTMLElement, onLost?: () => void): Prom
 /** Hand width for a board of this width (px); the same rule as the photo hand. */
 function handWidth3D(boardW: number) {
   return Math.max(120, Math.min(270, boardW * 0.34))
+}
+
+/** Hash noise in [0, 1) for a point (smooth enough per vertex for tone and gloss variation). */
+function hash3(x: number, y: number, z: number) {
+  const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453
+  const t = Math.sin(Math.floor(x) * 3.1 + Math.floor(y) * 1.7 + Math.floor(z) * 2.3 + (s - Math.floor(s))) * 0.5 + 0.5
+  return (s - Math.floor(s)) * 0.5 + t * 0.5
+}
+
+/**
+ * Skin: physically based with a warm sheen at grazing angles and light that wraps past the terminator with a red
+ * tint (a cheap stand-in for subsurface scattering, so it reads as skin and not clay). Per-vertex colour and gloss
+ * when `painted` (the hand), uniform for the forearm.
+ */
+function makeSkinMaterial(painted = true) {
+  const m = new THREE.MeshPhysicalMaterial({
+    color: painted ? '#ffffff' : SKIN, vertexColors: painted, roughness: 0.52, metalness: 0,
+    sheen: 0.4, sheenRoughness: 0.6, sheenColor: new THREE.Color('#d98a72'),
+    clearcoat: 0.06, clearcoatRoughness: 0.5,
+  })
+  m.onBeforeCompile = sh => {
+    if (painted) {
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aRough;\nvarying float vRough;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRough = aRough;')
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vRough;')
+        .replace('float roughnessFactor = roughness;', 'float roughnessFactor = roughness * (vRough / 0.52);')
+    }
+    // Wrapped diffuse with a reddish terminator (subsurface look).
+    sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      {
+        float ndv = clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0);
+        vec3 sss = vec3(0.55, 0.16, 0.08) * diffuseColor.rgb * pow(1.0 - ndv, 1.6) * 0.25;
+        reflectedLight.indirectDiffuse += sss;
+      }`)
+  }
+  return m
+}
+
+interface SubMesh { pos: Float32Array; skinIndex: Uint16Array; skinWeight: Float32Array; index: Uint32Array; color?: Float32Array; rough?: Float32Array }
+
+/**
+ * One step of Loop subdivision of a skinned, indexed triangle mesh (in its own, possibly quantized, space): a smooth
+ * limit surface instead of the low-poly facets. New vertices on an edge take the blend of its two ends' skin weights
+ * (top four kept); open borders (the wrist) keep their shape.
+ */
+function subdivideSkinned(g: THREE.BufferGeometry): SubMesh {
+  const P = g.getAttribute('position') as THREE.BufferAttribute
+  const SI = g.getAttribute('skinIndex') as THREE.BufferAttribute
+  const SW = g.getAttribute('skinWeight') as THREE.BufferAttribute
+  const idx = g.getIndex()
+  // Weld vertices that share a position (so the surface is one piece).
+  const keyOf = new Map<string, number>()
+  const remap = new Int32Array(P.count)
+  const pos: number[] = [], w: Map<number, number>[] = []
+  for (let i = 0; i < P.count; i++) {
+    const k = `${P.getX(i)},${P.getY(i)},${P.getZ(i)}`
+    let u = keyOf.get(k)
+    if (u === undefined) {
+      u = pos.length / 3
+      keyOf.set(k, u)
+      pos.push(P.getX(i), P.getY(i), P.getZ(i))
+      const m = new Map<number, number>()
+      for (let c = 0; c < 4; c++) { const wt = SW.getComponent(i, c); if (wt > 0) m.set(SI.getComponent(i, c), (m.get(SI.getComponent(i, c)) ?? 0) + wt) }
+      w.push(m)
+    }
+    remap[i] = u
+  }
+  const tris: number[] = []
+  const nIdx = idx ? idx.count : P.count
+  for (let i = 0; i < nIdx; i += 3) {
+    const a = remap[idx ? idx.getX(i) : i], b = remap[idx ? idx.getX(i + 1) : i + 1], c = remap[idx ? idx.getX(i + 2) : i + 2]
+    if (a !== b && b !== c && a !== c) tris.push(a, b, c)
+  }
+  const nv = pos.length / 3
+  // Edges: their faces' opposite corners.
+  const edges = new Map<number, { a: number; b: number; opp: number[]; id: number }>()
+  const ek = (a: number, b: number) => (a < b ? a * nv + b : b * nv + a)
+  const nbr: Set<number>[] = Array.from({ length: nv }, () => new Set<number>())
+  for (let t = 0; t < tris.length; t += 3) {
+    for (let e = 0; e < 3; e++) {
+      const a = tris[t + e], b = tris[t + ((e + 1) % 3)], c = tris[t + ((e + 2) % 3)]
+      const key = ek(a, b)
+      let E = edges.get(key)
+      if (!E) { E = { a, b, opp: [], id: -1 }; edges.set(key, E) }
+      E.opp.push(c)
+      nbr[a].add(b); nbr[b].add(a)
+    }
+  }
+  const boundaryNbr: number[][] = Array.from({ length: nv }, () => [])
+  edges.forEach(E => { if (E.opp.length === 1) { boundaryNbr[E.a].push(E.b); boundaryNbr[E.b].push(E.a) } })
+  const total = nv + edges.size
+  const out = new Float32Array(total * 3)
+  const wOut: Map<number, number>[] = new Array(total)
+  const V = (i: number, c: number) => pos[i * 3 + c]
+  for (let i = 0; i < nv; i++) {
+    const bn = boundaryNbr[i]
+    for (let c = 0; c < 3; c++) {
+      let v: number
+      if (bn.length >= 2) v = 0.75 * V(i, c) + 0.125 * (V(bn[0], c) + V(bn[1], c))
+      else {
+        const n = nbr[i].size
+        const beta = n > 3 ? 3 / (8 * n) : 3 / 16
+        let sum = 0
+        nbr[i].forEach(j => { sum += V(j, c) })
+        v = (1 - n * beta) * V(i, c) + beta * sum
+      }
+      out[i * 3 + c] = v
+    }
+    wOut[i] = w[i]
+  }
+  let next = nv
+  edges.forEach(E => {
+    E.id = next++
+    for (let c = 0; c < 3; c++) {
+      out[E.id * 3 + c] = E.opp.length === 2
+        ? 0.375 * (V(E.a, c) + V(E.b, c)) + 0.125 * (V(E.opp[0], c) + V(E.opp[1], c))
+        : 0.5 * (V(E.a, c) + V(E.b, c))
+    }
+    const m = new Map<number, number>()
+    w[E.a].forEach((x, k) => m.set(k, (m.get(k) ?? 0) + x * 0.5))
+    w[E.b].forEach((x, k) => m.set(k, (m.get(k) ?? 0) + x * 0.5))
+    wOut[E.id] = m
+  })
+  const index = new Uint32Array((tris.length / 3) * 12)
+  let o = 0
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = tris[t], b = tris[t + 1], c = tris[t + 2]
+    const ab = edges.get(ek(a, b))!.id, bc = edges.get(ek(b, c))!.id, ca = edges.get(ek(c, a))!.id
+    index.set([a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca], o)
+    o += 12
+  }
+  const skinIndex = new Uint16Array(total * 4), skinWeight = new Float32Array(total * 4)
+  for (let i = 0; i < total; i++) {
+    const top = [...wOut[i].entries()].sort((x, y) => y[1] - x[1]).slice(0, 4)
+    const s = top.reduce((acc, [, x]) => acc + x, 0) || 1
+    top.forEach(([b, x], k) => { skinIndex[i * 4 + k] = b; skinWeight[i * 4 + k] = x / s })
+  }
+  return { pos: out, skinIndex, skinWeight, index }
 }

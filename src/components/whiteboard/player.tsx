@@ -11,7 +11,8 @@ import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
 import { NATURAL_VOICE_WAIT_MS, getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
 import { PEN_ACTIONS, PEN_PREROLL_MS, buildTimeline, firedAt, varsAt, type StepTimeline } from './timeline'
 import { VarStore, VarsContext } from './live-vars'
-import { HandOverlay, PenCueContext, PenProvider, usePenEngine, type PenCue } from './pen'
+import { HandOverlay, PenCueContext, PenProvider, usePenEngine, type PenCue, type PenEngine } from './pen'
+import { followClip, loadPenPaths } from './clip-pen'
 import { cx } from '@/components/ui'
 import { chapterAt, estimateStepMs, formatDuration, type Chapter } from '@/lib/lesson-sections'
 
@@ -950,6 +951,8 @@ export function WhiteboardPlayer({
               >
                 <ClipVideo
                   step={clip}
+                  pen={pen}
+                  handOn={!reduced}
                   onDone={() => { setClipEnded(true); setPlaying(true) }}
                   onSkip={() => { narratorRef.current?.cancel(); setClipEnded(false); setClipIdx(null); setPlaying(true) }}
                 />
@@ -1210,8 +1213,18 @@ function ControlButton({ label, onClick, disabled, children }: { label: string; 
   )
 }
 
-function ClipVideo({ step, onDone, onSkip }: { step: ManimClipStep; onDone: () => void; onSkip: () => void }) {
+function ClipVideo({ step, onDone, onSkip, pen, handOn }: { step: ManimClipStep; onDone: () => void; onSkip: () => void; pen: PenEngine; handOn: boolean }) {
   const [failed, setFailed] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  // The hand draws along with the clip when the clip comes with its pen paths (and keeps the clip on the narration clock).
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !handOn) return
+    let stop: (() => void) | null = null
+    let live = true
+    void loadPenPaths(step.url).then(paths => { if (live && paths && paths.strokes.length) stop = followClip(pen, video, paths) })
+    return () => { live = false; stop?.() }
+  }, [step.url, pen, handOn])
   return (
     <>
       <div className="relative min-h-0 flex-1">
@@ -1219,6 +1232,7 @@ function ClipVideo({ step, onDone, onSkip }: { step: ManimClipStep; onDone: () =
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-white/70">This animation could not be loaded.</div>
         ) : (
           <video
+            ref={videoRef}
             src={step.url}
             className="h-full w-full object-contain"
             autoPlay

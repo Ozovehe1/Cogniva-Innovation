@@ -35,7 +35,7 @@ function run(cmd, args, { timeoutMs = 10 * 60_000, env = process.env, quiet = fa
 }
 
 const APPS = [
-  { file: 'modal_app/manim_render.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-manim-render[a-z0-9-]*\.modal\.run/i, env: 'MODAL_RENDER_URL' },
+  { file: 'modal_app/manim_render.py', deps: ['modal_app/pen_export.py'], urlRe: /https:\/\/[a-z0-9-]+--geniusmap-manim-render[a-z0-9-]*\.modal\.run/i, env: 'MODAL_RENDER_URL' },
   { file: 'modal_app/tts.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-tts[a-z0-9-]*\.modal\.run/i, env: 'MODAL_TTS_URL' },
 ]
 
@@ -48,7 +48,7 @@ function changedApps() {
   const r = run('git', ['diff', '--name-only', prev, head, '--', 'modal_app'], { quiet: true, timeoutMs: 30_000 })
   if (!r.ok) return { files: APPS.map(a => a.file), why: `previous SHA ${prev.slice(0, 7)} not available in this clone` }
   const files = r.out.split('\n').filter(Boolean)
-  return { files: APPS.map(a => a.file).filter(f => files.includes(f)), why: files.length ? `changed: ${files.join(', ')}` : `no changes in modal_app since ${prev.slice(0, 7)}` }
+  return { files: APPS.filter(a => [a.file, ...(a.deps ?? [])].some(f => files.includes(f))).map(a => a.file), why: files.length ? `changed: ${files.join(', ')}` : `no changes in modal_app since ${prev.slice(0, 7)}` }
 }
 
 function main() {

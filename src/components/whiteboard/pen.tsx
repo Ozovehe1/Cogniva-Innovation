@@ -59,6 +59,9 @@ interface Job {
   travel: { from: Pt; t: number } | null
 }
 
+/** An outside source for the marker tip (e.g. a Manim clip's own strokes): where it is, in client px, and whether it is drawing. */
+export interface FollowTip { x: number; y: number; down: boolean }
+
 /** One measured first-ink event (see window.__penInk). */
 export interface InkEvent { tag: string; epoch: number; cueAt: number; clock: number; audio: number; wall: number }
 
@@ -111,6 +114,18 @@ export class PenEngine {
   private lastActive = 0
   private lastFrame = 0
   private visible = 0
+  private follow: (() => FollowTip | null) | null = null
+
+  /** Let something else (a clip) steer the hand; null hands it back to the board's own writing. */
+  setFollow(fn: (() => FollowTip | null) | null) {
+    this.follow = fn
+    this.kick()
+  }
+
+  /** The step clock right now (ms), or null outside a narrated step. */
+  clockMs(): number | null {
+    return this.clock ? this.clock.now() : null
+  }
 
   attach(view: HandView | null) {
     this.view = view
@@ -197,9 +212,36 @@ export class PenEngine {
     // Nothing being written: the next job waiting for its cue (the hand goes there ahead of the word).
     const waiting = job ? null : this.jobs.filter(j => this.local(j, now) < 0).reduce<Job | null>((a, b) => (!a || this.local(b, now) > this.local(a, now) ? b : a), null)
     if (!job && waiting) job = waiting
-    this.moveHand(job, now, dt)
-    const handBusy = this.view && (job || this.visible > 0.01)
+    if (this.follow) this.moveFollow(this.follow(), now, dt)
+    else this.moveHand(job, now, dt)
+    const handBusy = this.view && (job || this.follow || this.visible > 0.01)
     if (this.jobs.length || handBusy) this.raf = requestAnimationFrame(this.frame)
+  }
+
+  /** The hand on an outside tip: pen down exactly on it while it draws, lifted and gliding toward it when it is about
+   *  to draw, resting at the board edge when nothing is being drawn. */
+  private moveFollow(tip: FollowTip | null, now: number, dt: number) {
+    const v = this.view
+    if (!v) return
+    if (!tip) { this.moveHand(null, now, dt); return }
+    const rr = v.root.getBoundingClientRect()
+    if (!rr.width) return
+    const top = Number(v.root.dataset.top ?? 0) || 0
+    const { h: hh } = v.size()
+    const target = { x: tip.x - rr.left, y: tip.y - rr.top }
+    this.lastActive = now
+    if (!this.pos) this.pos = { x: rr.width, y: rr.height }
+    if (tip.down) this.pos = target
+    else {
+      const k = 1 - Math.exp(-dt / 90)
+      this.pos = { x: this.pos.x + (target.x - this.pos.x) * k, y: this.pos.y + (target.y - this.pos.y) * k }
+    }
+    this.lift += ((tip.down ? 0 : 1) - this.lift) * (1 - Math.exp(-dt / 45))
+    this.writing += ((tip.down ? 1 : 0) - this.writing) * (1 - Math.exp(-dt / 120))
+    this.visible += (1 - this.visible) * (1 - Math.exp(-dt / 220))
+    const xf = this.pos.x / rr.width - 0.5
+    const nearTop = clamp01(1 - (this.pos.y - top) / Math.max(1, hh * 1.1))
+    v.render({ x: this.pos.x, y: this.pos.y, lift: this.lift, rot: -4 + xf * 9 + nearTop * 24, writing: this.writing, visible: this.visible, w: rr.width, h: rr.height, top, now })
   }
 
   private moveHand(job: Job | null, now: number, dt: number) {

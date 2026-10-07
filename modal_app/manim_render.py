@@ -2,12 +2,15 @@
 GeniusMap Manim render service (Modal app "geniusmap-manim").
 
 POST /render  (header X-Render-Token must equal the RENDER_TOKEN secret)
-  body: {"job_id": str, "code": str, "scene_name": str, "upload_url": str}
+  body: {"job_id": str, "code": str, "scene_name": str, "upload_url": str, "paths_upload_url"?: str}
   -> 202 {"accepted": true}; the render runs asynchronously.
 
 The render function writes the code to a temp dir, runs
 `manim -qm --format mp4` (720p30), PUTs the MP4 to the Supabase signed upload
-URL, then calls back POST {APP_URL}/api/manim/callback with
+URL (and, when paths_upload_url is given, the clip's pen paths as JSON, see
+pen_export.py: every Create / Write / DrawBorderThenFill / GrowArrow stroke with its
+bezier points in frame coordinates and how much of it is revealed over time, so the
+whiteboard hand can trace the lines as they appear), then calls back POST {APP_URL}/api/manim/callback with
 {"job_id", "status": "done"|"failed", "error"} and the same X-Render-Token.
 
 Secrets (Modal secret "geniusmap-render"): RENDER_TOKEN, APP_URL.
@@ -45,6 +48,7 @@ render_image = (
         "tipa",
     )
     .pip_install("manim==0.19.0", "httpx==0.27.2")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pen_export.py"), "/root/pen_export.py")
 )
 
 web_image = modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]==0.115.6", "httpx==0.27.2")
@@ -121,7 +125,7 @@ def _callback(job_id: str, status: str, error: str | None = None) -> None:
 
 
 @app.function(image=render_image, secrets=[secret], timeout=600, cpu=2.0, memory=4096, max_containers=4)
-def render(job_id: str, code: str, scene_name: str, upload_url: str) -> dict:
+def render(job_id: str, code: str, scene_name: str, upload_url: str, paths_upload_url: str | None = None) -> dict:
     import glob
     import subprocess
     import tempfile
@@ -131,8 +135,12 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str) -> dict:
     _callback(job_id, "rendering")
     workdir = tempfile.mkdtemp(prefix="manim-")
     src = os.path.join(workdir, "scene.py")
+    pen_path = os.path.join(workdir, "pen.json")
     with open(src, "w") as f:
         f.write(code)
+        # Records the drawing animations for the hand (no effect on the video). Appended, so traceback line numbers
+        # still match the scene's own code; the CLI renders only after the whole module has run.
+        f.write("\n\nimport sys as _pen_sys\n_pen_sys.path.insert(0, '/root')\ntry:\n    import pen_export  # noqa: F401,E402\nexcept Exception as _pen_err:  # noqa: BLE001\n    print('pen_export unavailable:', _pen_err)\n")
 
     cmd = [
         "manim",
@@ -148,7 +156,7 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str) -> dict:
         scene_name,
     ]
     try:
-        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=540)
+        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=540, env={**os.environ, "PEN_EXPORT_PATH": pen_path})
     except subprocess.TimeoutExpired:
         _callback(job_id, "failed", "Render timed out after 9 minutes.")
         return {"ok": False}
@@ -180,8 +188,20 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str) -> dict:
         _callback(job_id, "failed", f"Upload failed: {exc}")
         return {"ok": False}
 
+    pen_bytes = 0
+    if paths_upload_url and os.path.exists(pen_path):
+        # The hand's paths are a bonus: a failed upload never fails the clip.
+        try:
+            with open(pen_path, "rb") as f:
+                pen = f.read()
+            r = httpx.put(paths_upload_url, content=pen, headers={"Content-Type": "application/json", "x-upsert": "true", "cache-control": "max-age=31536000"}, timeout=60)
+            pen_bytes = len(pen) if r.status_code < 300 else 0
+            print(f"pen paths upload {r.status_code} ({len(pen)} bytes)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"pen paths upload failed: {exc}")
+
     _callback(job_id, "done")
-    return {"ok": True, "bytes": len(data)}
+    return {"ok": True, "bytes": len(data), "pen_bytes": pen_bytes}
 
 
 @app.function(image=web_image, secrets=[secret])
@@ -197,6 +217,7 @@ def web():
         code: str = Field(min_length=1, max_length=20000)
         scene_name: str = Field(default="GeneratedScene", pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
         upload_url: str = Field(min_length=10, max_length=4000)
+        paths_upload_url: str | None = Field(default=None, max_length=4000)
 
     @api.get("/health")
     def health():
@@ -216,7 +237,9 @@ def web():
                 status_code=422,
                 detail="Static check (Manim Community v0.19) rejected the code: " + " | ".join(problems),
             )
-        call = render.spawn(req.job_id, code, req.scene_name, req.upload_url)
+        if req.paths_upload_url and not req.paths_upload_url.startswith("https://"):
+            raise HTTPException(status_code=400, detail="paths_upload_url must be https")
+        call = render.spawn(req.job_id, code, req.scene_name, req.upload_url, req.paths_upload_url)
         return {"accepted": True, "call_id": call.object_id, "rewrites": rewrites}
 
     return api
