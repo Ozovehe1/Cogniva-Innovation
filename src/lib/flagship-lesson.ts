@@ -28,7 +28,7 @@ const V = '15 - 9.8*t'
 
 const upThenDown: Step[] = [
   {
-    type: 'write', id: 'title', text: 'Why a thrown ball comes back', x: 40, y: 30, size: 'lg',
+    type: 'write', id: 'title', text: 'Why a thrown ball comes back down', x: 40, y: 30, size: 'lg',
     say: 'Hi, I’m your AI tutor. Today we’ll answer a question you’ve seen a thousand times: why does a ball you throw upward always come back down, and what path does it take on the way?',
   },
   { type: 'set', vars: { t: 0 } },
@@ -103,8 +103,9 @@ const upThenDown: Step[] = [
   {
     type: 'draw', id: 'hg', shape: { kind: 'axes', frame: { x: 200, y: 110, w: 240, h: 340 }, xRange: [0, 3.2], yRange: [0, 14], xLabel: 't (s)', xStep: 1, yStep: 2 },
     say: 'Let’s replay the throw, and this time draw the height against time, so we can see the whole flight at once.',
-    until: 'time,',
-    cues: [{ type: 'draw', id: 'hp', on: 'hg', shape: { kind: 'point', at: ['t', H] }, color: 'accent', at: 'replay' }],
+    until: 'draw',
+    // One pen: the axes are drawn first, then the ball's dot goes on as "height" is said.
+    cues: [{ type: 'draw', id: 'hp', on: 'hg', shape: { kind: 'point', at: ['t', H] }, color: 'accent', at: 'height' }],
   },
   {
     type: 'animate', var: 't', to: 3.06, ease: 'linear',
@@ -174,10 +175,11 @@ const gravity: Step[] = [
     ],
   },
   {
-    type: 'math', id: 'g', tex: 'g = 9.8\\ \\text{m/s}^2', x: 470, y: 172, size: 'lg', color: 'accent',
+    // Cues are found in spoken order after the step's own action, so the early word ("steady") is the step's own.
+    type: 'highlight', target: 'vline', style: 'box', color: 'accent',
     say: 'That steady change is gravity. Near the Earth’s surface, gravity changes the velocity of anything in free flight by nine point eight metres per second, every second. We call that number g.',
-    at: 'g.',
-    cues: [{ type: 'highlight', target: 'vline', style: 'box', color: 'accent', at: 'steady' }],
+    at: 'steady',
+    cues: [{ type: 'math', id: 'g', tex: 'g = 9.8\\ \\text{m/s}^2', x: 470, y: 172, size: 'lg', color: 'accent', at: 'g.' }],
   },
   {
     type: 'write', id: 'n2', text: 'Gravity never switches off, not even at the top.', x: 470, y: 238, size: 'sm', font: 'sans', maxWidth: 300,

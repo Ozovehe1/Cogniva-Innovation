@@ -35,7 +35,13 @@ export interface PenSegment {
 }
 
 /** When a job's ink starts on the narration clock, how long it may take, and which step clock it belongs to. */
-export interface PenCue { at: number; dur: number; epoch: number }
+export interface PenCue {
+  at: number
+  dur: number
+  epoch: number
+  /** Set by the engine when a writer queues ink on this cue (an unclaimed cue gets the generic fallback, see InkGuard). */
+  claimed?: boolean
+}
 
 /** The narration clock of the step being played. */
 export interface PenClock {
@@ -57,13 +63,19 @@ interface Job {
   inked: boolean
   /** Hand travel toward the first stroke before the cue. */
   travel: { from: Pt; t: number } | null
+  /** When its ink really starts on the clock and how much it is sped up: one pen, so a job waits for the one
+   *  before it to finish (and the hand to get there), then catches up to end by its deadline. */
+  eff: { start: number; k: number }
+  seq: number
+  /** Narration clock when the job was queued (diagnostics: a job queued after its cue starts late). */
+  made: number
 }
 
 /** An outside source for the marker tip (e.g. a Manim clip's own strokes): where it is, in client px, and whether it is drawing. */
 export interface FollowTip { x: number; y: number; down: boolean }
 
 /** One measured first-ink event (see window.__penInk). */
-export interface InkEvent { tag: string; epoch: number; cueAt: number; clock: number; audio: number; wall: number }
+export interface InkEvent { tag: string; epoch: number; cueAt: number; clock: number; audio: number; wall: number; start: number; made: number; k: number }
 
 /** Where the hand is this frame (overlay-local px) and how it is moving. */
 export interface HandState {
@@ -96,8 +108,16 @@ export interface HandView {
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
 
+/** One frame of the marker tip (client px), recorded only when a test sets window.__penTipProbe = []. */
+export interface TipSample { t: number; x: number; y: number; lift: number; writing: number }
+
 declare global {
-  interface Window { __penInk?: InkEvent[] }
+  interface Window { __penInk?: InkEvent[]; __penTipProbe?: TipSample[]; __penDbg?: unknown[] }
+}
+
+function probeTip(rr: DOMRect, x: number, y: number, lift: number, writing: number, now: number) {
+  const probe = typeof window !== 'undefined' ? window.__penTipProbe : undefined
+  if (probe) probe.push({ t: now, x: rr.left + x, y: rr.top + y, lift, writing })
 }
 
 export class PenEngine {
@@ -141,12 +161,15 @@ export class PenEngine {
 
   /** Queue a writing job (on `cue` when given, otherwise from now). Returns a cancel function (strokes are left as they are). */
   run(segs: PenSegment[], cue: PenCue | null = null, tag = ''): () => void {
+    if (cue && segs.length) cue.claimed = true
     const job: Job = {
       t0: performance.now(), segs, end: segs.reduce((m, s) => Math.max(m, s.start + s.dur), 0), last: segs.map(() => -1),
       cancelled: false, cue: cue && this.clock && cue.epoch === this.clock.epoch ? cue : null, tag, inked: false, travel: null,
+      eff: { start: cue?.at ?? 0, k: 1 }, seq: ++this.seq, made: this.clock ? this.clock.now() : -1,
     }
     this.jobs.push(job)
     this.readClock()
+    this.plan()
     this.step(job, performance.now())
     this.kick()
     return () => {
@@ -171,13 +194,40 @@ export class PenEngine {
     }
   }
 
+  private seq = 0
+
+  /**
+   * One pen draws one thing at a time. Jobs on the narration clock are taken in cue order and each starts on its own
+   * cue word. A job that would still be drawing when the next cue comes is sped up to finish a short hand move
+   * (GAP) before it, so the next one can start exactly on its word; only when that would make it faster than the
+   * hand can go (K_MIN) does the next job wait. Ink therefore never grows anywhere but under the tip.
+   */
+  private plan() {
+    const GAP = 90
+    const K_MIN = 0.3
+    const list = this.jobs.filter(j => j.cue).sort((a, b) => a.cue!.at - b.cue!.at || a.seq - b.seq)
+    let prevEnd = -Infinity
+    for (let i = 0; i < list.length; i++) {
+      const j = list[i]
+      const S = j.cue!.at
+      const E = Math.max(S, prevEnd + GAP)
+      let D = S + Math.max(j.end, j.cue!.dur)
+      // The next job with a later cue: be done (and the hand moved) before its word.
+      const next = list.slice(i + 1).find(n => n.cue!.at > E)
+      if (next) D = Math.min(D, next.cue!.at - GAP)
+      const k = j.end > 0 ? Math.max(K_MIN, Math.min(1, (D - E) / j.end)) : 1
+      j.eff = { start: E, k }
+      prevEnd = E + j.end * k
+    }
+  }
+
   private readClock() {
     this.clockNow = this.clock ? this.clock.now() : null
   }
 
   /** ms into the job (negative before its cue). */
   private local(job: Job, now: number) {
-    if (job.cue && this.clockNow !== null && this.clock && job.cue.epoch === this.clock.epoch) return this.clockNow - job.cue.at
+    if (job.cue && this.clockNow !== null && this.clock && job.cue.epoch === this.clock.epoch) return (this.clockNow - job.eff.start) / job.eff.k
     return now - job.t0
   }
 
@@ -192,7 +242,7 @@ export class PenEngine {
         job.inked = true
         if (typeof window !== 'undefined') {
           const log = (window.__penInk ??= [])
-          log.push({ tag: job.tag, epoch: job.cue?.epoch ?? -1, cueAt: job.cue?.at ?? -1, clock: this.clockNow ?? -1, audio: this.clock?.audio?.() ?? -1, wall: Date.now() })
+          log.push({ tag: job.tag, epoch: job.cue?.epoch ?? -1, cueAt: job.cue?.at ?? -1, clock: this.clockNow ?? -1, audio: this.clock?.audio?.() ?? -1, wall: Date.now(), start: job.eff.start, made: job.made, k: job.eff.k })
           if (log.length > 400) log.splice(0, log.length - 400)
         }
       }
@@ -205,7 +255,11 @@ export class PenEngine {
     const dt = Math.min(64, now - this.lastFrame)
     this.lastFrame = now
     this.readClock()
+    this.plan()
     for (const j of this.jobs) this.step(j, now)
+    // Per-frame job trace for diagnostics, only when a test sets window.__penDbg = [].
+    const dbg = window.__penDbg
+    if (dbg) dbg.push([Math.round(this.clockNow ?? -1), this.clock?.epoch ?? -1, this.jobs.map(j => [j.tag.slice(0, 20), Math.round(j.cue?.at ?? -1), Math.round(j.eff.start), +j.eff.k.toFixed(2), Math.round(this.local(j, now)), Math.round(j.end), j.inked ? 1 : 0, j.cue?.epoch ?? -1])])
     this.jobs = this.jobs.filter(j => this.local(j, now) <= j.end + 50)
     const active = this.jobs.filter(j => { const l = this.local(j, now); return l >= 0 && l <= j.end })
     let job = active.length ? active.reduce((a, b) => (this.local(b, now) < this.local(a, now) ? b : a)) : null
@@ -242,6 +296,7 @@ export class PenEngine {
     const xf = this.pos.x / rr.width - 0.5
     const nearTop = clamp01(1 - (this.pos.y - top) / Math.max(1, hh * 1.1))
     v.render({ x: this.pos.x, y: this.pos.y, lift: this.lift, rot: -4 + xf * 9 + nearTop * 24, writing: this.writing, visible: this.visible, w: rr.width, h: rr.height, top, now })
+    probeTip(rr, this.pos.x, this.pos.y, this.lift, tip.down ? 1 : 0, now)
   }
 
   private moveHand(job: Job | null, now: number, dt: number) {
@@ -324,6 +379,7 @@ export class PenEngine {
     const nearTop = clamp01(1 - (this.pos.y - top) / Math.max(1, hh * 1.1))
     const wobble = this.writing * (Math.sin(now / 1000 * Math.PI * 2 * 4.2) * 1.3 + Math.sin(now / 1000 * Math.PI * 2 * 1.7) * 0.6)
     v.render({ x: this.pos.x, y: this.pos.y, lift: this.lift, rot: -4 + xf * 9 + nearTop * 24 + wobble, writing: this.writing, visible: this.visible, w: rr.width, h: rr.height, top, now })
+    probeTip(rr, this.pos.x, this.pos.y, this.lift, writing, now)
   }
 
   dispose() {

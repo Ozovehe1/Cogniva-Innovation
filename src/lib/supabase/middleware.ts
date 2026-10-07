@@ -28,6 +28,7 @@ export async function updateSession(request: NextRequest) {
     path === '/about' ||
     path === '/learn/demo' ||
     path === '/learn/demo/frame' ||
+    path === '/learn/demo/ink-test' ||
     // Wakes the narration voice when a lesson opens (public demo too); only voices lessons for signed-in users.
     path === '/api/tts/warm' ||
     // Whiteboard assets (the 3D hand model and its fallback sprite).

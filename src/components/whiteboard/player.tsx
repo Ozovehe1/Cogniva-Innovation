@@ -3,15 +3,16 @@ import 'katex/dist/katex.min.css'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ListOrdered, Lock, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
-import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type Ink, type ManimClipStep, type Step } from '@/lib/lesson-schema'
+import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type ManimClipStep, type Step } from '@/lib/lesson-schema'
 import { applyAction, buildBoard, compactPartition, segmentStart, shapeBox, type BoardState, type Box } from './board-state'
-import { BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, ShapeElement, TextElement } from './elements'
+import { BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, ShapeElement, TextElement, type NoteMarkSpec } from './elements'
 import { CheckCard, RichText, type CheckResponse } from './check-card'
 import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
 import { NATURAL_VOICE_WAIT_MS, getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
 import { PEN_ACTIONS, PEN_PREROLL_MS, buildTimeline, firedAt, varsAt, type StepTimeline } from './timeline'
 import { VarStore, VarsContext } from './live-vars'
-import { HandOverlay, PenCueContext, PenProvider, usePenEngine, type PenCue, type PenEngine } from './pen'
+import { InkGuard } from './ink-guard'
+import { HandOverlay, PenProvider, usePenEngine, type PenCue, type PenEngine } from './pen'
 import { followClip, loadPenPaths } from './clip-pen'
 import { cx } from '@/components/ui'
 import { chapterAt, estimateStepMs, formatDuration, type Chapter } from '@/lib/lesson-sections'
@@ -702,19 +703,23 @@ export function WhiteboardPlayer({
 
   // Highlights on reflowed notes are drawn by the note itself (phone layout).
   const noteMarks = useMemo(() => {
-    const m = new Map<string, { style: 'box' | 'underline'; color: Ink; fresh: boolean }>()
+    const m = new Map<string, NoteMarkSpec>()
     if (!layout) return m
     for (const el of board.els) {
-      if (el.kind === 'highlight' && noteIds.has(el.target)) m.set(el.target, { style: el.style, color: el.color, fresh: el.born === animIdx })
+      if (el.kind === 'highlight' && noteIds.has(el.target)) {
+        m.set(el.target, { style: el.style, color: el.color, fresh: el.born === animIdx, cue: el.born === animIdx ? cues.get(el.act) ?? null : null })
+      }
     }
     return m
-  }, [layout, board, noteIds, animIdx])
+  }, [layout, board, noteIds, animIdx, cues])
 
   const elKey = (el: { key: string; born: number }) => `${el.key}#${playOf[el.born] ?? 0}`
   const textKey = (el: { key: string; morphAct?: string; born: number }) =>
     el.morphAct !== undefined ? `${el.key}~${el.morphAct}` : elKey(el)
   /** The narration cue an element being drawn now is inked on (null: shown as it is). */
   const cueOf = (el: { act: string; born: number }) => (el.born === animIdx ? cues.get(el.act) ?? null : null)
+  /** The cue an element's InkGuard holds it hidden for (none with reduced motion: everything is shown as it is). */
+  const guardCue = (c: PenCue | null) => (reduced ? null : c)
   const animOf = (el: { morphedAt?: number; born: number }) =>
     el.morphedAt === animIdx && animIdx >= 0 ? 'morph' as const : el.born === animIdx ? 'enter' as const : null
 
@@ -769,9 +774,9 @@ export function WhiteboardPlayer({
               return (
                 <motion.g key={elKey(el)} exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.35 } }}>
                   <FxWrap fx={el.fx} ms={el.fx ? durs.get(el.fx.act) ?? 0 : 0} reduced={reduced} svg>
-                    <PenCueContext.Provider value={cueOf(el)}>
+                    <InkGuard svg cue={guardCue(cueOf(el))} tag={`shape:${el.key}`}>
                       <ShapeElement el={el} animate={anim} reduced={reduced} duration={durOf(el.act, el.born)} vars={board.vars} />
-                    </PenCueContext.Provider>
+                    </InkGuard>
                   </FxWrap>
                 </motion.g>
               )
@@ -781,9 +786,9 @@ export function WhiteboardPlayer({
               const anim = el.born === animIdx
               return (
                 <motion.g key={elKey(el)} exit={{ opacity: 0, transition: { duration: 0.25 } }}>
-                  <PenCueContext.Provider value={cueOf(el)}>
+                  <InkGuard svg cue={guardCue(cueOf(el))} tag={`highlight:${el.target}`}>
                     <HighlightElement el={el} animate={anim} reduced={reduced} measure={measure} duration={durOf(el.act, el.born)} />
-                  </PenCueContext.Provider>
+                  </InkGuard>
                 </motion.g>
               )
             }
@@ -798,9 +803,9 @@ export function WhiteboardPlayer({
           const animate = animOf(el)
           const d = animate === 'morph' ? durs.get(el.morphAct ?? '') : durOf(el.act, el.born)
           const node = (
-            <PenCueContext.Provider value={animate === 'enter' ? cueOf(el) : null}>
+            <InkGuard cue={animate === 'enter' ? guardCue(cueOf(el)) : null} tag={`text:${el.key}`}>
               <TextElement el={el} animate={animate} reduced={reduced} registerRef={registerRef} duration={d} vars={board.vars} />
-            </PenCueContext.Provider>
+            </InkGuard>
           )
           return el.fx
             ? <FxWrap key={textKey(el)} fx={el.fx} ms={durs.get(el.fx.act) ?? 0} reduced={reduced}>{node}</FxWrap>
@@ -917,7 +922,7 @@ export function WhiteboardPlayer({
                     {layout.notes.map(el => {
                       const animate = animOf(el)
                       return (
-                        <PenCueContext.Provider key={textKey(el)} value={animate === 'enter' ? cueOf(el) : null}>
+                        <InkGuard key={textKey(el)} cue={animate === 'enter' ? guardCue(cueOf(el)) : null} tag={`note:${el.key}`}>
                         <TextElement
                           el={el}
                           animate={animate}
@@ -928,7 +933,7 @@ export function WhiteboardPlayer({
                           duration={animate === 'morph' ? durs.get(el.morphAct ?? '') : durOf(el.act, el.born)}
                           vars={board.vars}
                         />
-                        </PenCueContext.Provider>
+                        </InkGuard>
                       )
                     })}
                   </AnimatePresence>

@@ -37,7 +37,7 @@ const MOTION_ACTIONS = new Set(['animate', 'move', 'scale', 'camera', 'transform
  * How long before its cue a pen action's element is put on the board (still blank): the hand travels to its first
  * stroke in this time, so the ink starts on the cue word itself.
  */
-export const PEN_PREROLL_MS = 380
+export const PEN_PREROLL_MS = 520
 
 /** Time (ms) a narration word starts / ends, given the step's timing. */
 function wordTime(step: Step, timing: NarrationTiming, map: number[], cue: Cue, from: number, edge: 's' | 'e'): { t: number; idx: number } | null {
@@ -138,7 +138,28 @@ export function buildTimeline(step: Step, index: number, timing: NarrationTiming
     if (PEN_ACTIONS.has(a.action.type)) penEnd = Math.max(penEnd, a.start + a.dur)
   }
   const end = actions.reduce((m, a) => Math.max(m, a.start + a.dur), 0)
-  return { actions, narrationMs, total: Math.max(narrationMs, end) + BREATH_MS, timing: t }
+  return { actions: fireOrder(actions), narrationMs, total: Math.max(narrationMs, end) + BREATH_MS, timing: t }
+}
+
+/** Actions a pen action is never put on the board ahead of (they change what it draws on or where). */
+const FIRE_BARRIERS = new Set(['clear', 'transform', 'camera'])
+
+/**
+ * The order actions are put on the board in (see firedAt): a pen action's element goes on PEN_PREROLL_MS before its
+ * cue so the hand is already there when the word is spoken, so it moves ahead of motion (a value counting, a colour
+ * pulse) that starts after that moment, instead of waiting behind it and mounting late.
+ */
+function fireOrder(actions: TimedAction[]): TimedAction[] {
+  const fire = (a: TimedAction) => a.start - (PEN_ACTIONS.has(a.action.type) ? PEN_PREROLL_MS : 0)
+  const out: TimedAction[] = []
+  for (const a of actions) {
+    let i = out.length
+    if (PEN_ACTIONS.has(a.action.type)) {
+      while (i > 0 && !PEN_ACTIONS.has(out[i - 1].action.type) && !FIRE_BARRIERS.has(out[i - 1].action.type) && fire(out[i - 1]) > fire(a)) i--
+    }
+    out.splice(i, 0, a)
+  }
+  return out
 }
 
 const smooth = (p: number) => p * p * (3 - 2 * p)

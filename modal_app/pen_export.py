@@ -132,6 +132,7 @@ def _dump(self, path):
         }
         with open(path, "w") as f:
             json.dump(data, f, separators=(",", ":"))
+        print(f"pen_export: wrote {len(_records)} strokes")
 
 
 Scene.play = _play

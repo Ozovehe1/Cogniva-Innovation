@@ -22,7 +22,7 @@ import {
 } from './board-state'
 import { useLiveVars } from './live-vars'
 import { HandText, canHandwrite, useInkReveal } from './handwriting'
-import { usePen, usePenCue, type Pt } from './pen'
+import { PenCueContext, usePen, usePenCue, type PenCue, type Pt } from './pen'
 
 const NO_VARS: Vars = {}
 
@@ -40,6 +40,9 @@ export function useMinUnits(units: number, minPx: number) {
   const s = useContext(BoardScale)
   return Math.max(units, minPx / (s || 1))
 }
+
+/** A highlight on a reflowed note (phone layout): drawn by the pen like any other highlight. */
+export interface NoteMarkSpec { style: 'box' | 'underline'; color: TextEl['color']; fresh: boolean; cue?: PenCue | null }
 
 /** On-screen sizes (px) of reflowed notes under the diagram on a phone. */
 export const FLOW_PX: Record<TextEl['size'], number> = { sm: 17, md: 19, lg: 23, xl: 27 }
@@ -102,7 +105,7 @@ export function TextElement({
   /** Render as a reflowed note (phone layout) instead of at board coordinates. */
   flow?: boolean
   /** Highlight drawn around a reflowed note. */
-  mark?: { style: 'box' | 'underline'; color: TextEl['color']; fresh: boolean } | null
+  mark?: NoteMarkSpec | null
   /** Length of the write-on / morph in ms (timed to the narration by the player). */
   duration?: number
   /** Board variables, for {{...}} live values. */
@@ -199,13 +202,12 @@ function FlowText({
   animate: 'enter' | 'morph' | null
   reduced: boolean
   registerRef: (id: string, node: HTMLElement | null) => void
-  mark: { style: 'box' | 'underline'; color: TextEl['color']; fresh: boolean } | null
+  mark: NoteMarkSpec | null
   duration?: number
 }) {
   const px = FLOW_PX[el.size] * (el.kind === 'math' ? 1.08 : 1)
   const cls = el.font === 'sans' && el.kind === 'text' ? 'font-sans tracking-[-0.01em]' : 'font-display'
   const color = INK_HEX[el.color]
-  const markColor = mark ? INK_HEX[mark.color] : undefined
   const enterMs = duration ?? animMs({ type: el.kind === 'math' ? 'math' : 'write', text: el.content, tex: el.content, x: 0, y: 0 } as never)
   const morphing = animate === 'morph'
   // Width the handwriting may wrap to (the notes column).
@@ -242,15 +244,10 @@ function FlowText({
           padding: mark?.style === 'box' ? '2px 8px' : undefined,
           margin: mark?.style === 'box' ? '-2px -8px' : undefined,
           borderRadius: 8,
-          boxShadow: mark?.style === 'box' ? `inset 0 0 0 2px ${markColor}` : undefined,
-          background: mark?.style === 'box' ? `${markColor}17` : undefined,
-          textDecoration: mark?.style === 'underline' ? 'underline' : undefined,
-          textDecorationColor: markColor,
-          textDecorationThickness: mark?.style === 'underline' ? 3 : undefined,
-          textUnderlineOffset: mark?.style === 'underline' ? 6 : undefined,
           transition: 'box-shadow 300ms, background-color 300ms',
         }}
       >
+        {mark && <NoteMark mark={mark} reduced={reduced} />}
         <motion.div
           key={morphing ? `m-${el.morphAct ?? el.content}` : 'c'}
           initial={morphing ? { opacity: 0, y: reduced ? 0 : 6 } : false}
@@ -858,3 +855,50 @@ export function HighlightElement({
 export function shapeBoxOf(el: ShapeEl) {
   return shapeBox(el)
 }
+
+/** The box or underline around a reflowed note, as an SVG drawn by the pen on the highlight's own cue. */
+function NoteMark({ mark, reduced }: { mark: NoteMarkSpec; reduced: boolean }) {
+  const ref = useRef<SVGSVGElement>(null)
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+  useLayoutEffect(() => {
+    const host = ref.current?.parentElement
+    if (!host) return
+    const read = () => setSize({ w: host.offsetWidth, h: host.offsetHeight })
+    read()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(read) : null
+    ro?.observe(host)
+    return () => ro?.disconnect()
+  }, [])
+  const color = INK_HEX[mark.color]
+  const ink = mark.fresh && !reduced && !!mark.cue
+  let body: React.ReactNode = null
+  if (size) {
+    const { w, h } = size
+    if (mark.style === 'underline') {
+      body = <path d={`M2 ${h + 3} Q${w / 2} ${h + 7} ${w - 2} ${h + 2}`} fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" data-ink={ink ? 'path' : undefined} />
+    } else {
+      const r = 8
+      const d = `M${r} 0 H${w - r} Q${w} 0 ${w} ${r} V${h - r} Q${w} ${h} ${w - r} ${h} H${r} Q0 ${h} 0 ${h - r} V${r} Q0 0 ${r} 0 Z`
+      body = (
+        <>
+          <path d={d} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" data-ink={ink ? 'path' : undefined} />
+          <path d={d} fill={color} fillOpacity={0.09} stroke="none" data-ink={ink ? 'fill' : undefined} />
+        </>
+      )
+    }
+  }
+  return (
+    <svg ref={ref} aria-hidden className="pointer-events-none absolute left-0 top-0" width={size?.w ?? 0} height={size?.h ?? 0} style={{ overflow: 'visible' }}>
+      <PenCueContext.Provider value={ink ? mark.cue ?? null : null}>
+        <NoteMarkInk active={ink} ready={!!size}>{body}</NoteMarkInk>
+      </PenCueContext.Provider>
+    </svg>
+  )
+}
+
+function NoteMarkInk({ active, ready, children }: { active: boolean; ready: boolean; children: React.ReactNode }) {
+  const ref = useRef<SVGGElement>(null)
+  useInkGroup(ref, active, 650, 'highlight:note', ready)
+  return <g ref={ref}>{children}</g>
+}
+
