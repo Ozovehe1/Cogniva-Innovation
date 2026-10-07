@@ -4,7 +4,7 @@ import { draftLessonScript } from '@/lib/lesson-ai'
 import { validateScript, type ManimClipStep, type Step } from '@/lib/lesson-schema'
 import { publicClipUrl } from '@/lib/supabase/admin'
 
-export const maxDuration = 120
+export const maxDuration = 180
 
 type Lesson = { id: string; tutor_id: string; title: string; subject: string; objectives: string[]; status: string; script: Step[] }
 

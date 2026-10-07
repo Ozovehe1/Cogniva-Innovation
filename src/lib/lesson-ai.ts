@@ -1,5 +1,7 @@
 import { generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, type Step } from './lesson-schema'
+import { autoFixLayout, layoutIssues } from './lesson-layout'
+import { buildBoard } from '@/components/whiteboard/board-state'
 import { intelligenceLabel } from '@/components/intelligence'
 
 export interface StudentProfileLite {
@@ -18,7 +20,9 @@ export interface LessonLite {
 const TUTOR_VOICE = `You are a patient, precise tutor who teaches on a whiteboard in the style of 3Blue1Brown: build intuition visually first, then formalise. Short spoken lines ("say") of one or two sentences, plain language, no hype, no emoji. Global audience: no exam-board references.`
 
 const LAYOUT_RULES = `Layout rules:
-- Plan the board like a page: a title top-left, a diagram region and a notes column. Never overlap elements; leave at least 12 units between them.
+- Everything stays on the board until a clear step removes it. Keep a mental list of what is on the board and where.
+- Use regions: title band y 24..80 (one line, size lg, under ~34 characters); diagram region x 24..440, y 100..476; notes column x 460..776, y 100..476 (size sm or md, maxWidth 300, about 55 units per line of sm text).
+- Never place an element where another one still is. Stack notes downward; when the notes column is full, clear it (clear with the ids) before writing more. Text may sit inside a graph only as a short label.
 - Use "say" on most steps; that is what the student reads while it is drawn.
 - Use transform to evolve an equation step by step instead of writing many separate lines.
 - Use clear (with targets, or with no targets for a fresh board) before the board gets crowded.
@@ -56,11 +60,24 @@ export interface GenMeta { ms: number; repaired: boolean; model: string | null; 
 
 async function generateSteps(
   prompt: string,
-  opts: { knownIds?: string[]; knownAxes?: string[]; maxSteps: number; timeoutMs?: number; thinking?: GenerateOptions['thinking']; meta?: GenMeta },
+  opts: {
+    knownIds?: string[]; knownAxes?: string[]; maxSteps: number; timeoutMs?: number; thinking?: GenerateOptions['thinking']; meta?: GenMeta
+    /** Steps already on the board (live continuation); used for layout checks. */
+    played?: Step[]
+    /** Allow one extra model call to fix overlapping layout (drafts only; costs latency). */
+    layoutRepair?: boolean
+  },
 ): Promise<Step[]> {
   const t0 = Date.now()
   const meta = opts.meta ?? { ms: 0, repaired: false, model: null, dropped: 0 }
-  const done = (steps: Step[]) => { meta.ms = Date.now() - t0; meta.model = lastGeminiModel; return steps }
+  const start = opts.played ? buildBoard(opts.played, opts.played.length) : undefined
+  const offset = opts.played?.length ?? 0
+  const done = (steps: Step[]) => {
+    meta.ms = Date.now() - t0
+    meta.model = lastGeminiModel
+    // Last resort: clear whatever a new element would be drawn on top of.
+    return autoFixLayout(steps, start, offset)
+  }
   meta.trace = []
   const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, thinking: opts.thinking, trace: meta.trace }
   let raw: unknown
@@ -71,7 +88,28 @@ async function generateSteps(
     raw = { __error: err instanceof Error ? err.message : String(err) }
   }
   let result = validateScript(raw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, maxSteps: opts.maxSteps })
-  if (result.ok) return done(result.steps)
+  if (result.ok) {
+    const issues = opts.layoutRepair ? layoutIssues(result.steps, start, offset) : []
+    if (issues.length === 0) return done(result.steps)
+    // One layout repair pass.
+    meta.repaired = true
+    try {
+      const fixedRaw = await generateStructuredJson(`${prompt}
+
+Your previous answer was valid but elements collide on the board:
+${issues.map(i => `- ${i}`).join('\n')}
+
+Previous answer:
+${JSON.stringify(result.steps).slice(0, 14000)}
+
+Return the full corrected JSON object {"steps": [...]} with the same teaching content and no collisions.`, gen)
+      const fixed = validateScript(fixedRaw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, maxSteps: opts.maxSteps })
+      if (fixed.ok && layoutIssues(fixed.steps, start, offset).length < issues.length) return done(fixed.steps)
+    } catch (err) {
+      console.warn('Layout repair failed:', err instanceof Error ? err.message : err)
+    }
+    return done(result.steps)
+  }
   meta.repaired = true
 
   // One repair attempt: show the model its output and the validator errors.
@@ -115,7 +153,7 @@ ${LAYOUT_RULES}
 - After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach".
 - End with a one-line summary written on the board.
 Return {"steps": [...]} only.`
-  return generateSteps(prompt, { maxSteps: 60, timeoutMs: 55_000 })
+  return generateSteps(prompt, { maxSteps: 60, timeoutMs: 55_000, layoutRepair: true })
 }
 
 export type TutorReason = 'explain_differently' | 'wrong_answer' | 'continue'
@@ -166,7 +204,7 @@ ${LAYOUT_RULES}
 - Return 4 to 9 steps; keep it brisk. You may clear part of the board first. New ids must not clash with existing ones unless you clear them first.
 - End with a check (kind "understand", or a short "choice" question) so the student can confirm. Do not add "reteach" to it.
 Return {"steps": [...]} only.`
-  return generateSteps(prompt, { knownIds: ids, knownAxes: axes, maxSteps: 14, timeoutMs: 20_000, thinking: 'minimal', meta: input.meta })
+  return generateSteps(prompt, { knownIds: ids, knownAxes: axes, maxSteps: 14, timeoutMs: 20_000, thinking: 'minimal', meta: input.meta, played: input.played })
 }
 
 /* ───────────── Manim ───────────── */

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
 import { draftLessonScript } from '@/lib/lesson-ai'
 
-export const maxDuration = 120
+export const maxDuration = 180
 
 function cleanObjectives(v: unknown): string[] {
   if (Array.isArray(v)) return v.filter((o): o is string => typeof o === 'string').map(o => o.trim()).filter(Boolean).slice(0, 10).map(o => o.slice(0, 300))
