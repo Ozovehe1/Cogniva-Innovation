@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     try {
       const code = await fixManimCode(job.code!, error, job.prompt)
       await admin.from('manim_jobs').update({ code }).eq('id', jobId)
-      await dispatchRender(admin, { id: jobId, code, attempts: job.attempts })
+      await dispatchRender(admin, { id: jobId, code, attempts: job.attempts, prompt: job.prompt })
     } catch (err) {
       await admin.from('manim_jobs').update({
         status: 'failed',

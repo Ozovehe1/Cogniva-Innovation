@@ -3,7 +3,7 @@ import { getSessionProfile } from '@/lib/auth'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { dispatchRender, withUrl, type ManimJob } from '@/lib/manim'
 
-export const maxDuration = 60
+export const maxDuration = 120
 
 async function loadOwn(id: string) {
   const { supabase, profile } = await getSessionProfile()
@@ -41,7 +41,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       const admin = createAdminClient()
       // A manual retry starts a fresh budget of automatic fixes.
       await admin.from('manim_jobs').update({ attempts: 0 }).eq('id', id)
-      await dispatchRender(admin, { id, code: job.code, attempts: 0 })
+      await dispatchRender(admin, { id, code: job.code, attempts: 0, prompt: job.prompt })
     } catch (err) {
       return NextResponse.json({ error: err instanceof Error ? err.message : 'Retry failed' }, { status: 500 })
     }

@@ -52,6 +52,51 @@ web_image = modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[
 secret = modal.Secret.from_name(SECRET_NAME)
 
 
+# ---- Static Manim Community v0.19 guard (mirrors src/lib/manim-guard.ts) ----
+# Runs in the lightweight web container before a render container is spawned,
+# so old ManimGL / pre-0.6 calls never cost render time.
+import re as _re
+
+_REWRITES = [
+    (r"\.get_graph\s*\(", ".plot(", "axes.get_graph( -> axes.plot("),
+    (r"\bShowCreation\s*\(", "Create(", "ShowCreation -> Create"),
+    (r"\bTextMobject\s*\(", "Text(", "TextMobject -> Text"),
+    (r"\bTexMobject\s*\(", "MathTex(", "TexMobject -> MathTex"),
+    (r"\bTexText\s*\(", "Tex(", "TexText -> Tex"),
+]
+
+_DEPRECATED = [
+    (r"\bget_line_from_equation\b", "get_line_from_equation does not exist in v0.19; use ax.plot(lambda x: m*x + b, x_range=[a, b]) or Line(ax.c2p(x1, y1), ax.c2p(x2, y2))."),
+    (r"\bget_derivative_graph\b", "get_derivative_graph does not exist; use ax.plot_derivative_graph(graph)."),
+    (r"\bget_v(?:ertical)?_line_to_graph\b", "get_v_line_to_graph does not exist; use ax.get_vertical_line(ax.i2gp(x, graph))."),
+    (r"\bsetup_axes\s*\(", "setup_axes() is GraphScene API; build Axes(...) directly."),
+    (r"\bGraphScene\b", "GraphScene was removed; subclass Scene and create Axes(...)."),
+    (r"\bShowCreationThenDestruction\b", "ShowCreationThenDestruction was removed."),
+    (r"\bFadeInFrom(?:Down|Large|Point)?\b", "FadeInFrom* was removed; use FadeIn(mob, shift=...)."),
+    (r"\bFadeOutAndShift(?:Down)?\b", "FadeOutAndShift was removed; use FadeOut(mob, shift=...)."),
+    (r"\bCircleIndicate\b", "CircleIndicate was removed; use Circumscribe."),
+    (r"[(,]\s*[xy]_(?:min|max)\s*=(?!=)", "x_min/x_max/y_min/y_max keyword args are old API; use x_range / y_range."),
+    (r"\b(?:from\s+manimlib\b|import\s+manimlib\b|from\s+manimgl\b|import\s+manimgl\b)", "ManimGL (manimlib) is not installed; use `from manim import *`."),
+    (r"(?m)^\s*CONFIG\s*=\s*\{", "CONFIG = {...} class dicts are ignored in v0.19."),
+    (r"\bembed\s*\(", "Interactive embed() is not allowed in a headless render."),
+    (r"\bself\.frame\b", "self.frame is ManimGL; use self.camera.frame in a MovingCameraScene."),
+]
+
+
+def guard_manim_code(code: str) -> tuple[str, list[str], list[str]]:
+    """Returns (rewritten_code, rewrites, problems)."""
+    rewrites: list[str] = []
+    for pat, to, note in _REWRITES:
+        code, n = _re.subn(pat, to, code)
+        if n:
+            rewrites.append(note)
+    if _re.search(r"\bself\.camera\.frame\b", code) and _re.search(r"class\s+\w+\s*\(\s*Scene\s*\)", code):
+        code = _re.sub(r"(class\s+\w+\s*\(\s*)Scene(\s*\))", r"\1MovingCameraScene\2", code, count=1)
+        rewrites.append("Scene -> MovingCameraScene")
+    problems = [msg for pat, msg in _DEPRECATED if _re.search(pat, code)]
+    return code, rewrites, problems
+
+
 def _callback(job_id: str, status: str, error: str | None = None) -> None:
     import httpx
 
@@ -164,7 +209,14 @@ def web():
             raise HTTPException(status_code=401, detail="unauthorized")
         if not req.upload_url.startswith("https://"):
             raise HTTPException(status_code=400, detail="upload_url must be https")
-        call = render.spawn(req.job_id, req.code, req.scene_name, req.upload_url)
-        return {"accepted": True, "call_id": call.object_id}
+        code, rewrites, problems = guard_manim_code(req.code)
+        if problems:
+            # Fail fast: no render container is started.
+            raise HTTPException(
+                status_code=422,
+                detail="Static check (Manim Community v0.19) rejected the code: " + " | ".join(problems),
+            )
+        call = render.spawn(req.job_id, code, req.scene_name, req.upload_url)
+        return {"accepted": True, "call_id": call.object_id, "rewrites": rewrites}
 
     return api

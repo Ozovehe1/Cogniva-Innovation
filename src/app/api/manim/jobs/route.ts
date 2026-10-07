@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   try { admin = createAdminClient() } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Server not configured' }, { status: 500 })
   }
-  const dispatch = await dispatchRender(admin, { id: (job as ManimJob).id, code, attempts: 0 })
+  const dispatch = await dispatchRender(admin, { id: (job as ManimJob).id, code, attempts: 0, prompt })
   const { data: fresh } = await supabase.from('manim_jobs').select('*').eq('id', (job as ManimJob).id).single()
   return NextResponse.json({ job: withUrl(fresh as ManimJob), dispatched: dispatch.ok, warning: dispatch.ok ? undefined : dispatch.error })
 }

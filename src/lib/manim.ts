@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { MANIM_BUCKET, publicClipUrl } from './supabase/admin'
-import { MANIM_SCENE_NAME } from './lesson-ai'
+import { MANIM_SCENE_NAME, fixManimCode, vetManimCode } from './lesson-ai'
 
 export interface ManimJob {
   id: string
@@ -37,12 +37,24 @@ export function renderServiceConfigured() {
  * Creates a signed upload URL for the next attempt and asks the Modal service to render.
  * Uses the service-role client. Updates the job row with the outcome of the dispatch.
  */
-export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 'id' | 'code' | 'attempts'>) {
+export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 'id' | 'code' | 'attempts'> & { prompt?: string | null }) {
   const attempt = job.attempts + 1
   const path = `${job.id}/${attempt}.mp4`
   if (!job.code) {
     await admin.from('manim_jobs').update({ status: 'failed', error: 'No code to render.' }).eq('id', job.id)
     return { ok: false as const, error: 'No code to render.' }
+  }
+
+  // Static Manim v0.19 check before any container time is spent: safe renames are applied;
+  // anything else gets one Gemini fix (when we know the request) or fails fast with a clear error.
+  const vetted = await vetForRender(job.code, job.prompt ?? null)
+  if (!vetted.ok) {
+    await admin.from('manim_jobs').update({ status: 'failed', error: vetted.error.slice(0, 6000) }).eq('id', job.id)
+    return { ok: false as const, error: vetted.error }
+  }
+  if (vetted.code !== job.code) {
+    await admin.from('manim_jobs').update({ code: vetted.code }).eq('id', job.id)
+    job = { ...job, code: vetted.code }
   }
   if (!renderServiceConfigured()) {
     const error = 'The render service is not connected yet (MODAL_RENDER_URL is not set). The job will stay queued.'
@@ -67,12 +79,28 @@ export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 
       body: JSON.stringify({ job_id: job.id, code: job.code, scene_name: MANIM_SCENE_NAME, upload_url: signed.signedUrl }),
       signal: AbortSignal.timeout(20_000),
     })
+    if (res.status === 422) {
+      const error = (await res.text()).slice(0, 2000)
+      await admin.from('manim_jobs').update({ status: 'failed', error }).eq('id', job.id)
+      return { ok: false as const, error }
+    }
     if (!res.ok) throw new Error(`render service answered ${res.status}: ${(await res.text()).slice(0, 300)}`)
     return { ok: true as const }
   } catch (err) {
     const error = `Could not reach the render service: ${err instanceof Error ? err.message : String(err)}`
     await admin.from('manim_jobs').update({ status: 'failed', error }).eq('id', job.id)
     return { ok: false as const, error }
+  }
+}
+
+async function vetForRender(code: string, prompt: string | null): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
+  const v = vetManimCode(code)
+  if (!v.error) return { ok: true, code: v.code }
+  if (!prompt) return { ok: false, error: v.error }
+  try {
+    return { ok: true, code: await fixManimCode(v.code, v.error, prompt) }
+  } catch (err) {
+    return { ok: false, error: `${v.error}\n\nAutomatic fix failed: ${err instanceof Error ? err.message : String(err)}` }
   }
 }
 

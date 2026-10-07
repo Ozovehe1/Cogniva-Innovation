@@ -1,6 +1,7 @@
 import { generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, type Step } from './lesson-schema'
 import { autoFixLayout, layoutIssues } from './lesson-layout'
+import { MANIM_API_SHEET, describeProblems, guardManimCode, hintsFor, tracebackOf } from './manim-guard'
 import { buildBoard } from '@/components/whiteboard/board-state'
 import { intelligenceLabel } from '@/components/intelligence'
 
@@ -212,11 +213,14 @@ Return {"steps": [...]} only.`
 export const MANIM_SCENE_NAME = 'GeneratedScene'
 
 const MANIM_RULES = `Rules for the code:
-- Manim Community Edition v0.19 (from manim import *). One class named ${MANIM_SCENE_NAME}(Scene) (or MovingCameraScene / ThreeDScene subclass, still named ${MANIM_SCENE_NAME}).
+- Manim Community Edition v0.19 only (NOT ManimGL, NOT old 0.x tutorials). First line \`from manim import *\`. Exactly one class named ${MANIM_SCENE_NAME}(Scene) (or MovingCameraScene / ThreeDScene subclass, still named ${MANIM_SCENE_NAME}).
 - Total runtime 5 to 40 seconds. 16:9 frame. Light background: set self.camera.background_color = "#FDFCF9" and use dark colours: "#14141A" (ink), "#1F4D3A" (green accent), "#A4502A" (clay), "#23406A" (navy).
 - Use MathTex/Tex for maths (LaTeX is installed), Text for plain words with font size >= 28.
 - No file, network, subprocess or OS access; no imports other than manim, numpy and math. No external assets.
 - Keep it clean and deliberate: few elements, smooth transforms (Transform, ReplacementTransform, TransformMatchingTex, Create, Write, FadeIn), short waits.
+
+${MANIM_API_SHEET}
+
 Return ONLY the Python source, no markdown fences, no explanation.`
 
 function stripFences(code: string) {
@@ -225,12 +229,23 @@ function stripFences(code: string) {
 
 const FORBIDDEN = /\b(import\s+(os|sys|subprocess|socket|shutil|requests|urllib|http|pathlib)|from\s+(os|sys|subprocess|socket|shutil|requests|urllib|http|pathlib)\b|__import__|open\s*\(|eval\s*\(|exec\s*\()/
 
-/** Light static checks before sending code to the render sandbox. */
+/** Security and shape checks before sending code to the render sandbox. */
 export function checkManimCode(code: string): string | null {
   if (!new RegExp(`class\\s+${MANIM_SCENE_NAME}\\s*\\(`).test(code)) return `The scene class must be named ${MANIM_SCENE_NAME}.`
   if (FORBIDDEN.test(code)) return 'The code uses a disallowed module or builtin (file, OS or network access).'
   if (code.length > 20_000) return 'The code is too long.'
   return null
+}
+
+/**
+ * Full pre-render check: safe deprecated-API renames are applied, then security,
+ * shape and Manim v0.19 API problems are reported. Returns the (possibly rewritten) code.
+ */
+export function vetManimCode(raw: string): { code: string; rewrites: string[]; error: string | null } {
+  const g = guardManimCode(stripFences(raw))
+  const basic = checkManimCode(g.code)
+  const error = basic ?? (g.problems.length ? describeProblems(g.problems) : null)
+  return { code: g.code, rewrites: g.rewrites, error }
 }
 
 export async function generateManimCode(description: string, context?: { lessonTitle?: string; subject?: string }): Promise<string> {
@@ -239,28 +254,33 @@ The tutor describes it as:
 """${description.slice(0, 2000)}"""
 
 ${MANIM_RULES}`
-  const code = stripFences(await generateText(prompt, { timeoutMs: 40_000 }))
-  const problem = checkManimCode(code)
-  if (!problem) return code
-  const fixed = stripFences(await generateText(`${prompt}\n\nYour previous code was rejected: ${problem}\nPrevious code:\n${code.slice(0, 15000)}`, { timeoutMs: 40_000 }))
-  const again = checkManimCode(fixed)
-  if (again) throw new Error(again)
-  return fixed
+  const first = vetManimCode(await generateText(prompt, { timeoutMs: 40_000 }))
+  if (!first.error) return first.code
+  const second = vetManimCode(await generateText(`${prompt}\n\nYour previous code was rejected before rendering:\n${first.error}\nPrevious code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 40_000 }))
+  if (second.error) throw new Error(second.error)
+  return second.code
 }
 
+/**
+ * Asks Gemini to fix code that failed to render (or failed the static check).
+ * `error` is the render log or the static-check message. At most two Gemini passes.
+ */
 export async function fixManimCode(code: string, error: string, description: string): Promise<string> {
-  const prompt = `This Manim Community v0.19 scene failed to render.
+  const hints = hintsFor(error)
+  const prompt = `This Manim Community v0.19 scene failed${/Static check/.test(error) ? ' the pre-render check' : ' to render'}.
 Original request: """${description.slice(0, 1500)}"""
 
-Error (tail of the log):
-${error.slice(-4000)}
-
+Traceback / error:
+${tracebackOf(error)}
+${hints.length ? `\nWhat it means:\n- ${hints.join('\n- ')}\n` : ''}
 Code:
 ${code.slice(0, 15000)}
 
-Fix the error with the smallest change that keeps the intent. ${MANIM_RULES}`
-  const fixed = stripFences(await generateText(prompt, { timeoutMs: 40_000 }))
-  const problem = checkManimCode(fixed)
-  if (problem) throw new Error(problem)
-  return fixed
+Fix the error, and also replace any other call in the code that is not valid Manim Community v0.19 (check every line against the API sheet below; the next render must not fail on a different old-API call). Keep the intent and the visual design.
+${MANIM_RULES}`
+  const first = vetManimCode(await generateText(prompt, { timeoutMs: 40_000 }))
+  if (!first.error) return first.code
+  const second = vetManimCode(await generateText(`${prompt}\n\nYour fixed code was rejected before rendering:\n${first.error}\nRejected code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 40_000 }))
+  if (second.error) throw new Error(second.error)
+  return second.code
 }
