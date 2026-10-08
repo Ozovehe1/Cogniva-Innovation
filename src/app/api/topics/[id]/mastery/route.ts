@@ -7,6 +7,7 @@ import { masterTopic, prefetchNextLesson, recheckItems, reopenPrerequisite } fro
 import { selfOrigin } from '@/lib/lesson-drafting'
 import { displayItem, storedItemProblems } from '@/lib/question-quality'
 import { normalizeMathText } from '@/lib/math-text'
+import { MASTERY_ITEMS_VERSION, masteryContext, type MasteryContext } from '@/lib/lesson-digest'
 
 export const maxDuration = 120
 
@@ -45,7 +46,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 /**
  * POST /api/topics/:id/mastery
- *  { action: 'start' }                    → 4 fresh questions on the skill
+ *  { action: 'start' }                    → 4 fresh questions on what this learner's lesson(s) for the skill taught
  *  { action: 'submit', answers: number[] } → pass (≥75%) unlocks the next topics; a second miss in a row triggers a re-check of prerequisites
  *  { action: 'recheck_start' }            → re-check the prerequisites (also used after repeated wrong answers in a lesson)
  *  { action: 'recheck', answers: number[] } → a missed prerequisite goes back into the path before this topic
@@ -62,14 +63,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const answers = Array.isArray(body.answers) ? body.answers.map(a => (typeof a === 'number' ? a : null)) : []
 
   if (body.action === 'start') {
+    const m = topic.mastery
+    const stored = m.items ?? []
     // A stored, unanswered check written before the quality gate is rewritten when its options are too close to tell apart.
-    const stale = (topic.mastery.items ?? []).some(it => storedItemProblems(it).length > 0)
-    if (!topic.mastery.items?.length || stale) {
+    const stale = stored.some(it => storedItemProblems(it).length > 0)
+    // Checks written before lesson context (no itemsVersion) are rewritten from the lessons, unless one was opened in the
+    // last 30 minutes (an attempt in progress, e.g. a reload mid-check, keeps its questions).
+    const recent = !!m.startedAt && Date.now() - new Date(m.startedAt).getTime() < 30 * 60_000
+    const legacy = stored.length > 0 && (m.itemsVersion ?? 0) < MASTERY_ITEMS_VERSION && !recent
+    // Written from the title because the lesson had no content yet: rewrite once the lesson has some.
+    const titleOnly = stored.length > 0 && m.basis === 'title' && !!topic.lesson_id && !recent
+    let ctx: MasteryContext | null = null
+    if (titleOnly && !legacy && !stale) { ctx = await masteryContext(db, path, topic).catch(() => null) }
+    if (!stored.length || stale || legacy || (titleOnly && !!ctx?.digest)) {
       const learner = await loadLearner(db, profile.id)
       if (!learner) return NextResponse.json({ error: 'Not found' }, { status: 404 })
       try {
-        const items = await masteryItems({ learner: learnerForPath(learner, path), topicTitle: topic.title, summary: topic.summary, goal: path.goal })
-        const { data } = await db.from('path_topics').update({ mastery: { ...topic.mastery, items, startedAt: new Date().toISOString() } }).eq('id', topic.id).select('*').single()
+        ctx = ctx ?? await masteryContext(db, path, topic).catch(() => ({ digest: '', lessonIds: [] }))
+        const items = await masteryItems({ learner: learnerForPath(learner, path), topicTitle: topic.title, summary: topic.summary, goal: path.goal, lessonDigest: ctx.digest })
+        const mastery = { ...m, items, itemsVersion: MASTERY_ITEMS_VERSION, basis: ctx.digest ? 'lesson' as const : 'title' as const, lessonIds: ctx.lessonIds, startedAt: new Date().toISOString() }
+        const { data } = await db.from('path_topics').update({ mastery }).eq('id', topic.id).select('*').single()
         topic = data as TopicRow
       } catch (err) {
         const quota = err instanceof GeminiQuotaError

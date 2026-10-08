@@ -68,7 +68,8 @@ export interface TopicRow {
   lesson_id: string | null
   target_minutes: number | null
   due_on: string | null
-  mastery: { items?: DiagItem[]; startedAt?: string; lastScore?: number; recheck?: { node: string; item: number }[] }
+  /** itemsVersion/basis describe `items`: version 2+ items were written from the learner's lessons ('lesson') or, with no lesson content, the topic title ('title'). */
+  mastery: { items?: DiagItem[]; itemsVersion?: number; basis?: 'lesson' | 'title'; lessonIds?: string[]; startedAt?: string; lastScore?: number; recheck?: { node: string; item: number }[] }
   mastery_attempts: number
   wrong_streak: number
   mastered_at: string | null
@@ -399,10 +400,19 @@ export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 
 }
 
 /** Mastery-check items for a topic: 4 fresh multiple-choice questions on this skill, quality-gated. */
-export async function masteryItems(input: { learner: LearnerRow; topicTitle: string; summary: string; goal: string }): Promise<DiagItem[]> {
+export async function masteryItems(input: { learner: LearnerRow; topicTitle: string; summary: string; goal: string; lessonDigest?: string }): Promise<DiagItem[]> {
+  const digest = (input.lessonDigest ?? '').trim()
+  // With the learner's lessons: test what they were actually taught, in the lessons' notation; otherwise the skill as titled.
+  const basis = digest
+    ? `The learner has just been taught this skill in the lesson(s) below. Base EVERY question on what these lessons actually covered: the same methods, steps, formulas, terms, notation and symbols, and the same kinds of problems as the worked examples and in-lesson checks, with NEW numbers and new situations. Never copy a lesson example or check question verbatim, never reuse its exact numbers, and do not test anything the lessons did not teach. Questions are on this topic; an earlier lesson may only supply background the topic builds on.
+--- LESSONS ---
+${digest}
+--- END LESSONS ---
+In each "explain", name the lesson step or idea the question tests.`
+    : ''
   const prompt = (count: number, avoid: string) => `Write a ${count}-question mastery check for the skill "${input.topicTitle}" (${input.summary}).
 Learner: ${levelLine(input.learner) || 'level unknown'}; goal: ${input.goal}.${input.learner.interests?.length ? ` Set word problems in: ${input.learner.interests.slice(0, 2).join(', ')}.` : ''}
-Each question tests whether they can DO the skill (apply it, not recall a definition), at their level, answerable in about a minute. Every question is physically and mathematically correct and has exactly one right answer. 4 options each; vary the correct position.
+${basis ? basis + '\n' : ''}Each question tests whether they can DO the skill (apply it, not recall a definition), at their level, answerable in about a minute. Every question is physically and mathematically correct and has exactly one right answer. 4 options each; vary the correct position.
 ${QUESTION_RULES}${avoid}
 Return JSON {"items": [{"q": string, "options": [4 strings], "answer": index, "explain": one sentence showing the key step, "calc": string or null}]}.`
   const opts = { timeoutMs: 45_000, primaryTimeoutMs: 30_000, temperature: 0.5 }
