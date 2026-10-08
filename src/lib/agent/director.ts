@@ -89,7 +89,7 @@ export async function handleEvent(admin: SupabaseClient, ev: AgentEvent, opts: {
   // A plan must exist for today after any event (rule-based when the turn did not write one).
   const { data: plan } = await admin.from('daily_plans').select('updated_at').eq('student_id', ev.student_id).eq('plan_date', day).maybeSingle()
   if (!plan) await rulePlan(admin, ev.student_id, ctx.runId, { light: facts.low })
-  const action = await logAction(admin, { studentId: ev.student_id, runId: ctx.runId, source: 'director', tool: `director:${ev.kind}`, key, args: ev.payload, result: { summary, model, fallback, tools: ctx.trace.slice(0, 8) }, summary })
+  const action = await logAction(admin, { studentId: ev.student_id, runId: ctx.runId, source: 'director', tool: `director:${ev.kind}`, key, args: ev.payload, result: { summary, model, fallback, trace: ctx.trace.slice(-12) }, summary })
   return { summary, action, fallback, model }
 }
 

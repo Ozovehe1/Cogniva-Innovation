@@ -29,7 +29,7 @@ Use your tools, then reply with ONE short sentence on what you did and why.
 - suggest_remediation: when they missed the same topic twice, or a misconception points to an earlier skill (they confirm with a tap).
 - make_mini_lesson or make_recap_visual: when a picture or a short targeted re-teach would fix a specific misconception.
 - prefetch_lesson: the next ready topic, so it opens instantly.
-At most 3 writes. Do not repeat what is already in place.`
+At most 3 writes. Do not repeat what is already in place. Only report actions whose tool result confirmed them (a result with "error" or "already" did not change anything).`
 
 export interface RunResult { text: string; model: string | null; steps: number; toolCalls: string[]; busy?: boolean }
 
@@ -84,6 +84,8 @@ export async function runAgent(input: {
         }
       }
       used.push(call.name)
+      const err = result && typeof result === 'object' && 'error' in (result as object) ? String((result as { error: unknown }).error).slice(0, 120) : null
+      ctx.trace.push(`tool ${call.name}: ${err ? `error: ${err}` : 'ok'}`)
       messages.push({ role: 'tool', toolCallId: call.id, name: call.name, content: JSON.stringify(result ?? null).slice(0, 7000) })
     }
     if (text && !/\s$/.test(text)) { text += '\n\n'; input.onText?.('\n\n') }
