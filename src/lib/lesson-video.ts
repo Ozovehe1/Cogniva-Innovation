@@ -143,7 +143,7 @@ export async function videoAssets(steps: Step[], parts: [number, number][]): Pro
  * the shortest length L such that packing whole steps greedily into parts of at most L needs no more than the allowed
  * number of parts (a step, e.g. a 30 s clip, is never split).
  */
-export function planVideoParts(steps: Step[], clipMs?: Map<string, number>): { parts: [number, number][]; totalMs: number; steps: Step[] } {
+export function planVideoParts(steps: Step[], clipMs?: Map<string, number>): { parts: [number, number][]; totalMs: number; steps: Step[]; partMs?: number[] } {
   // A clip plays to its end: its real length (when known) beats the narration estimate.
   const ms = steps.map((s, i) => Math.max(estimateStepMs(s, i), s.type === 'manim_clip' ? (clipMs?.get(s.url) ?? 0) : 0))
   const totalMs = ms.reduce((a, b) => a + b, 0)
@@ -182,7 +182,8 @@ export function planVideoParts(steps: Step[], clipMs?: Map<string, number>): { p
   let bounds = spread()
   const longest = (b: number[]) => Math.max(...b.slice(1).map((e, k) => ms.slice(b[k], e).reduce((x, y) => x + y, 0)))
   if (bounds.length - 1 > n || longest(bounds) > hi + 1) bounds = pack(hi)
-  return { parts: bounds.slice(1).map((b, i) => [bounds[i], b] as [number, number]), totalMs, steps }
+  const parts = bounds.slice(1).map((b, i) => [bounds[i], b] as [number, number])
+  return { parts, totalMs, steps, partMs: parts.map(([a, b]) => Math.round(ms.slice(a, b).reduce((x, y) => x + y, 0))) }
 }
 
 export function isStale(row: Pick<LessonVideoRow, 'status' | 'updated_at'>) {
@@ -250,7 +251,7 @@ export function videoServiceConfigured() {
 }
 
 /** Ask the Modal recorder to render this job. Updates the row with the outcome. */
-export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow, 'id' | 'lesson_id' | 'script_hash'>, origin: string, plan: { parts: [number, number][]; totalMs: number; steps: Step[] }) {
+export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow, 'id' | 'lesson_id' | 'script_hash'>, origin: string, plan: { parts: [number, number][]; totalMs: number; steps: Step[]; partMs?: number[] }) {
   const fail = async (error: string) => {
     await db.from('lesson_videos').update({ status: 'failed', error, updated_at: new Date().toISOString() }).eq('id', row.id)
     return { ok: false as const, error }
@@ -269,7 +270,7 @@ export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow
     const res = await fetch(`${base}/video`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN! },
-      body: JSON.stringify({ job_id: row.id, page_url: pageUrl, upload_url: signed.signedUrl, max_s: maxS, callback_url: `${origin}/api/video/callback`, parts, total_s: totalMs / 1000, asset_urls: assets?.urls, part_assets: assets?.perPart }),
+      body: JSON.stringify({ job_id: row.id, page_url: pageUrl, upload_url: signed.signedUrl, max_s: maxS, callback_url: `${origin}/api/video/callback`, parts, total_s: totalMs / 1000, asset_urls: assets?.urls, part_assets: assets?.perPart, part_ms: plan.partMs }),
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) throw new Error(`video service answered ${res.status}: ${(await res.text()).slice(0, 300)}`)

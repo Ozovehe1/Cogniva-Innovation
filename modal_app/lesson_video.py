@@ -422,6 +422,50 @@ def _fetch(url: str, dest: str):
         f.write(data)
 
 
+class Prefetcher:
+    """The orchestrator's Storage downloads over one pool of kept-alive connections (a new TLS connection per file was
+    slow from Modal and counts against Storage's connection limit), with retry and backoff on 429 / 5xx."""
+
+    def __init__(self, workers: int = 32):
+        import httpx
+        self.client = httpx.Client(timeout=60, follow_redirects=True, headers={"User-Agent": "geniusmap-lesson-video"},
+                                   limits=httpx.Limits(max_connections=workers, max_keepalive_connections=workers))
+        self.pool = ThreadPoolExecutor(max_workers=workers)
+        self.stats = {"retries": 0, "failed": 0}
+        self.last_done = 0.0
+
+    def _get(self, url: str, attempts: int = 5) -> bytes | None:
+        import random
+        delay = 0.3
+        for attempt in range(attempts):
+            try:
+                r = self.client.get(url)
+                if r.status_code < 300:
+                    return r.content
+                if r.status_code not in (408, 425, 429, 500, 502, 503, 504):
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+            if attempt < attempts - 1:
+                self.stats["retries"] += 1
+                time.sleep(delay + random.random() * delay)
+                delay *= 2
+        self.stats["failed"] += 1
+        return None
+
+    def _get_timed(self, url: str) -> bytes | None:
+        try:
+            return self._get(url)
+        finally:
+            self.last_done = max(self.last_done, time.time())
+
+    def submit(self, url: str):
+        return self.pool.submit(self._get_timed, url)
+
+    def close(self):
+        self.pool.shutdown(wait=False)
+
+
 def prefetch_one(url: str) -> bytes | None:
     """One file for the orchestrator's prefetch; None when it is missing (a line never voiced) or keeps failing."""
     try:
@@ -462,11 +506,14 @@ class Narration:
         self.pool = ThreadPoolExecutor(max_workers=max(4, os.cpu_count() or 4))
         self.jobs: dict[str, object] = {}
         self.files = files or {}
+        import threading
+        self.lock = threading.Lock()
 
     def want(self, srcs):
-        for src in srcs:
-            if src not in self.jobs:
-                self.jobs[src] = self.pool.submit(self._load, src, os.path.join(self.dir, f"{len(self.jobs)}.mp3"))
+        with self.lock:
+            for src in srcs:
+                if src not in self.jobs:
+                    self.jobs[src] = self.pool.submit(self._load, src, os.path.join(self.dir, f"{len(self.jobs)}.mp3"))
 
     def _load(self, src: str, dest: str) -> bytes | None:
         try:

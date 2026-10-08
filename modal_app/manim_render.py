@@ -260,6 +260,9 @@ def _video_callback(callback_url: str | None, job_id: str, status: str, **extra)
 # ready in well under two minutes. A capture's cost is latency in Chrome's compositor, not CPU: 2, 4 and 8 cores
 # measured the same, so a part gets 2.
 PART_CPU = 2.0
+# The longest parts of a lesson (up to this many) render on more cores: they set the render time.
+HEAVY_PARTS = 16
+HEAVY_CPU = 4.0
 
 
 @app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=3072, max_containers=90,
@@ -285,7 +288,7 @@ def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: floa
 @app.function(image=video_image, secrets=[secret], timeout=1800, cpu=4.0, memory=4096, max_containers=8)
 def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200, callback_url: str | None = None,
                  parts: list | None = None, total_s: float | None = None, asset_urls: list | None = None,
-                 part_assets: list | None = None) -> dict:
+                 part_assets: list | None = None, part_ms: list | None = None) -> dict:
     """Render the parts in parallel, join them, upload the MP4 and call back. `parts` are [from, to) step ranges;
     `asset_urls` are every narration line / clip of the lesson and `part_assets[i]` the indices part i needs."""
     import sys
@@ -304,22 +307,38 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     sep = "&" if "?" in page_url else "?"
     _video_callback(callback_url, job_id, "rendering", progress=0.02)
     # Read Storage once for the whole lesson (32 files at a time, with backoff) and hand each part its files.
-    from concurrent.futures import ThreadPoolExecutor
-
     urls = list(dict.fromkeys(str(u) for u in (asset_urls or [])))[:5000]
     workdir = tempfile.mkdtemp(prefix="lesson-video-")
     narration = lv.Narration(workdir)
     track = lv.AudioTrack(workdir, narration)
     is_clip = lambda u: "/manim-clips/" in u and u.split("?")[0].lower().endswith(".mp4")  # noqa: E731
     # Clip MP4s are not prefetched: each part downloads its own (one part per clip), so dispatch never waits on them.
-    fetch_pool = ThreadPoolExecutor(max_workers=32)
-    fetches = {u: fetch_pool.submit(lv.prefetch_one, u) for u in urls if not is_clip(u)}
+    # The longest parts set the render time: they get their files and start first (part_ms: estimated lesson time).
+    order = list(range(len(ranges)))
+    if part_ms and len(part_ms) == len(ranges):
+        order.sort(key=lambda i: -float(part_ms[i] or 0))
+    want = [urls[k] for i in order for k in (part_assets[i] if part_assets and i < len(part_assets) else []) if 0 <= k < len(urls)]
+    want += urls
+    fetcher = lv.Prefetcher(32)
+    fetches = {}
+    for u in want:
+        if u not in fetches and not is_clip(u):
+            fetches[u] = fetcher.submit(u)
     stamps: dict = {}
 
-    def inputs():
+    # The heaviest parts (the critical path) get 4 cores: SwiftShader captures ~15-40% faster than on 2 and vary less.
+    heavy: set = set()
+    if part_ms and len(part_ms) == len(ranges):
+        top = max(float(x or 0) for x in part_ms)
+        heavy = {i for i in order[:HEAVY_PARTS] if float(part_ms[i] or 0) >= max(20_000.0, 0.7 * top)}
+
+    def inputs(which):
         # Parts are handed to Modal in order as soon as their own files are in, so downloading overlaps the
         # containers starting; map() uploads the inputs in batches instead of one spawn round trip per part.
-        for i, (a, b) in enumerate(ranges):
+        for i in order:
+            if (i in heavy) != which:
+                continue
+            a, b = ranges[i]
             last = i == len(ranges) - 1
             url = page_url + (f"{sep}from={a}&to={b}" if parts else "")
             mine = [urls[k] for k in (part_assets[i] if part_assets and i < len(part_assets) else []) if 0 <= k < len(urls)]
@@ -337,17 +356,37 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
             # Generous frame cap per part (a part normally runs ~10-40 s of video): stops a page that never finishes.
             max_frames = int(min(max_s, max(600, total * 3 / len(ranges) + 300)) * lv.FPS)
             yield (i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time(), clips)
-        stamps["inputs_s"] = round(time.time() - t0, 1)
+        stamps["inputs_s"] = max(stamps.get("inputs_s", 0), round(time.time() - t0, 1))
+
+    import queue
+    import threading
+
+    results: "queue.Queue" = queue.Queue()
+
+    def run_map(fn, which):
+        try:
+            for res in fn.starmap(inputs(which), order_outputs=False):
+                results.put(res)
+        except BaseException as exc:  # noqa: BLE001
+            results.put(exc)
+
+    maps = [(lesson_video_part, False)] + ([(lesson_video_part.with_options(cpu=HEAVY_CPU), True)] if heavy else [])
+    for fn, which in maps:
+        threading.Thread(target=run_map, args=(fn, which), daemon=True).start()
 
     done: dict[int, dict] = {}
     last_report = 0.0
     try:
-        for res in lesson_video_part.starmap(inputs(), order_outputs=False):
+        while len(done) < len(ranges):
+            res = results.get(timeout=900)
+            if isinstance(res, BaseException):
+                raise res
             i = res["index"]
             stamps.setdefault("first_part_s", round(time.time() - t0, 1))
             # Write the part's video now and hand its narration to the encoder (AAC is encoded as parts land).
             with open(os.path.join(workdir, f"part{i:03d}.mp4"), "wb") as v:
                 v.write(res.pop("video"))
+            res["timing"]["heavy"] = i in heavy
             done[i] = res
             narration.want(sg[0] for sg in res["segments"])
             track.add(i, res["segments"], res["frames"])
@@ -358,7 +397,7 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
         if len(done) != len(ranges):
             raise RuntimeError(f"only {len(done)} of {len(ranges)} parts came back")
         failed = [u for u, f in fetches.items() if f.result() is None]
-        fetch_pool.shutdown(wait=False)
+        fetcher.close()
         t_parts = time.time()
         out = lv.assemble([done[i] for i in range(len(ranges))], workdir, narration, track=track, written=True)
         t_join = time.time()
@@ -376,7 +415,8 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     slow = max(range(len(pt)), key=lambda i: pt[i].get("fn_s", 0))
     meta = {
         "renderer": "virtual-clock", "parts": len(ranges), "wall_s": round(time.time() - t0, 1), "spawned_s": stamps.get("inputs_s"),
-        "first_part_s": stamps.get("first_part_s"), "swiftshader_parts": sum(1 for p in pt if p.get("compositor") == "swiftshader"),
+        "first_part_s": stamps.get("first_part_s"), "prefetch_s": round(fetcher.last_done - t0, 1) if fetcher.last_done else None,
+        "prefetch_retries": fetcher.stats["retries"], "heavy_parts": len(heavy), "swiftshader_parts": sum(1 for p in pt if p.get("compositor") == "swiftshader"),
         "prefetched": len(fetches) - len(failed), "prefetch_failed": len(failed), "parts_s": round(t_parts - t0, 1),
         "join_s": round(t_join - t_parts, 1), "upload_s": round(time.time() - t_join, 1),
         "slowest_part_s": pt[slow].get("fn_s", 0), "slowest_part": {"index": slow, **pt[slow]},
@@ -595,6 +635,7 @@ def web():
         total_s: float | None = Field(default=None, ge=0, le=6 * 3600)
         asset_urls: list[str] | None = Field(default=None, max_length=5000)
         part_assets: list[list[int]] | None = Field(default=None, max_length=200)
+        part_ms: list[float] | None = Field(default=None, max_length=200)
 
     @api.post("/video", status_code=202)
     def video_endpoint(req: VideoRequest, x_render_token: str | None = Header(default=None)):
@@ -607,7 +648,7 @@ def web():
             if not u.startswith("https://"):
                 raise HTTPException(status_code=400, detail="asset urls must be https")
         call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url, req.parts, req.total_s,
-                                  req.asset_urls, req.part_assets)
+                                  req.asset_urls, req.part_assets, req.part_ms)
         return {"accepted": True, "call_id": call.object_id}
 
     class VideoBenchRequest(BaseModel):
