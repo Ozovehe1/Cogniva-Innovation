@@ -44,7 +44,7 @@ export function AppShell({
   fullName: string
   initials: string
   navItems: NavItem[]
-  roleLabel: string
+  roleLabel?: string
   homeHref: string
 }) {
   const pathname = usePathname()
@@ -127,7 +127,7 @@ export function AppShell({
             <Avatar initials={initials} size="sm" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-ink">{fullName}</p>
-              <p className="text-[12px] text-muted">{roleLabel}</p>
+              {roleLabel ? <p className="text-[12px] text-muted">{roleLabel}</p> : null}
             </div>
           </div>
           {signOutForm('mt-1')}
@@ -213,7 +213,7 @@ export function AppShell({
                 <Avatar initials={initials} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[15px] font-medium text-ink">{fullName}</p>
-                  <p className="text-[13px] text-muted">{roleLabel}</p>
+                  {roleLabel ? <p className="text-[13px] text-muted">{roleLabel}</p> : null}
                 </div>
                 <button
                   type="button"
