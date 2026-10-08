@@ -26,6 +26,18 @@ const PATTERNS: RegExp[] = [
   // Not eating or sleeping (sustained)
   /\b(haven'?t|have not|can'?t|cannot|not) (eaten|been eating|slept|been sleeping)\b/i,
   /\bnot (eating|sleeping) (for|in) (days|weeks)\b/i,
+  // Nigerian Pidgin and code-switching (self-harm, hopelessness, abuse)
+  /\b(i|make i|mek i|i go|i wan|i want|i dey (think|plan) to) (just )?(die|kill (my ?self|myself)|end (am|my life|everything))\b/i,
+  /\bi wan (die|commot for (this )?world)\b/i,
+  /\b(life|this life) no (get|dey get) (meaning|value|point)\b/i,
+  /\bi don tire (for|of) (this )?life\b/i,
+  /\bi no (wan|want) (live|dey alive|wake up)( again)?\b/i,
+  /\bmake i (just )?(drink|take) (sniper|poison|rat poison|otapiapia)\b/i,
+  /\b(sniper|otapiapia|rat poison)\b.{0,40}\b(drink|take|swallow|chop)\b|\b(drink|take|swallow|chop)\b.{0,20}\b(sniper|otapiapia|rat poison)\b/i,
+  /\bi (fit|go) (just )?jump (inside|for) (lagoon|river|bridge)\b/i,
+  /\b(dem|e|my (papa|mama|uncle|aunty|step\w*)) (dey|don|de) (beat|flog|touch|abuse|hurt) me\b/i,
+  /\bnobody (go|will) miss me\b/i,
+  /\bi (no|don't|dont) (fit|wan) (cope|continue|carry (am|this)) again\b/i,
 ]
 
 /** True when the text suggests the learner may be in distress. */
