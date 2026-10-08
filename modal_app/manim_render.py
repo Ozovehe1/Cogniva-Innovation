@@ -81,6 +81,8 @@ video_image = (
         "apt-get update && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb",
     )
     .pip_install("playwright==1.55.0", "httpx==0.27.2")
+    # Playwright's headless shell (the old, lighter headless mode); clips are re-encoded to VP8 for it (no H.264).
+    .run_commands("playwright install --with-deps --only-shell chromium")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video.py"), "/root/lesson_video.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video_clock.js"), "/root/lesson_video_clock.js")
 )
@@ -255,17 +257,31 @@ def _video_callback(callback_url: str | None, job_id: str, status: str, **extra)
             print(f"video callback attempt {attempt + 1} failed: {exc}")
 
 
+VIDEO_ENGINE = "chrome"
+
+
 # Lesson videos render on a virtual clock (lesson_video.py): each part of the lesson is drawn frame by frame as fast as
 # the CPU allows (~25-35 frames a second, i.e. faster than real time), and the parts render side by side, so a lesson
 # of any length is ready in about a minute and a half. CPU only; a part container lives ~40-70 s.
 @app.function(image=video_image, secrets=[secret], timeout=600, cpu=2.0, memory=3072, max_containers=64,
               retries=modal.Retries(max_retries=1, initial_delay=0.0, backoff_coefficient=1.0))
-def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None) -> dict:
+def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None, engine: str = VIDEO_ENGINE, bench: bool = False) -> dict:
     import sys
+    import time
     sys.path.insert(0, "/root")
     import lesson_video as lv
 
-    res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome")
+    t = time.time()
+    # engine: "chrome" = Google Chrome (new headless, plays H.264); "shell" = Playwright's headless shell, clips as VP8.
+    # A "+flag,flag" suffix adds Chrome flags (benchmarks).
+    name, _, flags = engine.partition("+")
+    os.environ["LV_CLIP_CODEC"] = "vp8" if name == "shell" else "h264"
+    if bench:
+        os.environ["LV_TEST"] = "1"  # stop at max_frames instead of failing
+    res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome" if name == "chrome" else None,
+                         extra_args=[f for f in flags.split(",") if f])
+    res["timing"]["cpus"] = os.cpu_count()
+    res["timing"]["fn_s"] = round(time.time() - t, 2)
     print(f"part {index}: {res['duration_s']:.1f}s of video, {res['shots']}/{res['frames']} frames drawn, {res['timing']}")
     return {"index": index, **res}
 
@@ -330,10 +346,17 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
         "audio": out["audio"], "width": out["width"], "height": out["height"], "has_audio": out["has_audio"],
         "unvoiced": sum((p.get("info") or {}).get("missing", 0) for p in parts_meta),
         "errors": [e for p in parts_meta for e in p.get("errors", [])][:5],
+        "part_timing": [p["timing"] for p in parts_meta][:12],
     }
     print(f"lesson video {job_id}: {meta}")
     _video_callback(callback_url, job_id, "done", bytes=out["bytes"], duration_ms=out["duration_ms"], meta=meta)
     return {"ok": True, "bytes": out["bytes"], "duration_ms": out["duration_ms"], "meta": meta}
+
+
+@app.function(image=web_image, secrets=[secret], timeout=900)
+def video_bench_fn(page_url: str, max_frames: int, engine: str) -> dict:
+    res = lesson_video_part.remote(0, page_url, max_frames, 0.0, None, engine, True)
+    return {k: v for k, v in res.items() if k not in ("video", "segments")} | {"video_bytes": len(res["video"])}
 
 
 def _put(url: str | None, data: bytes, ctype: str) -> bool:
@@ -524,6 +547,18 @@ def web():
             if u and not u.startswith("https://"):
                 raise HTTPException(status_code=400, detail="urls must be https")
         call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url, req.parts, req.total_s)
+        return {"accepted": True, "call_id": call.object_id}
+
+    class VideoBenchRequest(BaseModel):
+        page_url: str = Field(min_length=10, max_length=2000)
+        max_frames: int = Field(default=500, ge=1, le=25 * 600)
+        engine: str = Field(default="chrome", max_length=300)
+
+    @api.post("/video/bench", status_code=202)
+    def video_bench(req: VideoBenchRequest, x_render_token: str | None = Header(default=None)):
+        # One part rendered with a chosen engine; read the timing with GET /result/{call_id} (video bytes dropped).
+        _auth(x_render_token)
+        call = video_bench_fn.spawn(req.page_url, req.max_frames, req.engine)
         return {"accepted": True, "call_id": call.object_id}
 
     @api.post("/warm", status_code=202)

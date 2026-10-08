@@ -176,7 +176,7 @@ class ClipCache:
 
 
 async def record(page_url: str, out_video: str, max_frames: int, settle_s: float = 0.0, on_progress=None, channel: str | None = None,
-                 maxrate: int | None = None) -> dict:
+                 maxrate: int | None = None, extra_args: list[str] | None = None) -> dict:
     """Play the render page on a virtual clock (lesson_video_clock.js): step it one frame at a time, capture each frame
     that changed and pipe them to ffmpeg as constant-25-fps H.264. Returns timings, the narration log and page info."""
     from playwright.async_api import async_playwright
@@ -201,7 +201,7 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
                   "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
                   # The clips come from a local file server (ClipCache); let the public page load them.
                   "--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,LocalNetworkAccessChecks",
-                  *[a for a in os.environ.get("LV_EXTRA_ARGS", "").split() if a]],
+                  *(extra_args or []), *[a for a in os.environ.get("LV_EXTRA_ARGS", "").split() if a]],
         )
         try:
             ctx = await browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=1, reduced_motion="no-preference")
@@ -241,6 +241,7 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
             settle_frames = int(round(settle_s * FPS))
             done_at = None
             first = True
+            prof = {"step_s": 0.0, "shot_s": 0.0, "pipe_s": 0.0}
             while True:
                 ts = time.time()
                 try:
@@ -256,13 +257,18 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
                             _log("  at", fr["functionName"], fr["url"][-60:], fr["location"]["lineNumber"])
                     raise RuntimeError(f"the page stopped responding at frame {frames}: {await page.evaluate('__vclock.stats()')}")
                 first = False
+                prof["step_s"] += time.time() - ts
                 if os.environ.get("LV_DEBUG") and (time.time() - ts > 0.5 or frames % 250 == 0):
                     _log(f"frame {frames} step {time.time() - ts:.2f}s cursor {st['c']}/{st['t']} wall {time.time() - t_cap:.1f}s", await page.evaluate("__vclock.stats()"))
                 if st["d"] or last is None:
+                    t1 = time.time()
                     shot = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 88, "optimizeForSpeed": True})
                     last = base64.b64decode(shot["data"])
                     shots += 1
+                    prof["shot_s"] += time.time() - t1
+                t1 = time.time()
                 ff.stdin.write(last)
+                prof["pipe_s"] += time.time() - t1
                 frames += 1
                 if st["e"] and done_at is None:
                     done_at = frames
@@ -275,6 +281,7 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
                 if on_progress and frames % 125 == 0:
                     on_progress(st["c"], st["t"], frames)
             timing["capture_s"] = round(time.time() - t_cap, 2)
+            timing.update({k: round(v, 2) for k, v in prof.items()})
             audio_log = await page.evaluate("window.__gmAudioLog || []")
             errors = await page.evaluate("(window.__gmRender.errors || []).concat(window.__vclock.errors || [])")
         finally:
@@ -395,12 +402,13 @@ def probe(path: str) -> dict:
     }
 
 
-def render_part(page_url: str, max_frames: int, settle_s: float = 0.0, maxrate: int | None = None, channel: str | None = None, on_progress=None) -> dict:
+def render_part(page_url: str, max_frames: int, settle_s: float = 0.0, maxrate: int | None = None, channel: str | None = None, on_progress=None,
+                extra_args: list[str] | None = None) -> dict:
     """Render one part (the render page with its from/to). Returns the H.264 bytes and its narration segments."""
     workdir = tempfile.mkdtemp(prefix="lesson-part-")
     out = os.path.join(workdir, "part.mp4")
     t = time.time()
-    rec = asyncio.run(record(page_url, out, max_frames, settle_s=settle_s, on_progress=on_progress, channel=channel, maxrate=maxrate))
+    rec = asyncio.run(record(page_url, out, max_frames, settle_s=settle_s, on_progress=on_progress, channel=channel, maxrate=maxrate, extra_args=extra_args))
     segs = narration_segments(rec["audio_log"], rec["t0"] * 1000.0, rec["duration_s"])
     with open(out, "rb") as f:
         data = f.read()
