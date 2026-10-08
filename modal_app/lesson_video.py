@@ -432,12 +432,32 @@ def probe(path: str) -> dict:
     }
 
 
+def host_info() -> dict:
+    """What the container runs on (part timings vary a lot between hosts)."""
+    info: dict = {"cpus": os.cpu_count()}
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    info["cpu"] = line.split(":", 1)[1].strip()[:60]
+                    break
+    except OSError:
+        pass
+    t, n = time.perf_counter(), 0
+    while time.perf_counter() - t < 0.2:
+        sum(range(2000))
+        n += 1
+    info["cpu_score"] = n
+    return info
+
+
 def render_part(page_url: str, max_frames: int, settle_s: float = 0.0, maxrate: int | None = None, channel: str | None = None, on_progress=None,
                 extra_args: list[str] | None = None, assets: dict[str, bytes] | None = None, stop_at_max: bool = False) -> dict:
     """Render one part (the render page with its from/to). Returns the H.264 bytes and its narration segments."""
     workdir = tempfile.mkdtemp(prefix="lesson-part-")
     out = os.path.join(workdir, "part.mp4")
     t = time.time()
+    host = host_info()
     rec = asyncio.run(record(page_url, out, max_frames, settle_s=settle_s, on_progress=on_progress, channel=channel, maxrate=maxrate, extra_args=extra_args,
                              assets=assets, stop_at_max=stop_at_max))
     segs = narration_segments(rec["audio_log"], rec["t0"] * 1000.0, rec["duration_s"])
@@ -446,7 +466,7 @@ def render_part(page_url: str, max_frames: int, settle_s: float = 0.0, maxrate: 
     shutil.rmtree(workdir, ignore_errors=True)
     return {
         "video": data, "frames": rec["frames"], "shots": rec["shots"], "duration_s": rec["duration_s"], "segments": segs, "info": rec["info"],
-        "errors": rec["errors"][:5], "console": rec["console"][-5:], "timing": {**rec["timing"], "total_s": round(time.time() - t, 2)},
+        "errors": rec["errors"][:5], "console": rec["console"][-5:], "timing": {**rec["timing"], **host, "total_s": round(time.time() - t, 2)},
     }
 
 
