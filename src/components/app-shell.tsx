@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, LayoutGrid, LogOut, Target, X } from 'lucide-react'
+import { BookOpen, LayoutGrid, LogOut, Settings, X } from 'lucide-react'
 import { IdleTimeout } from './idle-timeout'
 import { Avatar, Logo, cx } from './ui'
 
@@ -12,13 +12,6 @@ export interface NavItem { href: string; icon: string; label: string }
 const icons: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
   home: LayoutGrid,
   learn: BookOpen,
-  goal: Target,
-}
-
-/** Short labels for the mobile tab bar. */
-function shortLabel(label: string) {
-  if (label === 'Your goal') return 'Goal'
-  return label
 }
 
 /** The nav item whose href is the longest prefix of the current path is active. */
@@ -49,9 +42,10 @@ export function AppShell({
 }) {
   const pathname = usePathname()
   const current = activeHref(pathname, navItems)
-  const [menuOpen, setMenuOpen] = useState(false)
-
-  useEffect(() => { setMenuOpen(false) }, [pathname])
+  // The account sheet belongs to the page it was opened on, so navigating closes it.
+  const [menuPath, setMenuPath] = useState<string | null>(null)
+  const menuOpen = menuPath === pathname
+  const setMenuOpen = (open: boolean) => setMenuPath(open ? pathname : null)
   // A forward navigation can leave the new page's heading under the sticky top bar (the router only
   // scrolls when the page top is outside the viewport, and the bar covers its first 56 px). Bring it out.
   const popped = React.useRef(false)
@@ -74,10 +68,22 @@ export function AppShell({
 
   useEffect(() => {
     if (!menuOpen) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuPath(null) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [menuOpen])
+
+  const settingsActive = pathname === '/settings' || pathname.startsWith('/settings/')
+  const settingsLink = (
+    <Link
+      href="/settings"
+      aria-current={settingsActive ? 'page' : undefined}
+      className={cx('flex h-10 w-full items-center gap-2.5 rounded-[10px] px-3 text-sm transition-colors duration-150', settingsActive ? 'bg-sunken font-medium text-ink' : 'text-ink-2 hover:bg-sunken hover:text-ink')}
+    >
+      <Settings className="h-4 w-4" strokeWidth={1.75} />
+      Settings &amp; goals
+    </Link>
+  )
 
   const signOutForm = (className?: string) => (
     <form action="/api/auth/signout" method="post" className={className}>
@@ -130,7 +136,7 @@ export function AppShell({
               {roleLabel ? <p className="text-[12px] text-muted">{roleLabel}</p> : null}
             </div>
           </div>
-          {signOutForm('mt-1')}
+          <div className="mt-1 space-y-0.5">{settingsLink}{signOutForm()}</div>
         </div>
       </aside>
 
@@ -182,7 +188,7 @@ export function AppShell({
                   <span className={cx('flex h-7 w-12 items-center justify-center rounded-full transition-colors duration-150', active && 'bg-accent-soft')}>
                     <Icon className="h-[19px] w-[19px]" strokeWidth={active ? 2 : 1.75} />
                   </span>
-                  {shortLabel(label)}
+                  {label}
                 </Link>
               </li>
             )
@@ -224,7 +230,7 @@ export function AppShell({
                   <X className="h-5 w-5" strokeWidth={1.75} />
                 </button>
               </div>
-              <div className="p-3 pb-4">{signOutForm()}</div>
+              <div className="space-y-0.5 p-3 pb-4">{settingsLink}{signOutForm()}</div>
             </motion.div>
           </div>
         )}

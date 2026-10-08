@@ -509,7 +509,7 @@ function GoalPick({ answers, busy, onAnswer, onSafety }: { answers: Answers; bus
       {(goals ?? []).map(g => (
         <button key={g.goal} type="button" disabled={busy} onClick={() => onAnswer({ v: { ...g, prior } })}
           className="rounded-[12px] border border-line bg-surface px-4 py-3.5 text-left text-[15px] font-medium leading-snug text-ink transition-colors hover:border-accent">
-          {g.goal}
+          <RichText text={g.goal} />
           {g.subject && <span className="mt-0.5 block text-[12px] font-normal uppercase tracking-[0.06em] text-muted">{g.subject}</span>}
         </button>
       ))}

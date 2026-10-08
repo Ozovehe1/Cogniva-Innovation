@@ -87,3 +87,64 @@ export function formatDue(d: string | null) {
   if (!d) return null
   return new Date(d + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
+
+export const HOURS_CHOICES = [
+  { value: 1, label: 'About an hour' }, { value: 2, label: '1–2 hours' }, { value: 4, label: '3–5 hours' },
+  { value: 8, label: '6–10 hours' }, { value: 12, label: 'More than 10' },
+]
+
+/**
+ * A goal's deadline: the one saved with its own answers. Paths planned before answers were saved per
+ * goal fall back to the deadline the plan was built for (created + weeksLeft), never to the learner's
+ * latest intake, which may belong to another goal.
+ */
+export function pathDeadline(path: Pick<PathRow, 'learner_snapshot' | 'plan' | 'created_at'>): string | null {
+  const snap = path.learner_snapshot as Record<string, unknown> | null | undefined
+  if (snap && typeof snap === 'object' && 'deadline' in snap) {
+    const d = snap.deadline
+    return typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null
+  }
+  const w = path.plan?.weeksLeft
+  if (typeof w === 'number' && w > 0 && path.created_at) return new Date(new Date(path.created_at).getTime() + w * 7 * 86_400_000).toISOString().slice(0, 10)
+  return null
+}
+
+/** Whole days from today (UTC) to a YYYY-MM-DD date; negative once it has passed. */
+export function daysUntil(d: string) {
+  const today = new Date(); today.setUTCHours(12, 0, 0, 0)
+  return Math.round((new Date(d + 'T12:00:00Z').getTime() - today.getTime()) / 86_400_000)
+}
+
+/** "In 10 weeks", "In 3 days", "Today", "Passed" — the live distance to a deadline. */
+export function deadlineDistance(d: string) {
+  const days = daysUntil(d)
+  if (days < 0) return 'Passed'
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Tomorrow'
+  if (days < 14) return `In ${days} days`
+  return `In about ${Math.round(days / 7)} weeks`
+}
+
+/** The plan's pacing note, worked out now from the goal's real deadline (the stored note goes stale). */
+export function planNote(path: Pick<PathRow, 'learner_snapshot' | 'plan' | 'created_at'>): string | null {
+  const d = pathDeadline(path)
+  if (!d) return null
+  const days = daysUntil(d)
+  if (days < 0) return 'The deadline for this goal has passed. You can set a new one in Settings.'
+  if (path.plan?.pace === 'brisk') return days <= 1
+    ? 'The deadline is here: keep to the core, fewer detours, more practice.'
+    : `About ${days < 14 ? `${days} days` : `${Math.round(days / 7)} weeks`} to the deadline, which is close for this much material: keep to the core, fewer detours, more practice.`
+  return `About ${days < 14 ? `${days} days` : `${Math.round(days / 7)} weeks`} to the deadline: a steady pace fits.`
+}
+
+export interface StrayLesson { id: string; title: string; subject: string | null; created_at: string; draft_status: string | null }
+
+/** The learner's own lessons that no path topic points at (e.g. a first-lesson draft from an unfinished check). */
+export async function loadStrayLessons(supabase: SupabaseClient, studentId: string): Promise<StrayLesson[]> {
+  const [{ data: lessons }, { data: topics }] = await Promise.all([
+    supabase.from('lessons').select('id, title, subject, created_at, draft_status').eq('owner_student_id', studentId).order('created_at', { ascending: false }),
+    supabase.from('path_topics').select('lesson_id').eq('student_id', studentId).not('lesson_id', 'is', null),
+  ])
+  const attached = new Set(((topics ?? []) as { lesson_id: string }[]).map(t => t.lesson_id))
+  return ((lessons ?? []) as StrayLesson[]).filter(l => !attached.has(l.id))
+}
