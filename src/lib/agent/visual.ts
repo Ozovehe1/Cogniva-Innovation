@@ -60,9 +60,14 @@ export interface PlotSpec {
   say?: string
 }
 const INKS = ['accent', 'clay', 'navy', 'amber', 'ink', 'muted']
-const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null)
+const num = (v: unknown) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (typeof v !== 'string') return null
+  const t = v.replace(/[−–—]/g, '-').replace(/\s+/g, '')
+  return t !== '' && Number.isFinite(Number(t)) ? Number(t) : null
+}
 
-export function buildPlot(spec: PlotSpec): { steps: Step[]; errors: string[] } {
+export function buildPlot(spec: PlotSpec): { steps: Step[]; errors: string[]; roots?: Record<string, number[]>; xRange?: [number, number]; yRange?: [number, number] } {
   const errors: string[] = []
   const fns = (spec.functions ?? []).slice(0, 4).filter(f => {
     const e = String(f?.expr ?? '').replace(/^\s*y\s*=\s*/i, '').replace(/\*\*/g, '^')
@@ -71,13 +76,16 @@ export function buildPlot(spec: PlotSpec): { steps: Step[]; errors: string[] } {
     f.expr = e
     return true
   })
-  const pts = (spec.points ?? []).slice(0, 12).filter(p => num(p?.x) !== null && num(p?.y) !== null)
+  // Points: numbers (unicode minus accepted), duplicates at the same spot merged.
+  const pts = (spec.points ?? []).slice(0, 12).filter(p => num(p?.x) !== null && num(p?.y) !== null).map(p => ({ ...p, x: num(p.x)!, y: num(p.y)! }))
+    .filter((p, i, all) => all.findIndex(q => Math.abs(q.x - p.x) < 1e-9 && Math.abs(q.y - p.y) < 1e-9) === i)
   const series = (spec.series ?? []).slice(0, 3).map(s => ({ ...s, points: (s?.points ?? []).filter(p => Array.isArray(p) && num(p[0]) !== null && num(p[1]) !== null).slice(0, 200) as [number, number][] })).filter(s => s.points.length >= 2)
   if (!fns.length && !pts.length && !series.length) errors.push('nothing to plot: give at least one valid function, point or series')
   // Ranges: given, or fitted to the data / function samples.
   let xr = Array.isArray(spec.xRange) && num(spec.xRange[0]) !== null && num(spec.xRange[1]) !== null && spec.xRange[0] < spec.xRange[1] ? [Number(spec.xRange[0]), Number(spec.xRange[1])] as [number, number] : null
   const allX = [...pts.map(p => Number(p.x)), ...series.flatMap(s => s.points.map(p => Number(p[0])))]
-  if (!xr) xr = allX.length ? pad([Math.min(...allX), Math.max(...allX)]) : [-5, 5]
+  // With a function, the default view is -5..5 widened to include the points; data alone is fitted to the data.
+  if (!xr) xr = fns.length ? pad([Math.min(-5, ...allX), Math.max(5, ...allX)]) : allX.length ? pad([Math.min(...allX), Math.max(...allX)]) : [-5, 5]
   let yr = Array.isArray(spec.yRange) && num(spec.yRange[0]) !== null && num(spec.yRange[1]) !== null && spec.yRange[0] < spec.yRange[1] ? [Number(spec.yRange[0]), Number(spec.yRange[1])] as [number, number] : null
   if (!yr) {
     const ys = [...pts.map(p => Number(p.y)), ...series.flatMap(s => s.points.map(p => Number(p[1])))]
@@ -89,6 +97,24 @@ export function buildPlot(spec: PlotSpec): { steps: Step[]; errors: string[] } {
     yr = ys.length ? pad([Math.min(...ys), Math.max(...ys)]) : [-5, 5]
   }
   if (errors.length && !fns.length && !pts.length && !series.length) return { steps: [], errors }
+  // Exact real roots of each function in the view (sign changes + bisection), for the model to quote.
+  const roots: Record<string, number[]> = {}
+  for (const f of fns) {
+    const c = compileExpr(f.expr)
+    if (!c.ok) continue
+    const out: number[] = []
+    const N = 800
+    let px = xr[0], py = c.fn(px)
+    for (let i = 1; i <= N; i++) {
+      const x = xr[0] + (xr[1] - xr[0]) * i / N, y = c.fn(x)
+      if (Number.isFinite(py) && Number.isFinite(y)) {
+        if (py === 0) out.push(px)
+        else if (py * y < 0) { let lo = px, hi = x; for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (c.fn(lo) * c.fn(m) <= 0) hi = m; else lo = m } out.push((lo + hi) / 2) }
+      }
+      px = x; py = y
+    }
+    roots[f.expr] = [...new Set(out.map(r => Number(r.toPrecision(8))))].slice(0, 10)
+  }
   const title = (spec.title ?? 'Graph').slice(0, 34)
   const steps: Step[] = [
     { type: 'write', id: 'title', text: title, x: 24, y: 28, size: 'lg', say: spec.say?.slice(0, 300) || undefined } as Step,
@@ -104,7 +130,7 @@ export function buildPlot(spec: PlotSpec): { steps: Step[]; errors: string[] } {
   })
   pts.forEach((p, i) => steps.push({ type: 'draw', id: `p${i}`, on: 'ax', color: 'clay', shape: { kind: 'point', at: [Number(p.x), Number(p.y)], ...(p.label ? { label: String(p.label).slice(0, 20) } : {}) } } as Step))
   const v = validateScript(steps, { maxSteps: 60 })
-  return { steps: v.steps, errors: [...errors, ...v.errors] }
+  return { steps: v.steps, errors: [...errors, ...v.errors], roots, xRange: xr, yRange: yr }
 }
 function pad([a, b]: [number, number]): [number, number] {
   if (a === b) { a -= 1; b += 1 }

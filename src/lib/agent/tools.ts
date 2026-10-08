@@ -241,11 +241,12 @@ const WRITE: ToolSpec[] = [
     },
     tier: 'write', modes: ['chat', 'director'], label: 'Updating today’s plan',
     run: async (a, ctx) => {
-      const items = await validatePlanItems(ctx, Array.isArray(a.items) ? a.items : [])
-      if (!items.length) return { error: 'No valid items. Use real topic ids from get_path_progress.' }
+      const asked = Array.isArray(a.items) ? a.items : []
+      const items = await validatePlanItems(ctx, asked)
+      if (!items.length) return { error: 'No valid items. lesson/check items need a real topic_id from get_path_progress (check only after the lesson exists).' }
       const r = await savePlan(ctx, items, s(a.note, 240) || null, ctx.mode === 'director' ? 'nightly' : 'agent')
       ctx.emit({ kind: 'plan', id: bid(), items, note: s(a.note, 240) || null })
-      return { saved: true, items: items.length, action_id: r.id }
+      return { saved: true, items: items.map(i => i.title), dropped: asked.length - items.length || undefined, note: asked.length > items.length ? 'Some items were dropped (unknown topic, locked, or no lesson yet). Make sure the note matches the saved items.' : undefined, action_id: r.id }
     },
   },
   {
@@ -322,11 +323,12 @@ const WRITE: ToolSpec[] = [
     },
   },
   {
-    def: { name: 'suggest_remediation', description: 'Propose going back to an earlier skill before a topic (needs the learner\'s tap to confirm). Use after repeated misses on a topic.', parameters: obj({ topic_id: { type: 'string' }, node_id: { type: 'string', description: 'the earlier skill (node id); omit for the closest one' }, reason: { type: 'string' } }, ['topic_id', 'reason']) },
+    def: { name: 'suggest_remediation', description: 'Propose going back to an earlier skill before a topic (shows a Confirm button; nothing changes until the learner taps it). Use after repeated misses on a topic.', parameters: obj({ topic: { type: 'string', description: 'the topic they are stuck on: topic_id or its title' }, node_id: { type: 'string', description: 'the earlier skill (node id); omit for the closest one' }, reason: { type: 'string' } }, ['topic', 'reason']) },
     tier: 'confirm', modes: ['chat', 'director'], label: 'Suggesting a step back',
     run: async (a, ctx) => {
-      if (!isUuid(a.topic_id)) return { error: 'topic_id must be a topic id from get_path_progress' }
-      const r = await remediationTarget(ctx.admin, ctx.studentId, a.topic_id, s(a.node_id, 60) || null)
+      const found = await findTopic(ctx, { topic_id: a.topic_id, topic: a.topic })
+      if (!found) return { error: 'Topic not found on their path. Call get_path_progress and pass the exact title or topic_id.' }
+      const r = await remediationTarget(ctx.admin, ctx.studentId, found.topic.id, s(a.node_id, 60) || null)
       if ('error' in r) return { error: r.error }
       const key = idemKey('suggest_remediation', ctx.studentId, `${r.topic.id}:${r.nodeId}`)
       const ex = await findAction(ctx.admin, key)
@@ -419,8 +421,10 @@ const VISUAL: ToolSpec[] = [
     run: async (a, ctx) => {
       const r = buildPlot({ title: s(a.title, 34), functions: a.functions as never, points: a.points as never, series: a.series as never, xRange: a.x_range as never, yRange: a.y_range as never, xLabel: s(a.x_label, 16), yLabel: s(a.y_label, 16) })
       if (!r.steps.length) return { error: r.errors.join('; ') }
-      ctx.emit({ kind: 'board', id: bid(), title: s(a.title, 34) || 'Graph', steps: r.steps, plot: true })
-      return { shown: true, warnings: r.errors.length ? r.errors : undefined }
+      // A second plot in the same turn replaces the first (a correction), instead of stacking two graphs.
+      const prev = ctx.blocks.find(b => b.kind === 'board' && b.plot)
+      ctx.emit({ kind: 'board', id: prev?.id ?? bid(), title: s(a.title, 34) || 'Graph', steps: r.steps, plot: true })
+      return { shown: true, x_range: r.xRange, y_range: r.yRange, roots: r.roots, note: 'Roots are computed exactly; use them, do not guess.', warnings: r.errors.length ? r.errors : undefined }
     },
   },
   {

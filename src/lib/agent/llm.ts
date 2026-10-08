@@ -35,6 +35,8 @@ export interface ChatRequest {
   json?: boolean
   /** Streamed text deltas (the caller decides what to show). */
   onText?: (delta: string) => void
+  /** 'required': the model must call one of the tools this step (used when the learner explicitly asks for a visual). */
+  toolChoice?: 'auto' | 'required'
   /** Groq server-side tool (gpt-oss only): web search or code interpreter. Falls back to no tool elsewhere. */
   builtin?: 'browser_search' | 'code_interpreter'
   /** Stop trying further models after this absolute time. */
@@ -205,7 +207,7 @@ async function groqChat(model: string, req: ChatRequest, onText?: (d: string) =>
     stream,
   }
   if (req.builtin) { body.tools = [{ type: req.builtin }]; body.tool_choice = 'required' }
-  else if (req.tools?.length) { body.tools = req.tools.map(t => ({ type: 'function', function: t })); body.tool_choice = 'auto'; body.parallel_tool_calls = true }
+  else if (req.tools?.length) { body.tools = req.tools.map(t => ({ type: 'function', function: t })); body.tool_choice = req.toolChoice ?? 'auto'; body.parallel_tool_calls = true }
   // Groq's strict JSON mode rejects long generations with LaTeX escapes ("Failed to generate JSON"); big JSON is asked for in the prompt and parsed loosely.
   if (req.json && !req.tools?.length && !req.builtin && (req.maxTokens ?? 1200) <= 1500) body.response_format = { type: 'json_object' }
   if (/gpt-oss/.test(model)) { body.reasoning_effort = 'low'; body.include_reasoning = false }
@@ -312,7 +314,10 @@ async function geminiChat(model: string, key: number, req: ChatRequest, onText?:
     ...(system ? { systemInstruction: system } : {}),
     ...(model.startsWith('gemini-3') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : model.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
   }
-  if (req.tools?.length) config.tools = [{ functionDeclarations: req.tools.map(t => ({ name: t.name, description: t.description, parametersJsonSchema: t.parameters })) }]
+  if (req.tools?.length) {
+    config.tools = [{ functionDeclarations: req.tools.map(t => ({ name: t.name, description: t.description, parametersJsonSchema: t.parameters })) }]
+    if (req.toolChoice === 'required') config.toolConfig = { functionCallingConfig: { mode: 'ANY' } }
+  }
   if (req.json && !req.tools?.length) config.responseMimeType = 'application/json'
   const client = gemClient(key)
   let text = ''

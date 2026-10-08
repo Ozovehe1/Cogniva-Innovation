@@ -89,7 +89,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
             if (e.state === 'start' || k < 0) tools.push({ name: e.name, label: e.label, state: e.state }); else tools[k] = { ...tools[k], state: e.state }
             return { ...a, tools }
           })
-          else if (e.t === 'block') { patch(a => ({ ...a, blocks: [...(a.blocks ?? []), e.block] })); scroll() }
+          else if (e.t === 'block') { patch(a => { const bs = a.blocks ?? []; const k = bs.findIndex(b => b.id === e.block.id && b.kind === e.block.kind); return { ...a, blocks: k >= 0 ? bs.map((b, j) => (j === k ? e.block : b)) : [...bs, e.block] } }); scroll() }
           else if (e.t === 'safety') { setSafety({ open: true, minor: e.minor }); setMessages(m => m.slice(0, -2)) }
           else if (e.t === 'limit') patch(a => ({ ...a, content: e.message }))
           else if (e.t === 'error') patch(a => ({ ...a, error: e.message }))
