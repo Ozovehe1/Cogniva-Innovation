@@ -506,8 +506,14 @@ def solve_binding(sc: Scene):
     sc.quantity("E", "rc", "navy", "energy", "kJ/mol")
     graph = bool(P.get("energy_graph", True))
     box = [-6.9, -3.75, 1.3, 3.75] if graph else [-5, -3.75, 5, 3.75]
+    prot = str(P.get("protein", "hexokinase"))
+    try:
+        import gm_refdata as RD
+        chem = RD.PROTEIN_CHEM.get(prot.lower())
+    except Exception:  # noqa: BLE001
+        chem = None
     S["rigs"].append({"type": "binding", "box": box, "approach": "approach", "close": "close", "react": "react", "release": "release",
-                      "reaction": P.get("reaction", "join"), "protein": P.get("protein", "hexokinase"), "roles": {r: sc.pid(r) for r in ("host", "guest", "site", "product")}})
+                      "reaction": (chem or {}).get("reaction") or P.get("reaction", "join"), "protein": prot, "roles": {r: sc.pid(r) for r in ("host", "guest", "site", "product")}})
     S["show"].setdefault(sc.pid("host"), 0.0)
     S["show"].setdefault(sc.pid("guest"), 0.6)
     if st.get("react") is not None:  # once they have reacted the guests are products: their label goes, the product's comes
@@ -517,12 +523,32 @@ def solve_binding(sc: Scene):
                 L["hide"] = round(tre, 3)
             if L["part"] == sc.pid("product"):
                 L["show"] = max(L["show"], round(tre, 3))
+    if chem:  # name the real molecules: each substrate and each product its own label, the enzyme by name, its two domains
+        t_cl = st.get("close", st.get("approach", sc.D * 0.4))
+        gp, pp, hp = sc.pid("guest"), sc.pid("product"), sc.pid("host")
+        tre = (sc.keys["react"][-1][1] if sc.keys.get("react") else st.get("react", sc.D * 0.6) + 2)
+        t_g0 = min([L["show"] for L in S["labels"] if L["part"] == gp] + [S["show"].get(gp, 0.6) + 0.3])
+        S["labels"] = [L for L in S["labels"] if L["part"] not in (gp, pp)]
+        sub, prd = chem["substrates"], chem["products"]
+        S["labels"] += [{"id": "L_guest", "text": sub[0], "part": gp, "show": round(t_g0, 3), "hide": round(tre, 3), "keep": True},
+                        {"id": "L_guest2", "text": sub[1], "part": gp + ":1", "show": round(t_g0 + 0.5, 3), "hide": round(tre, 3), "keep": True},
+                        {"id": "L_product", "text": prd[0], "part": pp, "show": round(tre, 3), "keep": True},
+                        {"id": "L_product2", "text": prd[1], "part": pp + ":1", "show": round(tre + 0.5, 3), "keep": True},
+                        {"id": "L_dom_small", "text": chem["domains"][1], "part": hp + ":small", "show": round(t_cl, 3), "keep": True},
+                        {"id": "L_dom_large", "text": chem["domains"][0], "part": hp + ":large", "show": round(t_cl + 0.5, 3), "keep": True}]
+        for L in S["labels"]:
+            if L["part"] == hp and chem["enzyme"].lower() not in L["text"].lower():
+                L["text"] = f"{L['text']} ({chem['enzyme'].lower()})" if L["text"].lower() in ("enzyme", "protein") else L["text"]
+                L["keep"] = True
+        if not sc.G.get("equation"):
+            sc.G["equation"] = chem["equation"]
     if graph:
         t_g = 0.8
-        S["graphs"].append({"id": "en", "mode": "function", "box": [1.6, -3.5, 6.9, 1.5], "x": "rc", "y": "E", "x_range": [0, 1], "y_range": [0, 14], "x_numbers": False,
+        # schematic but realistic magnitudes: uncatalysed Ea ~75 kJ/mol, catalysed ~25 kJ/mol, reaction downhill ~30 kJ/mol
+        S["graphs"].append({"id": "en", "mode": "function", "box": [1.6, -3.5, 6.9, 1.5], "x": "rc", "y": "E", "x_range": [0, 1], "y_range": [0, 140], "y_step": 20, "y_numbers": [0, 40, 80, 120], "x_numbers": False,
                             "x_label": r"\text{reaction progress}", "y_label": r"\text{energy (kJ/mol)}", "show": t_g,
-                            "functions": [{"expr": "6+7.5*exp(-((x-0.5)/0.13)**2)-3/(1+exp(-(x-0.5)/0.08))", "color": "muted", "dashed": True, "tex": r"\text{without enzyme}", "label_at": 0.5},
-                                          {"expr": "6+2.5*exp(-((x-0.5)/0.13)**2)-3/(1+exp(-(x-0.5)/0.08))", "q": "E", "tex": r"\text{with enzyme}", "label_at": 0.66, "dot_x": "rc",
+                            "functions": [{"expr": "60+75*exp(-((x-0.5)/0.13)**2)-30/(1+exp(-(x-0.5)/0.08))", "color": "muted", "dashed": True, "tex": r"\text{without enzyme}", "label_at": 0.5},
+                                          {"expr": "60+25*exp(-((x-0.5)/0.13)**2)-30/(1+exp(-(x-0.5)/0.08))", "q": "E", "tex": r"\text{with enzyme}", "label_at": 0.66, "dot_x": "rc",
                                            "show": round(st.get("close", st.get("approach", 2.0)), 3)}]})
     if sc.G.get("equation"):
         S["tex"].append({"id": "eq", "tex": sc.G["equation"], "box": [1.6, 2.0, 6.9, 3.6], "show": round(st.get("react", sc.D * 0.6), 3), "size": 40})
@@ -766,6 +792,7 @@ def solve(G: dict, sents: list[dict]) -> dict:
     sc = Scene(G, sents, solver)
     SOLVERS[solver](sc)
     prune(sc)
+    label_all_parts(sc)
     beats = []
     for s_ in sents:
         sw = _words(s_["text"])
@@ -777,6 +804,27 @@ def solve(G: dict, sents: list[dict]) -> dict:
     return sc.S
 
 
+def label_all_parts(sc: Scene):
+    """Completeness: every named sub-part the rig draws carries a label (spider gears, side gears ... even when the
+    narration does not say them); staggered after the narrated labels so the hand writes them one by one."""
+    rig_roles = set()
+    for r in sc.S.get("rigs") or []:
+        rig_roles |= set((r.get("roles") or {}).values())
+    have = {L["part"] for L in sc.S["labels"]}
+    ts = sorted(L["show"] for L in sc.S["labels"])
+    base = ts[len(ts) // 2] if ts else sc.D * 0.3
+    k = 0
+    for role, p in sc.roles.items():
+        pid = sc.pid(role)
+        if pid in have or pid not in rig_roles:
+            continue
+        t = min(max(base, sc.S["show"].get(pid, 0.0)) + 0.7 * (k + 1), sc.D * 0.85)
+        sc.S["labels"].append({"id": "L_" + role, "text": (p or {}).get("name") or role.replace("_", " "), "part": pid, "show": round(t, 3), "auto": True})
+        sc.notes.append(f"labelled named part {pid!r} (completeness)")
+        have.add(pid)
+        k += 1
+
+
 def prune(sc: Scene):
     """To the point: a label survives only if its part is named in the narration (or listed for that sentence);
     a readout only if its quantity is spoken or driven; nothing decorative."""
@@ -785,7 +833,7 @@ def prune(sc: Scene):
     keep = []
     for L in sc.S["labels"]:
         lw = _words(L["text"])
-        if lw & tw or not lw:
+        if lw & tw or not lw or L.get("keep"):
             keep.append(L)
         else:
             sc.notes.append(f"pruned label {L['text']!r}: not in the narration")
@@ -942,6 +990,15 @@ def gates(S: dict, G: dict, sents: list[dict]) -> dict:
             missing.append(req)
     if missing:
         soft.append("required but not shown: " + ", ".join(map(str, missing)))
+    # every named sub-part the rig draws must be labelled (the "drawn" list does not excuse an unnamed part)
+    rig_roles = set()
+    for r in S.get("rigs") or []:
+        rig_roles |= set((r.get("roles") or {}).values())
+    labelled = {L["part"] for L in S["labels"]}
+    unl = [p.get("name") or p.get("id") for p in G.get("parts") or [] if p.get("id") in rig_roles and p.get("id") not in labelled]
+    if unl:
+        soft.append("named part not labelled: " + ", ".join(map(str, unl)))
+        missing = missing + unl
     # where every text element sits over the clip (det_fix uses it to move a label off another text)
     tboxes = {}
     for fr in a["frames"]:

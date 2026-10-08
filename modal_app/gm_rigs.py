@@ -678,6 +678,20 @@ def binding_pdb(ctx, rig, ref):
         rl = st.get(proc["release"], 0.0) if proc["release"] else 0.0
         return smooth01(c) * (1 - smooth01(rl))
 
+    # the two domains (k-means on the open trace): the small domain is shaded apart so the cleft closing reads
+    lab = (Po2[:, 0] > np.median(Po2[:, 0])).astype(int)
+    for _ in range(12):
+        cs = [Po2[lab == j].mean(0) if np.any(lab == j) else Po2.mean(0) for j in (0, 1)]
+        lab = (np.linalg.norm(Po2 - cs[1], axis=1) < np.linalg.norm(Po2 - cs[0], axis=1)).astype(int)
+    # the shaded domain is the one with the smaller silhouette (that is the one the label calls the small domain)
+    try:
+        a0 = RD.outline(Po2[lab == 0], rad, smooth=0.6 * rad).area
+        a1 = RD.outline(Po2[lab == 1], rad, smooth=0.6 * rad).area
+        small = 1 if a1 < a0 else 0
+    except Exception:  # noqa: BLE001
+        small = 1 if np.sum(lab == 1) < np.sum(lab == 0) else 0
+    mS = lab == small
+    dcol = col(rig.get("domain_color", "#5FB3A8"))
     cache = {}
 
     def host_geom(f):
@@ -686,15 +700,23 @@ def binding_pdb(ctx, rig, ref):
             P = Po2 * (1 - q) + Pc2 * q
             g = RD.outline(P, rad, smooth=0.6 * rad)
             g = g.difference(pocket)
-            cache[q] = (g, P)
-        return cache[q]
+            try:
+                gs = RD.outline(P[mS], rad, smooth=0.6 * rad).intersection(g) if mS.sum() > 8 else None
+            except Exception:  # noqa: BLE001
+                gs = None
+            cache[q] = (g, P, gs)
+        return cache[q][:2]
 
     trace_c = dark(pcol, 0.28)
 
     def host_mob():
         st = ctx.st()
-        g, P = host_geom(closure(st))
+        f = closure(st)
+        g, P = host_geom(f)
         grp = VGroup(_sp_mob(g, pcol, sw=2.5))
+        gs = cache[round(f * 40) / 40][2]
+        if gs is not None and not gs.is_empty and gs.area > 0.05:
+            grp.add(_sp_mob(gs, dcol, sw=1.6, op=0.92))
         # the real backbone, faint, inside the silhouette
         tr = VMobject().set_points_smoothly([np.array([x, y, 0.0]) for x, y in P[::2]])
         tr.set_stroke(trace_c, 1.3, opacity=0.45)
@@ -713,23 +735,27 @@ def binding_pdb(ctx, rig, ref):
     start = [(ex - bx.w * 0.30, min(bx.y1 - 0.45, top + 0.9)), (ex - bx.w * 0.05, min(bx.y1 - 0.35, top + 1.1))]
     exitp = (ex + bx.w * 0.30, min(bx.y1 - 0.45, top + 0.9))
 
+    def guest_pos(i, st):
+        ap = st.get(proc["approach"], 0.0) if proc["approach"] else 1.0
+        rl = st.get(proc["release"], 0.0) if proc["release"] else 0.0
+        s0 = np.array(start[i % 2])
+        f = smooth01(ap)
+        # approach: down into the cleft from the solvent, tumbling into the pocket orientation
+        mouth = np.array([sites[i][0], top + 0.2])
+        p = (s0 + (mouth - s0) * min(1, f / 0.6)) if f < 0.6 else (mouth + (sites[i] - mouth) * ((f - 0.6) / 0.4))
+        rot = rots[i] + (1 - f) * (40 if i == 0 else -55)
+        if rl > 0:
+            e = smooth01(rl)
+            p = p + (np.array([sites[i][0], top + 0.4]) - sites[i]) * min(1, e / 0.5) + (np.array(exitp) + np.array([0.0, 0.55 * i]) - np.array([sites[i][0], top + 0.4])) * max(0, (e - 0.5) / 0.5)
+        return p, rot
+
     def guest_mob():
         st = ctx.st()
-        ap = st.get(proc["approach"], 0.0) if proc["approach"] else 1.0
         rx = st.get(proc["react"], 0.0) if proc["react"] else 0.0
-        rl = st.get(proc["release"], 0.0) if proc["release"] else 0.0
         g = VGroup()
         cen = []
         for i, shp in enumerate(shapes):
-            s0 = np.array(start[i % 2])
-            f = smooth01(ap)
-            # approach: down into the cleft from the solvent, tumbling into the pocket orientation
-            mouth = np.array([sites[i][0], top + 0.2])
-            p = (s0 + (mouth - s0) * min(1, f / 0.6)) if f < 0.6 else (mouth + (sites[i] - mouth) * ((f - 0.6) / 0.4))
-            rot = rots[i] + (1 - f) * (40 if i == 0 else -55)
-            if rl > 0:
-                e = smooth01(rl)
-                p = p + (np.array([sites[i][0], top + 0.4]) - sites[i]) * min(1, e / 0.5) + (np.array(exitp) - np.array([sites[i][0], top + 0.4])) * max(0, (e - 0.5) / 0.5)
+            p, rot = guest_pos(i, st)
             gg = affinity.translate(affinity.rotate(shp, rot, origin=(0, 0)), float(p[0]), float(p[1]))
             g.add(_sp_mob(gg, gcols[i % len(gcols)], sw=2.2))
             cen.append(p)
@@ -740,14 +766,34 @@ def binding_pdb(ctx, rig, ref):
             if react_kind == "join":
                 w = 7 * smooth01((rx - 0.3) / 0.7)
                 g.add(Line(a2, b2).set_stroke(INK, max(0.01, w)))
+            elif react_kind == "transfer":  # the terminal phosphate hops from the nucleotide to the sugar and stays on it
+                e = smooth01((rx - 0.15) / 0.7)
+                q = b2 + (a2 - b2) * e
+                g.add(Circle(radius=0.13).move_to(q).set_fill("#E8A33A", 1).set_stroke(INK, 1.5))
             glow = math.sin(PI * min(1, rx * 1.2)) if rx < 1 else 0
             if glow > 0.02:
                 g.add(Circle(radius=0.25 + 0.1 * glow).move_to((a2 + b2) / 2).set_stroke("#E8A33A", 5 * glow, opacity=glow))
+        if nG == 2 and react_kind == "transfer" and rx >= 1:
+            a = np.array([*cen[0], 0.0])
+            g.add(Circle(radius=0.13).move_to(a + np.array([s1 * 0.75, s1 * 0.55, 0])).set_fill("#E8A33A", 1).set_stroke(INK, 1.5))
         return g
     gm = live(guest_mob)
     ctx.add(role(rig, "guest"), gm, show=sh(ctx, rig, "guest"), how="fade", z=3, moving=True)
-    ctx.anchors[role(rig, "guest")] = lambda: (gm.get_center() + np.array([0, gm.height / 2, 0])).tolist()
-    ctx.anchors[role(rig, "product")] = lambda: (gm.get_center() + np.array([gm.width / 2, 0, 0])).tolist()
+
+    def g_anchor(i, dy):
+        def f():
+            p, _ = guest_pos(min(i, nG - 1), ctx.st())
+            return [float(p[0]), float(p[1] + dy), 0.0]
+        return f
+    ctx.anchors[role(rig, "guest")] = g_anchor(0, s1 * 0.6)
+    ctx.anchors[role(rig, "product")] = g_anchor(0, s1 * 0.6)
+    if nG == 2:  # each molecule its own name (glucose, ATP -> glucose-6-phosphate, ADP)
+        ctx.anchors[role(rig, "guest") + ":1"] = g_anchor(1, s2 * 0.4)
+        ctx.anchors[role(rig, "product") + ":1"] = g_anchor(1, s2 * 0.4)
+    # domain anchors (labels name the lobes that close on the substrate)
+    cS, cL = Po2[mS].mean(0), Po2[~mS].mean(0)
+    ctx.anchors[role(rig, "host") + ":small"] = lambda: (lambda P: [float(P[mS][:, 0].mean()), float(P[mS][:, 1].mean()), 0.0])(host_geom(closure(ctx.st()))[1])
+    ctx.anchors[role(rig, "host") + ":large"] = lambda: (lambda P: [float(P[~mS][:, 0].mean()), float(P[~mS][:, 1].mean()), 0.0])(host_geom(closure(ctx.st()))[1])
     blob = RD.outline(Pc2, rad, smooth=0.6 * rad)
     Gp = unary_union(bound)
     ov = Gp.intersection(host_geom(1.0)[0]).area / Gp.area
@@ -1053,7 +1099,7 @@ def differential3d(ctx, rig):
     Asm, anc3, ext = M3.differential_assembly()
     D = float(ctx.W.duration)
     # seen from behind and above the axle (the car's left is the picture's left, as in the inset), orbiting slowly
-    az0, az1, el = float(rig.get("az0", -152)), float(rig.get("az1", -124)), float(rig.get("el", 30))
+    az0, az1, el = float(rig.get("az0", -162)), float(rig.get("az1", -140)), float(rig.get("el", 26))
     cam = M3.Camera(az0, el, 26.0)
     ppu = float(rig.get("ppu", 100))  # image pixels per manim unit (720p: 90, 1080p: 135)
 
@@ -1332,8 +1378,10 @@ def flow_reactor(ctx, rig):
                     for i, s in enumerate(mols_r):
                         x0_ = sxk + (i - (nr - 1) / 2) * span / max(nr, 1) * 1.4
                         xs = sxk + (i - (nr - 1) / 2) * min(span / max(nr, 1), msc * 2.4)
-                        y = (ibx.y1 - 0.35) + (wall_y + msc * 0.9 - (ibx.y1 - 0.35)) * f
+                        ytop_ = ibx.y1 - 0.25 - msc * 1.3  # molecules stay inside the close-up panel
+                        y = ytop_ + (wall_y + msc * 0.9 - ytop_) * f
                         x = x0_ + (xs - x0_) * f
+                        x = min(ibx.x1 - msc * 1.6, max(ibx.x0 + msc * 1.6, x))
                         squeeze = smooth01((p - 0.42) / 0.18)
                         x = x + (sxk - x) * squeeze * 0.6
                         g.add(_mol_at(s, x, y, msc, angle=(1 - f) * (1.2 + i)))
@@ -1344,8 +1392,9 @@ def flow_reactor(ctx, rig):
                     f = smooth01((p - 0.6) / 0.4)
                     for i, s in enumerate(mols_p):
                         xs = sxk + (i - (np_ - 1) / 2) * min(span / max(np_, 1), msc * 2.6)
-                        y = wall_y + msc * 0.9 + f * (ibx.y1 - 0.4 - wall_y - msc * 0.9) * (0.7 + 0.3 * ((i % 2)))
+                        y = wall_y + msc * 0.9 + f * (ibx.y1 - 0.25 - msc * 1.3 - wall_y - msc * 0.9) * (0.7 + 0.3 * ((i % 2)))
                         x = xs + f * (i - (np_ - 1) / 2) * 0.25
+                        x = min(ibx.x1 - msc * 1.6, max(ibx.x0 + msc * 1.6, x))
                         g.add(_mol_at(s, x, y, msc, angle=f * (1 + i)))
                 return g
             ctx.add(f"rxn{k}", live(rxn), show=rig.get("inset_show", 0.0), how="fade", kind="body", part=f"rxn{k}", z=5, moving=True)

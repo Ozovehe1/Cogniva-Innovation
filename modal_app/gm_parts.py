@@ -471,7 +471,10 @@ def molecule_mob(mol: dict, scale=0.32, center=(0, 0), angle=0.0):
     for (el, _, _), p in zip(atoms, xy):
         r = scale * 0.42 * ATOM_R.get(el, 0.8)
         c = ATOM.get(el, "#9A9A9A")
-        d = Circle(radius=r).move_to([p[0], p[1], 0]).set_fill([light(c, 0.55), c], opacity=1).set_stroke(INK, 1.3)
+        real = THEME.get("mode") == "real"
+        if real and el == "C":  # carbon must read on the dark backdrop
+            c = "#7A808A"
+        d = Circle(radius=r).move_to([p[0], p[1], 0]).set_fill([light(c, 0.55), c], opacity=1).set_stroke("#E4E6EA" if real else INK, 1.3)
         d.set_sheen_direction(UP + LEFT)
         g.add(d)
     return g
@@ -643,6 +646,10 @@ def assemble(S: dict, T: ValueTracker):
                 if b and (b[2] - b[0]) * (b[3] - b[1]) > 0.002:
                     obstacles.append(b)
     obstacles += [list(z) for z in ctx.zones]
+    # reserved panel areas (readouts, equations, graphs appear later; labels must not land where they will be)
+    for bx_ in [S.get("readout_box")] + [t.get("box") for t in S.get("tex") or []] + [g.get("box") for g in S.get("graphs") or []]:
+        if bx_ and len(bx_) == 4:
+            obstacles.append([float(v) for v in bx_])
     place_labels(ctx, S.get("labels", []), obstacles)
     return ctx
 

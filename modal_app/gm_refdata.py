@@ -176,6 +176,14 @@ PROTEIN_PAIRS = {
     "hexokinase": ("2E2N", "2E2Q", "A"),  # Sulfolobus tokodaii hexokinase: apo (open) vs xylose + ADP (closed), Nishimasu et al. 2007
     "adenylate kinase": ("4AKE", "1AKE", "A"),  # E. coli adenylate kinase: open vs closed with Ap5A
 }
+# what each reference enzyme actually does (substrates in the order the rig places them: sugar/small first, nucleotide second)
+PROTEIN_CHEM = {
+    "hexokinase": {"enzyme": "Hexokinase", "substrates": ["Glucose", "ATP"], "products": ["Glucose-6-phosphate", "ADP"], "reaction": "transfer",
+                   "equation": r"\text{glucose}+\text{ATP}\xrightarrow{\text{hexokinase}}\text{glucose-6-P}+\text{ADP}",
+                   "domains": ["large domain", "small domain"]},
+    "adenylate kinase": {"enzyme": "Adenylate kinase", "substrates": ["AMP", "ATP"], "products": ["ADP", "ADP"], "reaction": "transfer",
+                         "equation": r"\text{AMP}+\text{ATP}\xrightarrow{\text{adenylate kinase}}2\,\text{ADP}", "domains": ["core", "lid"]},
+}
 
 
 def _get(url, timeout=10):
