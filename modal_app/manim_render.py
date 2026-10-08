@@ -240,7 +240,7 @@ def _put(url: str | None, data: bytes, ctype: str) -> bool:
         return False
 
 
-@app.function(image=render_image, secrets=[secret], timeout=1500, cpu=4.0, memory=6144, max_containers=6)
+@app.function(image=render_image, secrets=[secret], timeout=3600, cpu=4.0, memory=6144, max_containers=14)
 def compose(job_id: str, description: str, narration: dict | None, context: str, upload_url: str, paths_upload_url: str | None,
             report_upload_url: str | None, vision: str = "auto", callback: bool = True, models: str | None = None, engine: str = "auto") -> dict:
     """AI visual composer at render time (never on the learner's path). First the part-graph composer (semantic part graph ->
