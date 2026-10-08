@@ -485,6 +485,7 @@ def place_labels(ctx: Ctx, labels: list[dict], obstacles: list):
     obs = [b for b in obstacles]
     lim = Box(-FW / 2 + 0.15, -FH / 2 + 0.15, FW / 2 - 0.15, FH / 2 - 0.15)
     for L in labels:
+        obs = [b for b in obstacles] + [list(b) for b in L.get("avoid_boxes") or []]
         anc = ctx.anchors.get(L["part"])
         if anc is None:
             continue
@@ -522,13 +523,40 @@ def place_labels(ctx: Ctx, labels: list[dict], obstacles: list):
         L["_p"] = [round(float(p[0]), 3), round(float(p[1]), 3)]
         L["_follow"] = follow
         g = VGroup(lead, dot, bg, t)
-        if follow:  # a moving part: the label rides along at the same offset, no leader
+        if follow:  # a moving part: the label rides along at the same offset, its leader re-drawn to the part every frame
             off = c - p
-            g = VGroup(bg, t)
+            box_ = VGroup(bg, t)
+            lead2 = Line(edge, p).set_stroke(MUTED, 1.6)
+            dot2 = Dot(p, radius=0.035, color=MUTED)
+            g = VGroup(lead2, dot2, box_)
 
-            def ride(m, anc=anc, off=off):
-                m.move_to(np.array(anc(), dtype=float) + off)
-                keep_in_frame(m)
+            def ride(m, anc=anc, off=off, lid=L["id"], show=float(L.get("show", 0.0)), hide=L.get("hide")):
+                q = np.array(anc(), dtype=float)
+                bxm = m[2]
+                bxm.move_to(q + off)
+                keep_in_frame(bxm)
+                # moving labels keep off each other: step away from any label already placed this frame
+                tnow = round(float(ctx.T.get_value()), 4)
+                reg = ctx.__dict__.setdefault("label_now", {})
+                if show - 0.05 <= tnow and (hide is None or tnow < float(hide)):
+                    for _ in range(6):
+                        bb = bbox(bxm)
+                        hit = next((b for k, (t_, b) in reg.items() if k != lid and t_ == tnow and _ov_area(bb, b) > 0.01), None)
+                        if hit is None:
+                            break
+                        dy = (hit[3] - bb[1] + 0.06) if (bb[1] + bb[3]) >= (hit[1] + hit[3]) else -(bb[3] - hit[1] + 0.06)
+                        bxm.shift(np.array([0.0, dy, 0.0]))
+                        keep_in_frame(bxm)
+                    reg[lid] = (tnow, bbox(bxm))
+                bb = bbox(bxm)
+                e2 = _edge_point(bb, q) if bb else q
+                if np.linalg.norm(e2 - q) > 0.15:
+                    m[0].put_start_and_end_on(e2, q)
+                    m[0].set_stroke(opacity=1)
+                    m[1].move_to(q).set_opacity(1)
+                else:
+                    m[0].set_stroke(opacity=0)
+                    m[1].set_opacity(0)
             g.add_updater(ride)
         ctx.add("label:" + L["id"], g, show=L.get("show", 0.0), kind="label", how="fade", part=L["part"], z=20, hide=L.get("hide"))
         if bscore >= 50:
@@ -664,8 +692,10 @@ class PartScene(MovingCameraScene):
                     shown.add(id(e))
                     has_pts = any(len(x.points) for x in e["mob"].get_family())
                     annot = e["kind"] in ("label", "panel", "overlay", "annot")
-                    # the hand draws every stroke and writes every text; only empty live groups (motion) fade in
-                    if not has_pts:
+                    # the hand draws every stroke and writes every text; only empty live groups (motion) and rendered 3D images fade in
+                    if e["kind"] == "image" or not isinstance(e["mob"], VMobject):
+                        anims.append(FadeIn(e["mob"]))
+                    elif not has_pts:
                         anims.append(FadeIn(e["mob"]))
                         if annot:
                             pen["missing"].append(e["id"] + " (empty at its first frame)")
@@ -678,12 +708,10 @@ class PartScene(MovingCameraScene):
             for t, pid in focus:
                 if abs(t - a) < 1e-3:
                     lab = next((e for e in ctx.els if e["kind"] == "label" and e["part"] == pid and id(e) in shown), None)
-                    if lab is not None:
-                        tx = lab["mob"][-1]
+                    if lab is not None:  # the hand underlines the label it talks about (never a bare box around a body)
+                        tx = lab["mob"][-1][-1] if len(lab["mob"]) == 3 else lab["mob"][-1]
                         ul = Line(tx.get_corner(DOWN + LEFT) + DOWN * 0.06, tx.get_corner(DOWN + RIGHT) + DOWN * 0.06).set_stroke(Q["amber"], 4)
                         anims.append(Succession(Create(ul, run_time=0.6), FadeOut(ul, run_time=0.4)))
-                    else:
-                        anims.append(Circumscribe(ctx.bodies[pid], color=Q["amber"], buff=0.08, stroke_width=2.5, fade_out=True))
             dur = b - a
             self.play(T.animate.set_value(b), *anims, run_time=dur, rate_func=linear)
         gate = os.environ.get("GM_GATE_PATH")
@@ -706,6 +734,8 @@ def analyze(S: dict, step=0.25) -> dict:
     prev = {}
     motion = {}
     times = list(np.arange(0, D + 1e-6, step))
+    text_over, vec_len = {}, {}
+    _gx, _gy = np.meshgrid(np.linspace(-7.0, 7.0, 36), np.linspace(-3.9, 3.9, 20))
     for t in times:
         T.set_value(t)
         items = []
@@ -721,6 +751,8 @@ def analyze(S: dict, step=0.25) -> dict:
             b = bbox(m)
             if vis and b:
                 items.append({"id": e["id"], "kind": e["kind"], "part": e["part"], "b": [round(x, 3) for x in b]})
+            if e["kind"] == "image" and vis and e.get("moving"):
+                motion.setdefault(e["id"], []).append((round(t, 3), 0.01))
             if e["kind"] == "body" and vis:
                 pts = np.concatenate([x.points for x in m.get_family() if len(x.points)]) if any(len(x.points) for x in m.get_family()) else np.zeros((0, 3))
                 key = e["id"]
@@ -731,10 +763,31 @@ def analyze(S: dict, step=0.25) -> dict:
                 prev[key] = pts.copy()
                 if d is not None:
                     motion.setdefault(key, []).append((round(t, 3), round(d, 4)))
-        frames.append({"t": round(t, 3), "items": items})
+        fr_ = {"t": round(t, 3), "items": items}
+        if abs(t / 1.0 - round(t / 1.0)) < 1e-6:  # once a second: what share of each half is actually drawn (leaf shapes)
+            occ = np.zeros_like(_gx, bool)
+            for e in ctx.els:
+                if e["kind"] in ("backdrop",) or not (e["show"] <= t + 1e-6 and (e.get("hide") is None or t < float(e["hide"]))):
+                    continue
+                fam = [x for x in e["mob"].get_family() if len(x.points) and not x.submobjects] if e["kind"] != "image" else [e["mob"]]
+                boxes = [bbox(x) for x in fam[:600]] if e["kind"] != "image" else list(getattr(ctx, "image_hull", []) or [bbox(e["mob"])])
+                for b in boxes:
+                    if b:
+                        occ |= (_gx >= b[0] - 0.1) & (_gx <= b[2] + 0.1) & (_gy >= b[1] - 0.1) & (_gy <= b[3] + 0.1)
+            fr_["halves"] = {"left": float(occ[:, :18].mean()), "right": float(occ[:, 18:].mean()), "top": float(occ[10:, :].mean()), "bottom": float(occ[:10, :].mean())}
+        frames.append(fr_)
+        vis_ids = {it["id"] for it in items}
+        for k_, sc_ in (ctx.__dict__.get("text_score") or {}).items():
+            if "annot:" + k_ in vis_ids and sc_ > text_over.get(k_, (0, 0))[0]:
+                text_over[k_] = (sc_, round(t, 3))
+        for k_, L_ in (ctx.__dict__.get("vec_len") or {}).items():
+            if "annot:" + k_ in vis_ids:
+                vec_len[k_] = min(vec_len.get(k_, 99.0), L_)
+        ctx.__dict__["vec_len"] = {}
     st = [ctx.W(t) for t in times]
     labels = [{"id": L["id"], "part": L["part"], "show": L.get("show", 0.0), "p": L.get("_p"), "follow": L.get("_follow")} for L in S.get("labels", []) if L.get("_p")]
-    return {"duration": D, "frames": frames, "motion": motion, "checks": ctx.checks, "issues": ctx.issues, "world": st, "times": times, "labels": labels}
+    return {"duration": D, "frames": frames, "motion": motion, "checks": ctx.checks, "issues": ctx.issues, "world": st, "times": times, "labels": labels,
+            "text_over": text_over, "vec_len": vec_len}
 
 
 def scene_code(S: dict) -> str:

@@ -1,4 +1,5 @@
-"""Gemini (free tier) client for the visual composer: flash-lite first, falls through the chain on 429/5xx.
+"""Gemini (free tier) client for the visual composer: strongest models first (composing calls wait out per-minute limits on
+them), flash-lite as the backup; falls through the chain on 429/5xx.
 
 With GEMINI_API_KEY (Modal secret) it calls Google directly. Without it, and with GM_GEMINI_PROXY + RENDER_TOKEN set
 (offline evaluation outside Modal), it goes through the render service's token-protected /gemini endpoint, so the key
@@ -55,6 +56,12 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
         # e.g. to verify that the backup alone still meets the bar.
         forced = [m.strip() for m in os.environ.get("GM_FORCE_MODELS", "").split(",") if m.strip()]
         order = forced or (STRONG + [m for m in MODELS if m not in STRONG])
+        if strong and not forced and attempt < 2:
+            # composing calls wait out a per-minute limit on the strong models (twice) before falling back to flash-lite;
+            # a daily limit (skip >= 10 min) is not waited for
+            alive = [m for m in STRONG for k in range(len(keys)) if _skip.get(m if k == 0 else f"{m}#{k}", 0) - time.time() < 120]
+            if alive:
+                order = STRONG
         for slot in [m if k == 0 else f"{m}#{k}" for k in range(len(keys)) for m in order]:
             model, _, kidx = slot.partition("#")
             key = keys[int(kidx or 0)]
@@ -91,6 +98,8 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
             _why[slot] = f"{r.status_code} {','.join(sorted(set(qid)))[:120]}"
             if log is not None:
                 log.append(f"gemini {slot}: {r.status_code}")
+            if r.status_code == 404:  # this key has no access to the model: do not ask again in this container
+                _skip[slot] = time.time() + 86400
             if r.status_code == 429:
                 daily = "PerDay" in r.text or "per day" in r.text.lower()
                 m = re.search(r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"', r.text)

@@ -59,6 +59,7 @@ render_image = (
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_parts.py"), "/root/gm_parts.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_rigs.py"), "/root/gm_rigs.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_refdata.py"), "/root/gm_refdata.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_mesh3d.py"), "/root/gm_mesh3d.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_partcompose.py"), "/root/gm_partcompose.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_memory.json"), "/root/gm_memory.json")
 )

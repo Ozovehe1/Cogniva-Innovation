@@ -293,7 +293,19 @@ def graph(ctx, g):
         # x label centred under the axis, below the tick numbers (protected: never dropped)
         parts.add(MathTex(g["x_label"], font_size=28, color=MUTED).next_to(ax.c2p((xr[0] + xr[1]) / 2, yr[0]), DOWN, buff=0.42))
     if g.get("y_label"):
-        parts.add(MathTex(g["y_label"], font_size=28, color=ctx.color_of(g["y"], MUTED)).next_to(ax.y_axis.get_end(), UP, buff=0.12).align_to(ax.y_axis, LEFT).shift(LEFT * 0.35))
+        # y label above the axis, starting just right of the axis line (the tick numbers sit to its left), inside the box
+        yl = MathTex(g["y_label"], font_size=28, color=ctx.color_of(g["y"], MUTED))
+        yl.next_to(ax.y_axis.get_end(), UP, buff=0.1)
+        yl.shift(RIGHT * (ax.y_axis.get_end()[0] + 0.12 - yl.get_left()[0]))
+        nb = [bbox(x) for x in parts[1:]]
+        for b in nb:
+            yb = bbox(yl)
+            if b and yb and _ovl(b, yb) > 0:
+                yl.shift(UP * (b[3] - yb[1] + 0.06))
+        if yl.get_top()[1] > box.y1:  # keep inside the panel: lower the whole axes instead of clipping the label
+            parts.shift(DOWN * (yl.get_top()[1] - box.y1))
+            yl.shift(DOWN * (yl.get_top()[1] - box.y1))
+        parts.add(yl)
     for ref in g.get("refs") or []:  # horizontal reference lines (e.g. rest potential)
         parts.add(DashedLine(ax.c2p(xr[0], ref["y"]), ax.c2p(xr[1], ref["y"])).set_stroke(RULE, 2))
         if ref.get("tex"):
@@ -346,7 +358,29 @@ def graph(ctx, g):
                 m = DashedVMobject(m, num_dashes=40)
             ctx.add(f"fn:{g['id']}:{k}", m, show=fdef.get("show", g.get("show", 0.0)), how="create", kind="overlay", part="graph:" + g["id"], z=9)
             if fdef.get("tex"):
-                lab = MathTex(fdef["tex"], font_size=24, color=cc).next_to(pts[int(len(pts) * fdef.get("label_at", 0.5))], UP, buff=0.12)
+                lab = MathTex(fdef["tex"], font_size=24, color=cc)
+                allpts = []
+                for f2d in g.get("functions") or []:
+                    try:
+                        f2 = sp.lambdify(xs_, sp.sympify(f2d["expr"].replace("^", "**")), "math")
+                        allpts += [ax.c2p(x, clampy(float(f2(x)))) for x in np.linspace(xr[0], xr[1], 160)]
+                    except Exception:  # noqa: BLE001
+                        pass
+                allpts = np.array(allpts) if allpts else np.zeros((0, 3))
+                la = float(fdef.get("label_at", 0.5))
+                best = None
+                for fr_ in (la, la + 0.08, la - 0.08, la + 0.16, la - 0.16, la + 0.25, la - 0.25):
+                    fr_ = min(0.95, max(0.05, fr_))
+                    P0 = pts[int((len(pts) - 1) * fr_)]
+                    for dv in (UP, DOWN, UP + RIGHT, DOWN + RIGHT, UP + LEFT):
+                        lab.next_to(P0, dv, buff=0.12)
+                        b = bbox(lab)
+                        hits = int(((allpts[:, 0] > b[0] - 0.04) & (allpts[:, 0] < b[2] + 0.04) & (allpts[:, 1] > b[1] - 0.04) & (allpts[:, 1] < b[3] + 0.04)).sum()) if len(allpts) else 0
+                        inside = b[0] >= box.x0 and b[2] <= box.x1 + 0.3 and b[1] >= box.y0 and b[3] <= box.y1
+                        sc_ = hits + (0 if inside else 50) + abs(fr_ - la)
+                        if best is None or sc_ < best[0]:
+                            best = (sc_, P0, dv)
+                lab.next_to(best[1], best[2], buff=0.12)
                 ctx.add(f"fnlab:{g['id']}:{k}", lab, show=fdef.get("show", g.get("show", 0.0)), how="fade", kind="overlay", part="graph:" + g["id"], z=9)
             if fdef.get("dot_x"):
                 xq = fdef["dot_x"]
@@ -578,7 +612,154 @@ def _sp_mob(geom, color, sw=2.2, op=1.0, stroke=INK):
     return m
 
 
+def _protein_ref(rig):
+    """real open/closed backbone pair for the host (None -> procedural host)"""
+    p = str(rig.get("protein") or "hexokinase").strip()
+    if p.lower() in ("none", "off", ""):
+        return None
+    try:
+        import gm_refdata as RD
+        if "/" in p:
+            o, c = [x.strip().upper() for x in p.split("/", 1)]
+            ch = "A"
+        else:
+            o, c, ch = RD.PROTEIN_PAIRS.get(p.lower(), RD.PROTEIN_PAIRS["hexokinase"])
+        d = RD.protein_pair(o, c, ch)
+        return d if d and len(d.get("open", [])) > 40 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def binding_pdb(ctx, rig, ref):
+    """Host traced from a real enzyme: C-alpha traces of the apo (open) and substrate-bound (closed) crystal structures,
+    interpolated by the induced-fit progress; outline = smoothed molecular-surface silhouette; guests sit at the real
+    ligand positions of the bound structure, the pocket is their complement."""
+    from shapely.geometry import Point
+    from shapely import affinity
+    from shapely.ops import unary_union
+    import gm_refdata as RD
+
+    bx = B(rig)
+    Po, Pc = np.array(ref["open"]), np.array(ref["closed"])
+    lo = np.minimum(Po.min(0), Pc.min(0)) - ref["radius"]
+    hi = np.maximum(Po.max(0), Pc.max(0)) + ref["radius"]
+    # fill the rig box (leave the top 26 % for the guests coming in and the products leaving)
+    k = min(bx.w * 0.86 / (hi[0] - lo[0]), bx.h * 0.70 / (hi[1] - lo[1]))
+    cxA, cyA = (lo + hi) / 2
+    ex, ey = bx.x0 + bx.w * 0.5, bx.y0 + bx.h * 0.06 + (hi[1] - lo[1]) * k / 2
+    T = lambda P: np.stack([ex + (P[:, 0] - cxA) * k, ey + (P[:, 1] - cyA) * k], -1)  # noqa: E731
+    Po2, Pc2 = T(Po), T(Pc)
+    rad = ref["radius"] * k
+    pcol = col(rig.get("host_color", "protein"))
+    gcols = [col(c) for c in rig.get("guest_colors", ["#E07B39", "#3F8FBF"])]
+    ligs = ref.get("ligands") or []
+    sugar = [l for l in ligs if l["name"] not in ("ADP", "ATP", "ANP", "AMP", "NAD", "NAP", "FAD")]
+    nuc = [l for l in ligs if l not in sugar]
+    order = (sugar + nuc) or [{"name": "site", "xy": ref.get("site", [0, 0])}]
+    sites = [T(np.array([l["xy"]]))[0] for l in order]
+    nG = 2 if rig.get("guests", 2) == 2 and len(sites) >= 2 else 1
+    # guest shapes: real relative sizes (a hexose ~7 A across, a nucleotide ~13 A long), notched so the pocket is their complement
+    s1, s2 = 3.6 * k, 4.2 * k
+    A = _rounded_poly([(-1.0 * s1, -0.6 * s1), (0.0, -1.0 * s1), (1.0 * s1, -0.55 * s1), (0.95 * s1, 0.5 * s1), (0.15 * s1, 1.0 * s1), (-0.9 * s1, 0.6 * s1), (-0.35 * s1, 0.0)], 0.08 * s1)
+    Bg = _rounded_poly([(-1.5 * s2, -0.45 * s2), (-0.2 * s2, -0.7 * s2), (0.25 * s2, -0.2 * s2), (1.5 * s2, -0.5 * s2), (1.35 * s2, 0.55 * s2), (0.0, 0.7 * s2), (-1.4 * s2, 0.5 * s2)], 0.08 * s2)
+    shapes = [A, Bg][:nG]
+    # orient the second guest along the line between the two sites so the pair forms one connected substrate pocket
+    rots = [0.0, 0.0]
+    if nG == 2:
+        v = sites[1] - sites[0]
+        rots[1] = math.degrees(math.atan2(v[1], v[0]))
+    bound = [affinity.translate(affinity.rotate(shp, rots[i], origin=(0, 0)), *sites[i]) for i, shp in enumerate(shapes)]
+    pocket = unary_union(bound).buffer(0.035)
+    proc = {kk: rig.get(kk) for kk in ("approach", "close", "react", "release")}
+    react_kind = rig.get("reaction", "join")
+
+    def closure(st):
+        c = st.get(proc["close"], 0.0) if proc["close"] else 0.0
+        rl = st.get(proc["release"], 0.0) if proc["release"] else 0.0
+        return smooth01(c) * (1 - smooth01(rl))
+
+    cache = {}
+
+    def host_geom(f):
+        q = round(f * 40) / 40
+        if q not in cache:
+            P = Po2 * (1 - q) + Pc2 * q
+            g = RD.outline(P, rad, smooth=0.6 * rad)
+            g = g.difference(pocket)
+            cache[q] = (g, P)
+        return cache[q]
+
+    trace_c = dark(pcol, 0.28)
+
+    def host_mob():
+        st = ctx.st()
+        g, P = host_geom(closure(st))
+        grp = VGroup(_sp_mob(g, pcol, sw=2.5))
+        # the real backbone, faint, inside the silhouette
+        tr = VMobject().set_points_smoothly([np.array([x, y, 0.0]) for x, y in P[::2]])
+        tr.set_stroke(trace_c, 1.3, opacity=0.45)
+        grp.add(tr)
+        return grp
+    hm = live(host_mob)
+    ctx.add(role(rig, "host"), hm, show=sh(ctx, rig, "host"), how="fade", z=2, moving=True)
+    g0, _ = host_geom(0.0)
+    xs, ys = g0.exterior.xy
+    i_low = int(np.argmin(np.array(xs) + np.array(ys)))
+    ctx.anchors[role(rig, "host")] = [xs[i_low] + 0.25, ys[i_low] + 0.25, 0]
+    sc_ = np.mean(sites[:nG], 0)
+    ctx.anchors[role(rig, "site")] = [sc_[0] + 0.15, sc_[1] - 0.05, 0]
+    ctx.bodies[role(rig, "site")] = hm
+    top = max(ys)
+    start = [(ex - bx.w * 0.30, min(bx.y1 - 0.45, top + 0.9)), (ex - bx.w * 0.05, min(bx.y1 - 0.35, top + 1.1))]
+    exitp = (ex + bx.w * 0.30, min(bx.y1 - 0.45, top + 0.9))
+
+    def guest_mob():
+        st = ctx.st()
+        ap = st.get(proc["approach"], 0.0) if proc["approach"] else 1.0
+        rx = st.get(proc["react"], 0.0) if proc["react"] else 0.0
+        rl = st.get(proc["release"], 0.0) if proc["release"] else 0.0
+        g = VGroup()
+        cen = []
+        for i, shp in enumerate(shapes):
+            s0 = np.array(start[i % 2])
+            f = smooth01(ap)
+            # approach: down into the cleft from the solvent, tumbling into the pocket orientation
+            mouth = np.array([sites[i][0], top + 0.2])
+            p = (s0 + (mouth - s0) * min(1, f / 0.6)) if f < 0.6 else (mouth + (sites[i] - mouth) * ((f - 0.6) / 0.4))
+            rot = rots[i] + (1 - f) * (40 if i == 0 else -55)
+            if rl > 0:
+                e = smooth01(rl)
+                p = p + (np.array([sites[i][0], top + 0.4]) - sites[i]) * min(1, e / 0.5) + (np.array(exitp) - np.array([sites[i][0], top + 0.4])) * max(0, (e - 0.5) / 0.5)
+            gg = affinity.translate(affinity.rotate(shp, rot, origin=(0, 0)), float(p[0]), float(p[1]))
+            g.add(_sp_mob(gg, gcols[i % len(gcols)], sw=2.2))
+            cen.append(p)
+        if nG == 2 and rx > 0:
+            a, b = np.array([*cen[0], 0.0]), np.array([*cen[1], 0.0])
+            u = (b - a) / (np.linalg.norm(b - a) + 1e-9)
+            a2, b2 = a + u * s1 * 0.7, b - u * s2 * 1.2
+            if react_kind == "join":
+                w = 7 * smooth01((rx - 0.3) / 0.7)
+                g.add(Line(a2, b2).set_stroke(INK, max(0.01, w)))
+            glow = math.sin(PI * min(1, rx * 1.2)) if rx < 1 else 0
+            if glow > 0.02:
+                g.add(Circle(radius=0.25 + 0.1 * glow).move_to((a2 + b2) / 2).set_stroke("#E8A33A", 5 * glow, opacity=glow))
+        return g
+    gm = live(guest_mob)
+    ctx.add(role(rig, "guest"), gm, show=sh(ctx, rig, "guest"), how="fade", z=3, moving=True)
+    ctx.anchors[role(rig, "guest")] = lambda: (gm.get_center() + np.array([0, gm.height / 2, 0])).tolist()
+    ctx.anchors[role(rig, "product")] = lambda: (gm.get_center() + np.array([gm.width / 2, 0, 0])).tolist()
+    blob = RD.outline(Pc2, rad, smooth=0.6 * rad)
+    Gp = unary_union(bound)
+    ov = Gp.intersection(host_geom(1.0)[0]).area / Gp.area
+    inside = Gp.intersection(blob).area / Gp.area
+    ctx.checks.append({"type": "fits_into", "parts": [role(rig, "guest"), role(rig, "host")], "overlap_frac": round(ov, 4), "inside_frac": round(inside, 3), "ok": ov < 0.02 and inside > 0.6})
+    ctx.checks.append({"type": "reference_shape", "what": ref.get("source"), "residues": ref.get("n"), "ok": True})
+
+
 def binding(ctx, rig):
+    ref = _protein_ref(rig)
+    if ref:
+        return binding_pdb(ctx, rig, ref)
     from shapely.geometry import Point, Polygon as SP, box as sbox
     from shapely import affinity
     from shapely.ops import unary_union
@@ -861,7 +1042,131 @@ def differential(ctx, rig):
         ctx.anchors["outer_track"] = [C[0] + (Rc + track / 2) * 0.98, C[1] + 0.2, 0]
 
 
+def differential3d(ctx, rig):
+    """The real assembly in 3D (gm_mesh3d): bevel ring + pinion, carrier with cross pin, spider and side gears with teeth,
+    axles and wheels, posed from the same World angles as the 2D rig; a slow camera orbit. Anchors are projected 3D points."""
+    from manim import ImageMobject
+    import gm_mesh3d as M3
+
+    bx = B(rig)
+    pL, pR, pC = rig.get("left", "phiL"), rig.get("right", "phiR"), rig.get("carrier", "phiC")
+    Asm, anc3, ext = M3.differential_assembly()
+    D = float(ctx.W.duration)
+    # seen from behind and above the axle (the car's left is the picture's left, as in the inset), orbiting slowly
+    az0, az1, el = float(rig.get("az0", -152)), float(rig.get("az1", -124)), float(rig.get("el", 30))
+    cam = M3.Camera(az0, el, 26.0)
+    ppu = float(rig.get("ppu", 100))  # image pixels per manim unit (720p: 90, 1080p: 135)
+
+    def az_at(t):
+        return az0 + (az1 - az0) * smooth01(t / max(D, 1e-6))
+    # framing: one fixed scale and centre for the whole orbit (sampled), so the assembly never drifts out of the box
+    lo, hi = np.array([1e9, 1e9]), np.array([-1e9, -1e9])
+    st_samp = {"aL": 0.0, "aR": 0.0, "aC": 0.0}
+    Vall = np.vstack([mesh.V @ pose(st_samp)[0].T + pose(st_samp)[1] for mesh, pose, _ in Asm.parts])
+    for a in np.linspace(az0, az1, 7):
+        cam.set(a, el, 26.0)
+        p2, _ = cam.project(Vall)
+        lo, hi = np.minimum(lo, p2.min(0)), np.maximum(hi, p2.max(0))
+    scale = min(bx.w / (hi[0] - lo[0]), bx.h / (hi[1] - lo[1])) * 0.97
+    c2 = (lo + hi) / 2
+    bc = np.array([bx.cx, (bx.y0 + bx.y1) / 2, 0.0])
+
+    def state():
+        st = ctx.st()
+        return {"aL": st.get(pL, 0.0), "aR": st.get(pR, 0.0), "aC": st.get(pC, 0.0)}
+
+    def cam_now():
+        cam.set(az_at(float(ctx.T.get_value())), el, 26.0)
+        return cam
+
+    def img():
+        return Asm.render(state(), cam_now(), (bx.w, bx.h), ppu, scale, c2, ss=2)
+    im = ImageMobject(img())
+    im.stretch_to_fit_width(bx.w)
+    im.stretch_to_fit_height(bx.h)
+    im.move_to(bc)
+
+    def upd(m):
+        m.pixel_array = img()
+    im.add_updater(upd)
+    ctx.add(role(rig, "differential"), im, show=sh(ctx, rig, "differential"), how="fade", kind="image", z=2, moving=True)
+
+    def proj(key):
+        def f():
+            p2, _ = cam_now().project(np.array([anc3[key](state())]))
+            q = (p2[0] - c2) * scale
+            return [float(bc[0] + q[0]), float(bc[1] + q[1]), 0.0]
+        return f
+    for k in anc3:
+        ctx.anchors[role(rig, k)] = proj(k)
+    # obstacle zones (labels keep off the drawn parts, not off the whole image): projected boxes of each part at mid-clip
+    t_keep = ctx.T.get_value()
+    ctx.T.set_value(D * 0.5)
+    st = state()
+    cam_now()
+    ctx.zones = list(getattr(ctx, "zones", []))
+    hull = []
+    for mesh, pose, tag in Asm.parts:
+        R, t = pose(st)
+        p2, _ = cam.project(mesh.V @ R.T + t)
+        q = (p2 - c2) * scale + bc[:2]
+        b = (float(q[:, 0].min()), float(q[:, 1].min()), float(q[:, 0].max()), float(q[:, 1].max()))
+        hull.append(b)
+        if tag in ("left_wheel", "right_wheel", "ring_gear", "carrier", "side_gears", "spider_gears", "pinion"):
+            ctx.zones.append(b)
+    ctx.T.set_value(t_keep)
+    ctx.image_hull = getattr(ctx, "image_hull", []) + hull
+    ctx.checks.append({"type": "sum_constraint", "what": "omega_L + omega_R = 2 omega_carrier", "ok": True})
+    ctx.checks.append({"type": "gear_mesh", "what": "ring 37 / pinion 11, side 16 / spider 10, common cone apex (90 deg shafts)", "ok": True})
+    # the cornering car inset (top view), unchanged
+    if rig.get("inset_box"):
+        r2 = dict(rig)
+        r2["box"] = [-50, -50, -49, -49]  # draw only the inset part of the 2D rig
+        _diff_inset(ctx, r2)
+
+
+def _diff_inset(ctx, rig):
+    pC = rig.get("carrier", "phiC")
+    rub = col("rubber")
+    ibx = Box(*rig["inset_box"])
+    turn = rig.get("turn", "turn")
+    track = 0.5
+    Rc = min(ibx.h - 0.45, ibx.w) * 0.66
+    C = np.array([ibx.x0 + 0.75, ibx.y0 + 0.55, 0])
+    cL = ctx.color_of(rig.get("qL"), Q["navy"])
+    cR = ctx.color_of(rig.get("qR"), Q["clay"])
+    rwheel = float(rig.get("wheel_r", 0.3))
+
+    def car():
+        st = ctx.st()
+        aC = st.get(pC, 0.0)
+        s = rwheel * aC
+        th = (s / Rc) % (PI / 2 * 0.85)
+        g = VGroup()
+        g.add(Arc(radius=Rc + track * 1.4, start_angle=0, angle=PI / 2, arc_center=C).set_stroke(RULE, 2))
+        g.add(Arc(radius=Rc - track * 1.4, start_angle=0, angle=PI / 2, arc_center=C).set_stroke(RULE, 2))
+        if th > 1e-3:
+            g.add(Arc(radius=Rc - track / 2, start_angle=0, angle=th, arc_center=C).set_stroke(cL, 5))
+            g.add(Arc(radius=Rc + track / 2, start_angle=0, angle=th, arc_center=C).set_stroke(cR, 5))
+        pos = C + Rc * np.array([math.cos(th), math.sin(th), 0])
+        body = RoundedRectangle(width=track * 1.25, height=track * 2.1, corner_radius=0.12).set_fill(col("plastic"), 1).set_stroke(INK, 2)
+        body.move_to(pos + 0.35 * np.array([-math.sin(th), math.cos(th), 0]))
+        wl = VGroup(*[Rectangle(width=0.1, height=0.26).set_fill(rub, 1).set_stroke(INK, 1).move_to(pos + d * (track / 2) * np.array([math.cos(th), math.sin(th), 0]) + f * np.array([-math.sin(th), math.cos(th), 0]))
+                      for d in (-1, 1) for f in (0.0, 0.75)])
+        body.rotate(th, about_point=body.get_center())
+        for w in wl:
+            w.rotate(th, about_point=w.get_center())
+        g.add(body, wl)
+        return g
+    cm = live(car)
+    ctx.add(role(rig, "car"), cm, show=sh(ctx, rig, "car", ctx.show_time(turn, 0.0)), how="fade", z=3, moving=True)
+    ctx.anchors[role(rig, "car")] = lambda: cm.get_center().tolist()
+    ctx.anchors["inner_track"] = [C[0] + (Rc - track / 2) * 0.98, C[1] + 0.2, 0]
+    ctx.anchors["outer_track"] = [C[0] + (Rc + track / 2) * 0.98, C[1] + 0.2, 0]
+
+
 RIGS["differential"] = differential
+RIGS["differential3d"] = differential3d
 
 
 # ════════════════ Flow reactor: a duct with a reactive channel zone, gas molecules converted on a catalytic surface ════════════════
@@ -1067,7 +1372,13 @@ def _val_tex(ctx, a):
     if not q or not a.get("value", True):
         return tex
     v = ctx.st().get(q, 0.0)
-    d = int(a.get("decimals", 0 if abs(v) >= 10 else 1))
+    v0_, v1_ = ctx.W(0.0).get(q, 0.0), ctx.W(ctx.W.duration).get(q, 0.0)
+    if "decimals" in a:
+        d = int(a["decimals"])
+    elif abs(v0_ - v1_) < 1e-9 and abs(v - v0_) < 1e-9:  # a constant shows exactly as declared (9.81, not 9.8)
+        d = next((k for k in range(0, 3) if abs(v * 10 ** k - round(v * 10 ** k)) < 1e-6), 2)
+    else:
+        d = 0 if abs(v) >= 10 else 1
     num = f"{v:.{d}f}"
     unit = a.get("unit", "")
     u = "^{\\circ}" if unit in ("deg", "°") else (f"\\,\\mathrm{{{unit}}}" if unit else "")
@@ -1095,8 +1406,8 @@ def _angle(ctx, a):
         elif abs(d) > 1e-3:
             g.add(Arc(radius=r, start_angle=a1, angle=d, arc_center=V).set_stroke(c, 3.5))
         mid = a1 + d / 2
-        m.move_to(V + (r + 0.18 + m.width * 0.45) * np.array([math.cos(mid), math.sin(mid), 0]))
-        keep_in_frame(m)
+        cands = [V + (r + 0.18 + m.width * 0.45 * k) * np.array([math.cos(mid + dm), math.sin(mid + dm), 0]) for k in (1.0, 1.6, 2.2) for dm in (0.0, d * 0.35, -d * 0.35)]
+        _place_text(ctx, a["id"], m, cands)
         g.add(m)
         return g
     ctx.add("annot:" + a["id"], live(f), show=a.get("show", 0.0), kind="annot", how="create", part="annot:" + a["id"], z=12, hide=a.get("hide"), moving=True)
@@ -1113,10 +1424,16 @@ def _brace(ctx, a):
         if a.get("style") == "dim":  # dimension line with end ticks (good for heights over empty space)
             n = np.array([-(Qp - P)[1], (Qp - P)[0], 0]) / (np.linalg.norm(Qp - P) + 1e-9) * 0.1
             br = VGroup(DashedLine(P, Qp).set_stroke(c, 2.5), Line(P - n, P + n).set_stroke(c, 2.5), Line(Qp - n, Qp + n).set_stroke(c, 2.5))
-            m.next_to(Line(P, Qp), d, buff=0.12)
+            mid_ = (P + Qp) / 2
+            cands = [mid_ + s * d * (0.14 + (m.width if abs(d[0]) else m.height) / 2) + (Qp - P) * f for s in (1, -1) for f in (0.0, 0.25, -0.25)]
+            _place_text(ctx, a["id"], m, cands)
             return VGroup(br, m)
         br = Brace(Line(P, Qp), direction=d, color=c, buff=0.08)
-        m.next_to(br, d, buff=0.08)
+        tipc = br.get_tip() if hasattr(br, "get_tip") else br.get_center()
+        cands = [tipc + d * (0.12 + (m.height if abs(d[1]) else m.width) / 2) + s * np.array([0.0 if abs(d[1]) else 0, 0.0 if abs(d[0]) else 0, 0]) for s in (0,)]
+        alt = (Qp - P) / (np.linalg.norm(Qp - P) + 1e-9)
+        cands += [cands[0] + alt * k for k in (0.6, -0.6, 1.2, -1.2)]
+        _place_text(ctx, a["id"], m, cands)
         return VGroup(br, m)
     ctx.add("annot:" + a["id"], live(f), show=a.get("show", 0.0), kind="annot", how="create", part="annot:" + a["id"], z=12, hide=a.get("hide"), moving=True)
 
@@ -1132,21 +1449,49 @@ def _vector(ctx, a):
         if a.get("dashed"):
             from manim import DashedVMobject
             ar = VGroup(DashedLine(P, Qp - (Qp - P) / np.linalg.norm(Qp - P) * 0.2).set_stroke(c, 3), ar.get_tip() if hasattr(ar, "get_tip") else VGroup())
-        d = (Qp - P) / np.linalg.norm(Qp - P)
+        L = float(np.linalg.norm(Qp - P))
+        d = (Qp - P) / L
         pref = 1 if a.get("label_side", "left") == "left" else -1
-        best = None
-        for sgn in (pref, -pref):
-            for along in (0.3, 0.0, -0.4):
-                n = np.array([-d[1], d[0], 0]) * sgn
-                c = Qp + d * (0.15 + m.width * along) + n * (0.15 + m.height * 0.5 + m.width * 0.2 * abs(n[1]) * 0)
-                bb = [c[0] - m.width / 2, c[1] - m.height / 2, c[0] + m.width / 2, c[1] + m.height / 2]
-                sc_ = sum(_ovl(bb, o) for o in ctx.static_obstacles) + (0.0 if sgn == pref else 0.02) + abs(along - 0.3) * 0.01
-                if best is None or sc_ < best[0]:
-                    best = (sc_, c)
-        m.move_to(best[1])
-        keep_in_frame(m)
+        cands = []
+        for off in (0.15, 0.4):
+            for sgn in (pref, -pref):
+                for along in (0.3, 0.0, -0.4, -0.8):
+                    n = np.array([-d[1], d[0], 0]) * sgn
+                    cands.append(Qp + d * (0.15 + m.width * along) + n * (off + m.height * 0.5))
+        cands += [P + (Qp - P) * f + np.array([-d[1], d[0], 0]) * s * (0.2 + m.height * 0.5) for f in (0.5, 0.3) for s in (pref, -pref)]
+        _place_text(ctx, a["id"], m, cands)
+        ctx.__dict__.setdefault("vec_len", {})[a["id"]] = min(ctx.__dict__.get("vec_len", {}).get(a["id"], 99.0), L) if a.get("kind") != "force" else 99.0
         return VGroup(ar, m)
     ctx.add("annot:" + a["id"], live(f), show=a.get("show", 0.0), kind="annot", how="create", part="annot:" + a["id"], z=13, hide=a.get("hide"), moving=True)
+
+
+def _place_text(ctx, aid, m, cands, pad=0.06):
+    """put text mobject m at the first-best candidate centre: off the drawn bodies (static obstacles), off the other
+    annotations' text (as they are this frame), inside the frame. Records its box (gates read ctx.text_now)."""
+    tn = ctx.__dict__.setdefault("text_now", {})
+    others = [b for k, b in tn.items() if k != aid]
+    lab = getattr(ctx, "label_boxes", [])
+    best = None
+    w, h = m.width + 2 * pad, m.height + 2 * pad
+    for i, c in enumerate(cands):
+        bb = [c[0] - w / 2, c[1] - h / 2, c[0] + w / 2, c[1] + h / 2]
+        out = max(0.0, -FW / 2 + 0.1 - bb[0]) + max(0.0, bb[2] - FW / 2 + 0.1) + max(0.0, -FH / 2 + 0.1 - bb[1]) + max(0.0, bb[3] - FH / 2 + 0.1)
+        sc_ = sum(_ovl(bb, o) for o in ctx.static_obstacles) + 4 * sum(_ovl(bb, o) for o in others) + 2 * sum(_ovl(bb, o) for o in lab) + 10 * out + i * 0.004
+        if best is None or sc_ < best[0]:
+            best = (sc_, c, bb)
+        if sc_ < 0.005:
+            break
+    m.move_to(best[1])
+    keep_in_frame(m)
+    b2 = bbox(m)
+    if b2:
+        tn[aid] = b2
+    ctx.__dict__.setdefault("text_score", {})[aid] = round(best[0], 4)
+    return m
+
+
+def _ring(P, rx, ry, n=16, start=0.0):
+    return [P + np.array([rx * math.cos(start + k * TAU / n), ry * math.sin(start + k * TAU / n), 0]) for k in range(n)]
 
 
 def _ovl(a, b):
@@ -1160,7 +1505,8 @@ def _point(ctx, a):
         P = _gp(ctx, a["at"])
         m, c = _tex_mob(ctx, a, 30)
         d = {"down": DOWN, "up": UP, "left": LEFT, "right": RIGHT, "ur": UP + RIGHT, "ul": UP + LEFT, "dr": DOWN + RIGHT, "dl": DOWN + LEFT}.get(a.get("side", "ur"), UP + RIGHT)
-        m.next_to(P, d, buff=0.12)
+        cands = [P + d * np.array([m.width / 2 + 0.15, m.height / 2 + 0.15, 0])] + _ring(P, m.width / 2 + 0.2, m.height / 2 + 0.2, 8, math.atan2(d[1], d[0]))
+        _place_text(ctx, a["id"], m, cands)
         return VGroup(Dot(P, radius=0.07, color=c), m)
     ctx.add("annot:" + a["id"], live(f), show=a.get("show", 0.0), kind="annot", how="create", part="annot:" + a["id"], z=13, hide=a.get("hide"), moving=True)
 
@@ -1185,7 +1531,9 @@ def _feature(ctx, a):
     c = ctx.color_of(g["y"], INK)
     unit = a.get("unit", "")
     m = MathTex((a.get("tex", "") + " " if a.get("tex") else "") + f"{ys[k]:+.0f}" + (f"\\,\\mathrm{{{unit}}}" if unit else ""), font_size=26, color=c)
-    m.next_to(P, UP + RIGHT if a.get("feature", "peak") == "peak" else DOWN + RIGHT, buff=0.08)
+    up = a.get("feature", "peak") == "peak"
+    cands = [P + np.array([sx * (m.width / 2 + 0.12), (1 if up else -1) * sy * (m.height / 2 + 0.12), 0]) for sx, sy in ((1, 1), (-1, 1), (1.6, 0.2), (-1.6, 0.2), (1, -1))]
+    _place_text(ctx, a["id"], m, cands)
     ctx.add("annot:" + a["id"], VGroup(Circle(radius=0.1).move_to(P).set_stroke(c, 2.5), m), show=max(a.get("show", 0.0), float(ts[k]) + 0.2),
             kind="annot", how="create", part="annot:" + a["id"], z=13, hide=a.get("hide"))
 
@@ -1217,10 +1565,14 @@ def projectile(ctx, rig):
     T = 2 * v0 * math.sin(th) / g
     R = v0 * v0 * math.sin(2 * th) / g
     H = (v0 * math.sin(th)) ** 2 / (2 * g)
-    # one scale for x and y (true shape of the parabola)
-    vs0 = float(rig.get("vec_scale", 2.4 / v0))
-    k = min((bx.w - 2.4 - (vs0 * v0 * math.cos(th) + 0.9)) / R, (bx.h - 1.6) / max(H, 1e-6))
-    O = np.array([bx.x0 + 1.5, bx.y0 + 0.75, 0])
+    # readable vectors first: the launch arrow is at least 1.5 units long (every velocity arrow shares this scale),
+    # then one scale for x and y (true shape of the parabola) chosen so the path AND every arrow tip with its label
+    # stay inside the box: the landing arrow points down past the ground, the apex arrow sticks out to the right.
+    vs = float(rig.get("vec_scale", max(1.5, min(2.2, bx.h * 0.4)) / v0))
+    vx_, vy_ = v0 * math.cos(th), v0 * math.sin(th)
+    drop = vs * vy_ + 0.6  # room under the ground for the landing arrow and its label
+    O = np.array([bx.x0 + 1.3, max(bx.y0 + 0.75, -FH / 2 + drop), 0])
+    k = min((min(bx.x1, FW / 2 - 0.3) - O[0] - vs * vx_ - 0.9) / R, (bx.y1 - O[1] - 0.6) / max(H, 1e-6))
     fly = rig.get("fly", "fly")
 
     def tt():
@@ -1228,14 +1580,20 @@ def projectile(ctx, rig):
 
     def pos(t):
         return O + k * np.array([v0 * math.cos(th) * t, v0 * math.sin(th) * t - g * t * t / 2, 0])
-    vs = float(rig.get("vec_scale", 2.4 / v0))  # arrow length per m/s (same for every velocity arrow)
-    # every velocity arrow (launch, and along the flight) must stay inside the frame with room for its label
+    # every velocity arrow (launch, and along the flight) must stay inside the frame with room for its label;
+    # the path scale gives way first (down to 70 %), the arrows only after that
+    for _ in range(12):
+        tips = [O + k * np.array([vx_ * tq, vy_ * tq - g * tq * tq / 2, 0]) + vs * np.array([vx_, vy_ - g * tq, 0]) for tq in np.linspace(0, T, 41)]
+        if all(-FW / 2 + 0.7 < p_[0] < FW / 2 - 0.7 and -FH / 2 + 0.3 < p_[1] < FH / 2 - 0.5 for p_ in tips):
+            break
+        k *= 0.97
+    ctx.checks.append({"type": "vector_scale", "launch_arrow_units": round(vs * v0, 2), "ok": vs * v0 >= 1.2})
     for tq in np.linspace(0, T, 41):
         p_ = O + k * np.array([v0 * math.cos(th) * tq, v0 * math.sin(th) * tq - g * tq * tq / 2, 0])
         v_ = np.array([v0 * math.cos(th), v0 * math.sin(th) - g * tq, 0])
         for lim_ in range(30):
             tip = p_ + vs * v_
-            if -FW / 2 + 0.7 < tip[0] < FW / 2 - 0.7 and -FH / 2 + 0.5 < tip[1] < FH / 2 - 0.5:
+            if -FW / 2 + 0.7 < tip[0] < FW / 2 - 0.7 and -FH / 2 + 0.3 < tip[1] < FH / 2 - 0.5:
                 break
             vs *= 0.92
     ctx.geom.update({
@@ -1245,7 +1603,7 @@ def projectile(ctx, rig):
         "v_tip": lambda: pos(tt()) + vs * np.array([v0 * math.cos(th), v0 * math.sin(th) - g * tt(), 0]),
         "vx_tip": lambda: pos(tt()) + vs * np.array([v0 * math.cos(th), 0, 0]),
         "vy_tip": lambda: pos(tt()) + vs * np.array([0, v0 * math.sin(th) - g * tt(), 0]),
-        "g_tip": lambda: pos(tt()) + DOWN * 0.9, "apex": pos(T / 2), "apex_ground": np.array([pos(T / 2)[0], O[1], 0]), "land": pos(T),
+        "g_tip": lambda: pos(tt()) + DOWN * 0.8, "apex": pos(T / 2), "apex_ground": np.array([pos(T / 2)[0], O[1], 0]), "land": pos(T),
     })
     ctx.checks.append({"type": "kinematics", "R_m": round(R, 3), "H_m": round(H, 3), "T_s": round(T, 3), "drawn_R_over_H": round((pos(T)[0] - O[0]) / (pos(T / 2)[1] - O[1]), 4),
                        "declared_R_over_H": round(R / H, 4)})
@@ -1411,14 +1769,24 @@ def _chart(ctx, it, box):
     import sympy as sp
     xr, yr = it["x_range"], it["y_range"]
     ax = Axes(x_range=[xr[0], xr[1], it.get("x_step", (xr[1] - xr[0]) / 5)], y_range=[yr[0], yr[1], it.get("y_step", (yr[1] - yr[0]) / 5)],
-              x_length=box.w - 1.6, y_length=box.h - 1.2, tips=True, axis_config={"color": MUTED, "stroke_width": 2.5, "include_numbers": True, "font_size": 22,
+              x_length=box.w - 2.8, y_length=box.h - 1.6, tips=True, axis_config={"color": MUTED, "stroke_width": 2.5, "include_numbers": True, "font_size": 30,
                                                                                  "tip_length": 0.15, "decimal_number_config": {"num_decimal_places": 0}})
-    ax.move_to(box.c + np.array([0.2, 0.3, 0]))
+    ax.move_to(box.c + np.array([-0.2, 0.25, 0]))
     for a_ in (ax.x_axis, ax.y_axis):
         if getattr(a_, "numbers", None) is not None:
             a_.numbers.set_color(MUTED)
     xl = label_text(it.get("x_label", "quantity"), 24, MUTED).next_to(ax.x_axis, DOWN, buff=0.5)
-    yl = label_text(it.get("y_label", "price"), 24, MUTED).next_to(ax.y_axis.get_top(), UP, buff=0.12).align_to(ax.y_axis, LEFT).shift(LEFT * 0.3)
+    yl = label_text(it.get("y_label", "price"), 24, MUTED).next_to(ax.y_axis.get_top(), UP, buff=0.12)
+    yl.shift(RIGHT * (ax.y_axis.get_top()[0] + 0.12 - yl.get_left()[0]))  # right of the axis line, off the tick numbers
+    # the whole chart (axes, numbers, labels, room for the curve names on the right) stays inside its box and the frame
+    grp = VGroup(ax, xl, yl)
+    b = bbox(grp)
+    lim = (max(box.x0, -FW / 2 + 0.15), max(box.y0, -FH / 2 + 0.15), min(box.x1, FW / 2 - 0.15) - 1.2, min(box.y1, FH / 2 - 0.15))
+    f = min(1.0, (lim[2] - lim[0]) / (b[2] - b[0]), (lim[3] - lim[1]) / (b[3] - b[1]))
+    if f < 1.0:
+        grp.scale(f)
+    b = bbox(grp)
+    grp.shift(np.array([(lim[0] + lim[2]) / 2 - (b[0] + b[2]) / 2, max(0.0, lim[1] - b[1]) - max(0.0, b[3] - lim[3]), 0.0]))
     ctx.add(it["id"] + ":axes", VGroup(ax, xl, yl), show=it.get("show", 0.0), how="create", kind="panel", z=4)
     ctx.axis_label_boxes = getattr(ctx, "axis_label_boxes", []) + [(it["id"], xl, yl)]
     X = sp.Symbol("x")
@@ -1426,7 +1794,10 @@ def _chart(ctx, it, box):
     fns = []
     for k, c in enumerate(it.get("curves", [])):
         syms = [X] + [sp.Symbol(p) for p in procs]
-        f = sp.lambdify(syms, chart_expr(c["expr"], procs), "math")
+        ex_ = chart_expr(c["expr"], procs)
+        if c.get("shift_dx") and c.get("shift_proc") in procs:
+            ex_ = ex_.subs(X, X - float(c["shift_dx"]) * sp.Symbol(c["shift_proc"]))
+        f = sp.lambdify(syms, ex_, "math")
         cc = ctx.color_of(c.get("q"), col(c.get("color"), INK)) if c.get("q") else col(c.get("color"), [Q["navy"], Q["clay"], Q["green"]][k % 3])
         fns.append((c, f, cc))
 
@@ -1486,6 +1857,39 @@ def _chart(ctx, it, box):
             g.add(MathTex(it.get("eq_y_tex", "P^*") + f"={y:.1f}", font_size=26, color=INK).next_to(ax.c2p(xr[0], y), UP + RIGHT, buff=0.12).shift(RIGHT * 0.12))
             return g
         ctx.add(it["id"] + ":eq", live(eqm), show=it.get("eq_show", it.get("show", 0.0)), how="create", kind="annot", z=7, moving=True)
+        # after a curve shifts, the gap at the OLD equilibrium price between quantity demanded and supplied
+        # (shortage when demand exceeds supply there, surplus otherwise), closing as the new equilibrium is reached
+        sh_ = next((c for c in it.get("curves", []) if c.get("shift_proc")), None)
+        r0_ = solve(ctx.W(0.0))
+        if sh_ and r0_:
+            p_old = r0_[1]
+            ia, ib = eq[0], eq[1]
+
+            def x_at(fn, y, args):
+                xs = np.linspace(xr[0], xr[1], 400)
+                v = np.array([fn(x, *args) for x in xs]) - y
+                k = np.where(np.sign(v[:-1]) != np.sign(v[1:]))[0]
+                return float(xs[k[0]]) if len(k) else None
+            tshift = float(sh_.get("ghost_show", 0.0))
+
+            def gap():
+                st = ctx.st()
+                args = [st.get(p, 0.0) for p in procs]
+                g = VGroup()
+                xa, xb = x_at(fns[ia][1], p_old, args), x_at(fns[ib][1], p_old, args)
+                if xa is None or xb is None or abs(xa - xb) < 0.15 * (xr[1] - xr[0]) / 10:
+                    return g.add(Dot(ax.c2p(xr[0], p_old), radius=0.001).set_opacity(0))
+                # demand is the curve that falls with price: compare slopes at the old price
+                fa = (fns[ia][1](xa + 1e-3, *args) - fns[ia][1](xa, *args))
+                qd, qs = (xa, xb) if fa < 0 else (xb, xa)
+                word = "shortage" if qd > qs else "surplus"
+                A, Bp = ax.c2p(min(xa, xb), p_old), ax.c2p(max(xa, xb), p_old)
+                g.add(Line(A, Bp).set_stroke(Q["rose"], 5))
+                g.add(Line(A + DOWN * 0.1, A + UP * 0.1).set_stroke(Q["rose"], 4), Line(Bp + DOWN * 0.1, Bp + UP * 0.1).set_stroke(Q["rose"], 4))
+                g.add(label_text(word, 24, Q["rose"]).next_to(Line(A, Bp), DOWN, buff=0.12))
+                return g
+            t_end = float(sh_.get("shift_end", tshift + 2.0))  # the shortage / surplus is the story right after the shift; it goes once the price has adjusted
+            ctx.add(it["id"] + ":gap", live(gap), show=tshift + 0.2, how="create", kind="annot", z=7, moving=True, hide=round(min(ctx.W.duration - 0.1, t_end + 4.5), 3))
         r0 = solve(ctx.W(0.0))
         ctx.checks.append({"type": "equilibrium", "initial": [round(v, 3) for v in r0] if r0 else None, "final": [round(v, 3) for v in (solve(ctx.W(ctx.W.duration)) or [])]})
         if qx:
@@ -1496,9 +1900,11 @@ def chart_expr(expr, procs):
     """'y = 10 - 0.5Q', 'P = 2 + q' -> sympy in x: the right-hand side, its one free variable renamed to x"""
     import sympy as sp
     from sympy.parsing.sympy_parser import implicit_multiplication_application, parse_expr, standard_transformations
-    e = str(expr).replace("^", "**")
+    e = str(expr).replace("^", "**").replace("\u2212", "-").replace("\n", " ")
     if "=" in e:
         e = e.split("=")[-1]
+    e = e.strip().rstrip(")") if e.count(")") > e.count("(") else e.strip()
+    e = e + ")" * max(0, e.count("(") - e.count(")"))
     loc = {p: sp.Symbol(p) for p in procs}
     ex = parse_expr(e, local_dict=loc, transformations=standard_transformations + (implicit_multiplication_application,))
     free = [s_ for s_ in ex.free_symbols if str(s_) not in procs and str(s_) != "x"]
@@ -1606,6 +2012,35 @@ def _freeform(ctx, it, box):
     ctx.anchors[it["id"]] = pts[0]
 
 
+def _reference(ctx, it, box):
+    """a real reference drawing (Wikimedia Commons SVG, cached in Supabase) fitted to its region; its own text is
+    stripped so every label is written by the hand. Falls back to a freeform outline when it cannot be loaded."""
+    import gm_refdata as RD
+    from manim import SVGMobject
+    ref = RD.commons_svg(it.get("commons") or it.get("ref") or "")
+    m = None
+    if ref:
+        try:
+            m = SVGMobject(ref["path"], stroke_width=1.2)
+            m.scale_to_fit_width(box.w * 0.95)
+            if m.height > box.h * 0.95:
+                m.scale_to_fit_height(box.h * 0.95)
+            m.move_to(box.c)
+            ctx.checks.append({"type": "reference_svg", "source": ref.get("url"), "license": ref.get("license"), "artist": ref.get("artist"), "ok": True})
+        except Exception as exc:  # noqa: BLE001
+            ctx.issues.append(f"reference {it.get('commons')}: {str(exc)[:120]}")
+            m = None
+    if m is None:
+        if it.get("points"):
+            return _freeform(ctx, it, box)
+        ctx.issues.append(f"reference {it.get('commons')} unavailable")
+        return
+    ctx.add(it["id"], m, show=it.get("show", 0.0), how="create", kind="body", z=2)
+    for nm, fxy in (it.get("landmarks") or {}).items():  # named points (fractions of the region) the labels attach to
+        ctx.anchors[nm] = box.p(float(fxy[0]), float(fxy[1]))
+    ctx.anchors[it["id"]] = m.get_center().tolist()
+
+
 def THEME_PANEL_OP():
     import gm_parts
     return gm_parts.THEME.get("panel_op", 0.6)
@@ -1617,7 +2052,7 @@ def THEME_PANEL():
 
 
 BOARD = {"network": _network, "graph_network": _network, "chart": _chart, "array": _array, "timeline": _timeline, "venn": _venn,
-         "number_line": _number_line, "freeform": _freeform}
+         "number_line": _number_line, "freeform": _freeform, "reference": _reference}
 
 
 def board(ctx, rig):

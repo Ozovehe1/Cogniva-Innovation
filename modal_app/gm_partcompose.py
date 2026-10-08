@@ -23,6 +23,8 @@ import re
 import subprocess
 import sys
 import tempfile
+
+import numpy as np
 import time
 
 from gm_llm import LAST_MODEL, ask_json
@@ -43,7 +45,7 @@ SOLVERS (pick the ONE whose relations match the idea; they are generic, not topi
   roles: neuron, dendrites, soma, axon, myelin, node, terminals, membrane, na_channel, k_channel.  params: myelinated (bool).
   events: rest, stimulus, depolarize (Na+ channels open, Na+ flows in, V rises), repolarize (K+ channels open, K+ out, V falls), propagate (spike travels node to node to the terminals).
 - binding: a host molecule/protein with a pocket and guest(s) whose shape is the pocket's complement; induced fit closes the host; a reaction joins (or splits) the guests; optional energy profile.
-  roles: host, site, guest, product.  params: reaction ("join"|"split"), energy_graph (bool).
+  roles: host, site, guest, product.  params: reaction ("join"|"split"), energy_graph (bool), protein ("hexokinase" | "adenylate kinase" | "OPEN/CLOSED" PDB ids of a real enzyme's apo and substrate-bound structures; the host outline is traced from that real backbone; default hexokinase).
   events: approach (guests move into the pocket), close (host bends around them: induced fit), react (bonds strained, products form), release (products leave, host reopens).
 - flow_reactor: a duct/shell with a reactive channel zone (catalyst-coated honeycomb, filter, membrane bed); gas/liquid molecules flow through and are converted; close-up of the surface reactions.
   roles: converter, inlet, outlet, monolith, channels, catalyst, surface, gas.  params: zones [{"name","coat"}], inputs (molecules in, formulas), map {reactant: product}, reactions [{"eq": balanced equation with formulas, "site": metal}].
@@ -57,7 +59,9 @@ SOLVERS (pick the ONE whose relations match the idea; they are generic, not topi
   network {nodes:[{id, at:"B2"}], edges:[[a,b,weight]], algorithm:"dijkstra"|null, source},
   chart {x_label:"Quantity (units)", y_label:"Price ($)", x_range:[a,b], y_range:[a,b], curves:[{id, label, expr:"y as a function of x", shift:"event that moves it", shift_by:"+2" }], equilibrium:true},
   array {values:[...], algorithm:"binary_search"|null, target}, timeline {events:[{t, label}]}, venn {sets:[{label}], members:[{label}]},
-  number_line {x_range:[a,b]}, freeform {points:[[fx,fy],...] fractions of its region, closed, color} for any shape the list lacks.
+  number_line {x_range:[a,b]}, freeform {points:[[fx,fy],...] fractions of its region, closed, color} for any shape the list lacks,
+  reference {commons:"File:<exact Wikimedia Commons SVG title>", landmarks:{part_id:[fx,fy]}, points:[...] fallback outline} for organic anatomy
+  (heart, cell, eye, ...) drawn from a real reference illustration; its text is removed and the parts are labelled through landmarks.
   events: step (algorithm advances one step), run (algorithm runs to the end), shift:<curve id>, reveal:<item id>.
 If none of these shows the idea truthfully, answer fits=false.
 """
@@ -160,6 +164,15 @@ def spoken_numbers(text: str) -> list[float]:
             elif v >= 20 and v < 100 and j < len(words) and words[j] in _NUM and _NUM[words[j]] < 10 and words[j] != "a":
                 v += _NUM[words[j]]
                 j += 1
+            # "nine point eight one" -> 9.81 (each digit after "point" is one decimal place)
+            if j < len(words) and words[j] == "point":
+                k, dec = j + 1, ""
+                while k < len(words) and words[k] in _NUM and _NUM[words[k]] < 10 and words[k] != "a":
+                    dec += str(int(_NUM[words[k]]))
+                    k += 1
+                if dec:
+                    v = float(f"{int(v)}.{dec}")
+                    j = k
             neg = i > 0 and words[i - 1] == "minus"
             out.append(-v if neg else float(v))
             i = j
@@ -494,7 +507,7 @@ def solve_binding(sc: Scene):
     graph = bool(P.get("energy_graph", True))
     box = [-6.9, -3.75, 1.3, 3.75] if graph else [-5, -3.75, 5, 3.75]
     S["rigs"].append({"type": "binding", "box": box, "approach": "approach", "close": "close", "react": "react", "release": "release",
-                      "reaction": P.get("reaction", "join"), "roles": {r: sc.pid(r) for r in ("host", "guest", "site", "product")}})
+                      "reaction": P.get("reaction", "join"), "protein": P.get("protein", "hexokinase"), "roles": {r: sc.pid(r) for r in ("host", "guest", "site", "product")}})
     S["show"].setdefault(sc.pid("host"), 0.0)
     S["show"].setdefault(sc.pid("guest"), 0.6)
     if st.get("react") is not None:  # once they have reacted the guests are products: their label goes, the product's comes
@@ -548,16 +561,18 @@ def solve_differential(sc: Scene):
     sc.quantity("wC", "(wL+wR)/2", "green", "ring gear speed", "rpm")
     t_ro = min(st.get("turn", 1e9), st.get("ro", 1e9), st.get("split", 1e9))
     t_ro = t_ro if t_ro < 1e9 else 1.0
-    S["rigs"].append({"type": "differential", "box": [-6.75, -0.55, 6.75, 3.6], "inset_box": [-6.6, -3.7, -2.4, -0.75], "qL": "wL", "qR": "wR", "turn": "turn",
+    view3d = str(P.get("view", "3d")).lower() != "2d"
+    S["rigs"].append({"type": "differential3d" if view3d else "differential", "box": [-6.9, -1.05, 6.9, 3.95] if view3d else [-6.75, -0.55, 6.75, 3.6],
+                      "inset_box": [-6.7, -3.9, -3.1, -1.1] if view3d else [-6.6, -3.7, -2.4, -0.75], "qL": "wL", "qR": "wR", "turn": "turn",
                       "roles": {r: sc.pid(r) for r in ("differential", "ring_gear", "pinion", "carrier", "spider_gears", "side_gears", "left_wheel", "right_wheel", "axle", "drive_shaft", "car")}})
     S["show"].setdefault(sc.pid("differential"), 0.0)
     S["show"].setdefault(sc.pid("car"), round(min(st.get("turn", 0.3), 0.3), 3))
     sc.readout("wL", r"\omega_{\text{inner}}", "rpm", t_ro)
     sc.readout("wR", r"\omega_{\text{outer}}", "rpm", t_ro)
     sc.readout("wC", r"\omega_{\text{ring}}", "rpm", st.get("split", st.get("drive", t_ro)))
-    S["readout_box"] = [-1.9, -3.55, 1.9, -0.95]
+    S["readout_box"] = [-2.6, -3.8, 1.3, -1.25] if view3d else [-1.9, -3.55, 1.9, -0.95]
     eq = r"\omega_{\text{inner}}+\omega_{\text{outer}}=2\,\omega_{\text{ring}}"  # same symbols as the readouts
-    S["tex"].append({"id": "eq", "tex": eq, "parts": None, "box": [2.2, -2.9, 6.85, -1.4], "show": round(st.get("eq", st.get("split", sc.D * 0.6)), 3), "size": 40})
+    S["tex"].append({"id": "eq", "tex": eq, "parts": None, "box": [1.6, -3.3, 6.85, -1.7] if view3d else [2.2, -2.9, 6.85, -1.4], "show": round(st.get("eq", st.get("split", sc.D * 0.6)), 3), "size": 40})
 
 
 def solve_flow(sc: Scene):
@@ -642,7 +657,7 @@ def solve_projectile(sc: Scene):
     sc.quantity("tf", f"fly*{T_:.6f}", "navy", "flight time", "s")
     sc.quantity("vyt", f"{vy_:.6f}-{g}*tf", "rose", "vertical velocity", "m/s")
     lim = math.ceil(max(vx_, vy_) / 5) * 5
-    S["graphs"].append({"id": "vel", "box": [-6.9, 0.55, -1.2, 3.95], "x": "tf", "y": "vyt", "x_range": [0, round(T_ * 1.05, 2)], "y_range": [-lim, lim],
+    S["graphs"].append({"id": "vel", "box": [-6.9, 0.55, 0.9, 3.95], "x": "tf", "y": "vyt", "x_range": [0, round(T_ * 1.05, 2)], "y_range": [-lim, lim],
                         "x_step": round(max(0.5, round(T_ / 4 * 2) / 2), 2), "y_step": lim / 2, "y_numbers": [-lim, 0, lim],
                         "x_label": r"\text{time } t\ (\mathrm{s})", "y_label": r"\text{velocity } (\mathrm{m/s})",
                         "refs": [{"y": round(vx_, 3), "tex": r"v_x=v_0\cos\theta"}], "show": t("components", fly[0] - 0.5), "from": fly[0], "x_axis_at_zero": True})
@@ -656,13 +671,17 @@ def solve_projectile(sc: Scene):
         {"id": "v0", "kind": "vector", "from": "O", "to": "v0_tip", "tex": "v_0", "q": "v0", "unit": "m/s", "show": t("velocity", t("angle", 0.8) + 0.6)},
         {"id": "v0x", "kind": "vector", "from": "O", "to": "v0x_tip", "tex": r"v_0\cos\theta", "color": "amber", "show": t("components", fly[0] - 0.5), "label_side": "right", "sw": 4},
         {"id": "v0y", "kind": "vector", "from": "O", "to": "v0y_tip", "tex": r"v_0\sin\theta", "color": "rose", "show": t("components", fly[0] - 0.5), "sw": 4},
-        {"id": "v", "kind": "vector", "from": "ball", "to": "v_tip", "tex": r"\vec v", "color": "navy", "show": round(fly[0] + 0.2, 3), "hide": round(fly[1], 3)},
+        {"id": "v", "kind": "vector", "from": "ball", "to": "v_tip", "tex": r"\vec v", "color": "navy", "show": round(fly[0] + 0.15 * (fly[1] - fly[0]), 3), "hide": round(fly[1], 3)},
         {"id": "g", "kind": "force", "from": "ball", "to": "g_tip", "tex": "g", "q": "g", "unit": "m/s^2", "show": t("gravity", fly[0] + 0.5), "label_side": "left", "hide": round(fly[1], 3)},
         {"id": "H", "kind": "dim", "a": "apex_ground", "b": "apex", "tex": "H", "q": "H", "unit": "m", "side": "right", "show": max(t("height", fly[1]), (fly[0] + fly[1]) / 2)},
         {"id": "R", "kind": "brace", "a": "O", "b": "land", "tex": "R", "q": "R", "unit": "m", "side": "down", "show": max(t("range", fly[1]), fly[1])}]
-    S["tex"].append({"id": "eqH", "tex": r"H=\frac{v_0^2\sin^2\theta}{2g}", "box": [0.2, 2.0, 6.9, 3.9], "show": t("height", fly[1] - 1.0), "size": 46,
+    # the components with their values (what the second sentence computes), then H and R, in the right column
+    t_c = t("components", fly[0] + 0.5)
+    S["tex"].append({"id": "vx_val", "tex": rf"v_x=v_0\cos\theta={vx_:.1f}\,\mathrm{{m/s}}", "box": [1.3, 3.2, 6.9, 3.95], "show": t_c, "size": 38})
+    S["tex"].append({"id": "vy_val", "tex": rf"v_y=v_0\sin\theta={vy_:.1f}\,\mathrm{{m/s}}", "box": [1.3, 2.45, 6.9, 3.2], "show": round(t_c + 0.8, 3), "size": 38})
+    S["tex"].append({"id": "eqH", "tex": r"H=\frac{v_0^2\sin^2\theta}{2g}", "box": [1.3, 1.0, 4.1, 2.4], "show": t("height", fly[1] - 1.0), "size": 40,
                      "hide": None})
-    S["tex"].append({"id": "eq", "tex": r"R=\frac{v_0^2\sin 2\theta}{g}", "box": [0.2, 0.7, 6.9, 2.3], "show": t("equation", t("range", fly[1] + 0.5)), "size": 46})
+    S["tex"].append({"id": "eq", "tex": r"R=\frac{v_0^2\sin 2\theta}{g}", "box": [4.1, 1.0, 6.9, 2.4], "show": t("equation", t("range", fly[1] + 0.5)), "size": 40})
 
 
 def solve_board(sc: Scene):
@@ -717,14 +736,19 @@ def solve_board(sc: Scene):
                     a, z = shifts[sid]
                     proc = "shift_" + sid
                     sc.key(proc, a, z, 1.0)
-                    by = str(c.get("shift_by", "+2")).strip()
-                    c["expr"] = f"({expr}) + ({by})*{proc}" if by[0] not in "+-" else f"({expr}) {by[0]} ({by[1:]})*{proc}"
-                    c["shift_proc"], c["ghost_at"], c["ghost_show"] = proc, 0.0, round(a, 3)
+                    try:  # a shift moves the curve along the quantity axis (demand / supply shift right or left)
+                        by = float(str(c.get("shift_by", "+2")).replace(" ", "").replace("+", "") or 2)
+                    except ValueError:
+                        by = 2.0
+                    c["shift_dx"] = by
+                    c["shift_proc"], c["ghost_at"], c["ghost_show"], c["shift_end"] = proc, 0.0, round(a, 3), round(z, 3)
             if it.get("equilibrium") is True:
                 it["equilibrium"] = [0, 1]
         if it.get("region"):
             import gm_parts
             it["box"] = gm_parts.grid_box(it["region"]).list()
+            if G.get("equation") and it["box"][3] > 2.9:  # the equation strip at the top stays free
+                it["box"][3] = 2.9
     sc.finish_procs(linear=tuple(k for k in sc.keys if k.startswith("algo_")))
     S["rigs"].append({"type": "board", "box": [-7, -4, 7, 4], "items": items})
     if G.get("equation"):
@@ -798,10 +822,39 @@ def gates(S: dict, G: dict, sents: list[dict]) -> dict:
                     if w * h / small > 0.25 and ("ov", tx[i]["id"], tx[j]["id"]) not in seen:
                         seen.add(("ov", tx[i]["id"], tx[j]["id"]))
                         soft.append(f"{tx[i]['id']} overlaps {tx[j]['id']} at {fr['t']}s")
+    # layout gates (repaired deterministically, reported when a repair cannot clear them; they do not discard the clip):
+    # text on drawn bodies (annotation text that could not find a free spot) and vectors too short to read
+    layout = []
+    for aid, (sc_, t_) in (a.get("text_over") or {}).items():
+        if sc_ > 0.06:
+            layout.append(f"annot:{aid} text sits on a drawn shape at {t_}s")
+    for aid, L_ in (a.get("vec_len") or {}).items():
+        if L_ < 0.55:
+            layout.append(f"vector annot:{aid} is too short to read ({L_:.2f})")
+    # empty halves: after the opening, no half of the frame stays (nearly) empty for more than 4 s
+    halves = ("left", "right", "top", "bottom")
+    run = {k: None for k in halves}
+    empty = []
+    for fr in a["frames"]:
+        if fr["t"] < 1.5 or "halves" not in fr:
+            continue
+        for k_ in halves:
+            frac = fr["halves"][k_]
+            if frac < 0.10:
+                run[k_] = run[k_] if run[k_] is not None else fr["t"]
+            else:
+                if run[k_] is not None and fr["t"] - run[k_] > 4.0:
+                    empty.append((k_, run[k_], fr["t"]))
+                run[k_] = None
+    for k_, t0_ in run.items():
+        if t0_ is not None and D - t0_ > 4.0:
+            empty.append((k_, t0_, D))
+    for k_, t0_, t1_ in empty:
+        layout.append(f"the {k_} half of the frame is empty from {t0_}s to {t1_}s")
     # fill: the union of what is drawn must reach a meaningful share of the frame (best frame of the second half)
     fill = 0.0
     for fr in a["frames"][len(a["frames"]) // 2:]:
-        bodies = [it["b"] for it in fr["items"] if it["kind"] in ("body", "panel", "annot", "label")]
+        bodies = [it["b"] for it in fr["items"] if it["kind"] in ("body", "image", "panel", "annot", "label")]
         if bodies:
             x0, y0 = max(-7.11, min(b[0] for b in bodies)), max(-4.0, min(b[1] for b in bodies))
             x1, y1 = min(7.11, max(b[2] for b in bodies)), min(4.0, max(b[3] for b in bodies))
@@ -863,7 +916,7 @@ def gates(S: dict, G: dict, sents: list[dict]) -> dict:
             if fr["t"] < L["show"] + 0.9:
                 continue
             for it in fr["items"]:
-                if it["kind"] == "body":
+                if it["kind"] in ("body", "image"):
                     b = it["b"]
                     if b[0] - 0.25 <= px <= b[2] + 0.25 and b[1] - 0.25 <= py <= b[3] + 0.25:
                         hit = fr["t"]
@@ -889,7 +942,21 @@ def gates(S: dict, G: dict, sents: list[dict]) -> dict:
             missing.append(req)
     if missing:
         soft.append("required but not shown: " + ", ".join(map(str, missing)))
-    return {"hard": hard, "soft": soft, "fill": round(fill, 3), "gaps": gaps, "checks": a["checks"], "issues": a["issues"], "missing": missing, "label_delay": report_delay}
+    # where every text element sits over the clip (det_fix uses it to move a label off another text)
+    tboxes = {}
+    for fr in a["frames"]:
+        for it in fr["items"]:
+            if it["kind"] in ("label", "panel") or it["id"].startswith("annot:") or it["id"].startswith("tex:"):
+                b = it["b"]
+                o = tboxes.get(it["id"])
+                tboxes[it["id"]] = b if o is None else [min(o[0], b[0]), min(o[1], b[1]), max(o[2], b[2]), max(o[3], b[3])]
+    first = {}
+    for fr in a["frames"]:
+        for it in fr["items"]:
+            first.setdefault(it["id"], (fr["t"], it["b"], it["kind"]))
+    ov = [x for x in soft if " overlaps " in x]
+    return {"hard": hard, "soft": soft, "layout": layout, "overlaps": ov, "fill": round(fill, 3), "gaps": gaps, "checks": a["checks"], "issues": a["issues"], "missing": missing, "label_delay": report_delay,
+            "empty": empty, "tboxes": tboxes, "first": first}
 
 
 def fill_still(S: dict, gaps: list) -> bool:
@@ -955,6 +1022,39 @@ def det_fix(S: dict, report: dict) -> bool:
                 changed = True
     if report.get("gaps"):
         changed = fill_still(S, report["gaps"]) or changed
+    halves = {"left": lambda c: c[0] < 0, "right": lambda c: c[0] > 0, "top": lambda c: c[1] > 0, "bottom": lambda c: c[1] < 0}
+    t_open = min([b["t0"] for b in S.get("_beats") or []] + [S.get("duration", 10) * 0.05])
+    for half, t0_, t1_ in report.get("empty") or []:
+        for eid, (tf, b, kind) in (report.get("first") or {}).items():
+            c = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+            if tf <= t0_ + 0.3 or not halves[half](c):
+                continue
+            new_t = round(max(t_open, min(t0_, 1.0)), 3)
+            if eid.startswith("graph:"):  # a graph (axes + labels) can be on screen before its curve starts
+                for g_ in S.get("graphs") or []:
+                    if "graph:" + g_["id"] == eid and g_.get("show", 0) > new_t:
+                        g_.setdefault("from", g_.get("show", 0.0))
+                        g_["show"] = new_t
+                        changed = True
+            elif kind in ("body", "image") and eid in (S.get("show") or {}) and S["show"][eid] > new_t and eid not in (S.get("_late_ok") or []):
+                S["show"][eid] = new_t
+                changed = True
+    seen_pairs = set()
+    for sft in report.get("soft") or []:
+        m = re.match(r"(label:(\S+)) overlaps (\S+) at", sft) or re.match(r"(\S+) overlaps (label:(\S+)) at", sft)
+        if not m:
+            continue
+        if sft.startswith("label:"):
+            lid, other = m.group(2), m.group(3)
+        else:
+            lid, other = m.group(3), m.group(1)
+        ob = (report.get("tboxes") or {}).get(other)
+        if ob and (lid, other) not in seen_pairs:
+            seen_pairs.add((lid, other))
+            for L in S["labels"]:
+                if L["id"] == lid:
+                    L.setdefault("avoid_boxes", []).append([round(x, 3) for x in ob])
+                    changed = True
     for h in report["hard"]:
         m = re.match(r"(label:\S+) leaves the frame", h)
         if m:
@@ -1150,6 +1250,37 @@ def fact_review(G, text, log):
     return probs
 
 
+def ensure_axis_units(S: dict, text: str, log: list) -> None:
+    """every numbered axis names its quantity AND its unit; labels without a unit get one from the narration's context
+    (one short LLM call for all of them), e.g. 'Quantity' -> 'Quantity (cups per day)'."""
+    need = []
+    for r_ in S.get("rigs") or []:
+        for it in r_.get("items") or []:
+            if it.get("type") == "chart":
+                for k in ("x_label", "y_label"):
+                    if "(" not in str(it.get(k, "")):
+                        need.append((it, k))
+    for g in S.get("graphs") or []:
+        for k in ("x_label", "y_label"):
+            numbered = g.get("x_numbers", True) is not False if k == "x_label" else True
+            if numbered and g.get(k) and "(" not in str(g[k]) and "mathrm" not in str(g[k]):
+                need.append((g, k))
+    if not need:
+        return
+    labels = [str(o.get(k, "")) for o, k in need]
+    try:
+        out = ask_json("Axis labels of a teaching animation must name the quantity and its unit in parentheses. Narration: " + text[:1200] +
+                       "\nFor each label give the same label with the right unit added, e.g. 'Quantity' -> 'Quantity (cups per day)', 'Price' -> 'Price ($ per cup)'. "
+                       "Keep LaTeX labels in LaTeX (\\text{...}). Return JSON {\"labels\": [..same order..]}\nLabels: " + json.dumps(labels), temperature=0.1, timeout=60, log=log)
+        new = (out or {}).get("labels") or []
+        for (o, k), old_, nw in zip(need, labels, new):
+            if isinstance(nw, str) and "(" in nw and len(nw) < 60:
+                o[k] = nw
+        log.append(f"stage axis_units: {LAST_MODEL.get('model')} {labels} -> {[o.get(k) for o, k in need]}")
+    except Exception as exc:  # noqa: BLE001
+        log.append(f"axis units: {str(exc)[:160]}")
+
+
 def compose_parts(desc: str, narr: dict | None, workdir: str | None = None, log: list | None = None, n_cands: int = 2, budget_s: float = 780) -> dict:
     log = [] if log is None else log
     wd = workdir or tempfile.mkdtemp(prefix="gmp-")
@@ -1208,18 +1339,19 @@ def compose_parts(desc: str, narr: dict | None, workdir: str | None = None, log:
     for i, G in enumerate(checked):
         try:
             S = solve(G, sents)
+            ensure_axis_units(S, text, log)
             rep = gates(S, G, sents)
             for _ in range(2):
-                if (rep["hard"] or rep["gaps"]) and det_fix(S, rep):
+                if (rep["hard"] or rep["gaps"] or rep.get("layout") or rep.get("overlaps")) and det_fix(S, rep):
                     rep = gates(S, G, sents)
                 else:
                     break
-            log.append(f"cand {i} {G.get('solver')}: hard={rep['hard'][:4]} soft={rep['soft'][:4]} fill={rep['fill']}")
+            log.append(f"cand {i} {G.get('solver')}: hard={rep['hard'][:4]} layout={rep.get('layout', [])[:4]} soft={rep['soft'][:4]} fill={rep['fill']}")
             cands.append({"G": G, "S": S, "gate": rep})
         except Exception as exc:  # noqa: BLE001
             log.append(f"solve {i} failed: {type(exc).__name__}: {str(exc)[:300]}")
     timings["solve_s"] = round(time.time() - t2, 1)
-    cands.sort(key=lambda c: (len(c["gate"]["hard"]), len(c["gate"]["soft"])))
+    cands.sort(key=lambda c: (len(c["gate"]["hard"]), len(c["gate"].get("layout") or []), len(c["gate"]["soft"])))
     cands = [c for c in cands if not c["gate"]["hard"]] or cands[:1]
     if not cands:
         return {"ok": False, "error": "solver failed", "facts": facts, "log": log, "timings": timings, "fallback": True}
