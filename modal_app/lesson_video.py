@@ -49,6 +49,10 @@ MAX_BYTES = 47 * 1024 * 1024
 AUDIO_KBPS = 64
 CLOCK_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video_clock.js")
 FRAME_MS = 1000 / FPS
+# SwiftShader GPU compositing: the fallback on hosts where the software compositor is slow (see record()).
+SWIFTSHADER_ARGS = ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]
+PROBE_SHOTS = 8
+SLOW_SHOT_MS = 75
 # Threads for each part's H.264 encoder (it runs beside Chrome in the same container).
 X264_THREADS = 2
 CHROME_ARGS = [
@@ -180,22 +184,48 @@ def _ctype(url: str) -> str:
     return "audio/mpeg" if u.endswith(".mp3") else "application/json" if u.endswith(".json") else "video/mp4" if u.endswith(".mp4") else "application/octet-stream"
 
 
+class _SlowCompositor(Exception):
+    pass
+
+
 async def record(page_url: str, out_video: str, max_frames: int, settle_s: float = 0.0, on_progress=None, channel: str | None = None,
                  maxrate: int | None = None, extra_args: list[str] | None = None, assets: dict[str, bytes] | None = None,
                  stop_at_max: bool = False) -> dict:
     """Play the render page on a virtual clock (lesson_video_clock.js): step it one frame at a time, capture each frame
-    that changed and pipe them to ffmpeg as constant-25-fps H.264. Returns timings, the narration log and page info."""
+    that changed and pipe them to ffmpeg as constant-25-fps H.264. Returns timings, the narration log and page info.
+
+    Chrome's software compositor captures a frame in ~35 ms on most hosts but ~150 ms on others (same CPU speed; the
+    difference is in the sandbox). A few captures are timed before recording; on a slow host Chrome is restarted with
+    SwiftShader GPU compositing, which captures in ~60-70 ms everywhere."""
+    assets = assets or {}
+    clips = ClipCache(tempfile.mkdtemp(prefix="lv-clips-"), assets)
+    for u in assets:
+        if "/manim-clips/" in u and u.endswith(".mp4"):
+            clips.prepare(u)  # cut the frames while the page loads
+    args = list(extra_args or [])
+    probe = not any(a.startswith("--use-angle") for a in args)
+    t = time.time()
+    try:
+        res = await _record_once(page_url, out_video, max_frames, settle_s, on_progress, channel, maxrate, args, assets, stop_at_max, clips, probe)
+        res["timing"]["compositor"] = "software" if probe else "swiftshader"
+        return res
+    except _SlowCompositor as slow:
+        lost = round(time.time() - t, 2)
+        res = await _record_once(page_url, out_video, max_frames, settle_s, on_progress, channel, maxrate, args + SWIFTSHADER_ARGS, assets, stop_at_max,
+                                 clips, False)
+        res["timing"].update({"compositor": "swiftshader", "probe_ms": slow.args[0], "probe_lost_s": lost})
+        return res
+
+
+async def _record_once(page_url: str, out_video: str, max_frames: int, settle_s: float, on_progress, channel: str | None, maxrate: int | None,
+                       extra_args: list[str], assets: dict[str, bytes], stop_at_max: bool, clips: "ClipCache", probe: bool) -> dict:
     from playwright.async_api import async_playwright
 
     console: list[str] = []
     timing: dict = {}
     t_launch = time.time()
     ff = None
-    assets = assets or {}
-    clips = ClipCache(tempfile.mkdtemp(prefix="lv-clips-"), assets)
-    for u in assets:
-        if "/manim-clips/" in u and u.endswith(".mp4"):
-            clips.prepare(u)  # cut the frames while the page loads
+    ok = False
     served = {"hit": 0, "miss": 0}
     frames = shots = 0
     async with async_playwright() as p:
@@ -239,9 +269,20 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
             await page.evaluate("(m) => { window.__gmClipFrames = m }", frames_map)
             info["clips"] = len(frames_map)
             timing["ready_s"] = round(time.time() - t_open, 2)
+            cdp = await ctx.new_cdp_session(page)
+            shot_args = {"format": "jpeg", "quality": 88, "optimizeForSpeed": True}
+            if probe:
+                for _ in range(2):
+                    await cdp.send("Page.captureScreenshot", shot_args)
+                tp = time.time()
+                for _ in range(PROBE_SHOTS):
+                    await cdp.send("Page.captureScreenshot", shot_args)
+                ms = round((time.time() - tp) / PROBE_SHOTS * 1000)
+                timing["probe_ms"] = ms
+                if ms > SLOW_SHOT_MS:
+                    raise _SlowCompositor(ms)
             ff = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", str(FPS), "-i", "-",
                                    *x264_args(maxrate), "-an", "-movflags", "+faststart", out_video], stdin=subprocess.PIPE)
-            cdp = await ctx.new_cdp_session(page)
             t0 = await page.evaluate("__vclock.enable(), __gmRender.start()") / 1000.0
             t_cap = time.time()
             last = None
@@ -259,7 +300,7 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
                 prof["step_s"] += time.time() - ts
                 if st["d"] or last is None:
                     t1 = time.time()
-                    shot = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 88, "optimizeForSpeed": True})
+                    shot = await cdp.send("Page.captureScreenshot", shot_args)
                     last = base64.b64decode(shot["data"])
                     shots += 1
                     prof["shot_s"] += time.time() - t1
@@ -283,13 +324,16 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
             timing["fetched"] = served["miss"]
             audio_log = await page.evaluate("window.__gmAudioLog || []")
             errors = await page.evaluate("(window.__gmRender.errors || []).concat(window.__vclock.errors || [])")
+            ok = True
         finally:
             await browser.close()
-            if ff and ff.poll() is None and sys.exc_info()[0] is not None:
+            if ff and ff.poll() is None and not ok:
                 ff.kill()
+    if ff is None:
+        raise RuntimeError("the recording did not start")
     ff.stdin.close()
     if ff.wait(timeout=600) != 0:
-        raise RuntimeError("ffmpeg could not encode the frames")
+        raise RuntimeError(f"ffmpeg could not encode the frames ({frames} frames, {shots} drawn)")
     timing["encode_tail_s"] = round(time.time() - t_cap - timing.get("capture_s", 0), 2)
     dur = frames / FPS
     return {"t0": t0, "t_end": t0 + dur, "frames": frames, "shots": shots, "duration_s": dur, "audio_log": audio_log, "info": info,

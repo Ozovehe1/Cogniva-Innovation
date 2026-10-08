@@ -26,8 +26,8 @@ export const VIDEO_BUCKET = 'lesson-videos'
 export const VIDEO_RENDER_VERSION = 4
 /** Per learner: one render at a time, and at most this many new renders a day (finished videos are free to download). */
 export const VIDEO_DAILY_LIMIT = 5
-/** Lesson time per part: each part renders in its own container in ~20-40 s, all parts at once. */
-const PART_MS = 18_000
+/** Lesson time per part: each part renders in its own container in ~15-40 s, all parts at once. */
+const PART_MS = 10_000
 /** More parts than this and they get longer instead (cost, and Modal's 100-container cap on the account's plan). */
 const MAX_PARTS = 80
 /** Expected wall time of a render, whatever the lesson's length (containers start, parts render, join, upload). */

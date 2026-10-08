@@ -256,12 +256,13 @@ def _video_callback(callback_url: str | None, job_id: str, status: str, **extra)
 
 
 # Lesson videos render on a virtual clock (lesson_video.py): each part of the lesson is drawn frame by frame as fast as
-# the CPU allows, and the parts render side by side. Parts are ~15-25 s of lesson, so a lesson of any length is ready in
-# well under two minutes. 4 guaranteed cores per part: with only 2, Chrome's capture ran 3x slower on a busy host.
-PART_CPU = 4.0
+# Chrome can capture, and the parts render side by side. Parts are ~10-25 s of lesson, so a lesson of any length is
+# ready in well under two minutes. A capture's cost is latency in Chrome's compositor, not CPU: 2, 4 and 8 cores
+# measured the same, so a part gets 2.
+PART_CPU = 2.0
 
 
-@app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=4096, max_containers=90,
+@app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=3072, max_containers=90,
               retries=modal.Retries(max_retries=1, initial_delay=0.0, backoff_coefficient=1.0))
 def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None, assets: dict | None = None,
                       t_spawn: float | None = None) -> dict:
@@ -309,7 +310,8 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     narration = lv.Narration(workdir)
     fetch_pool = ThreadPoolExecutor(max_workers=16)
     fetches = {u: fetch_pool.submit(lv.prefetch_one, u) for u in urls}
-    calls = []
+    spawner = ThreadPoolExecutor(max_workers=16)
+    spawns = []
     try:
         for i, (a, b) in enumerate(ranges):
             last = i == len(ranges) - 1
@@ -323,13 +325,16 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
                     if u.endswith(".mp3"):
                         narration.files[u] = data
                         narration.want([u])  # decode while the parts render
-            # Generous frame cap per part (a part normally runs ~15-40 s of video): stops a page that never finishes.
+            # Generous frame cap per part (a part normally runs ~10-40 s of video): stops a page that never finishes.
             max_frames = int(min(max_s, max(600, total * 3 / len(ranges) + 300)) * lv.FPS)
-            calls.append(lesson_video_part.spawn(i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time()))
+            # Each spawn is a round trip to Modal: spawn from a pool so the parts start together.
+            spawns.append(spawner.submit(lesson_video_part.spawn, i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time()))
+        calls = [f.result() for f in spawns]
     except Exception as exc:  # noqa: BLE001
         print(f"lesson video failed to start: {exc}")
         _video_callback(callback_url, job_id, "failed", error=f"{type(exc).__name__}: {exc}"[:3000])
         return {"ok": False, "error": str(exc)[:500]}
+    spawner.shutdown(wait=False)
     t_pre = time.time()
     failed = [u for u, f in fetches.items() if f.result() is None]
     fetch_pool.shutdown(wait=False)
