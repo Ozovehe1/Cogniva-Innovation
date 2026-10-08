@@ -1,10 +1,10 @@
 'use client'
 import 'katex/dist/katex.min.css'
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ListOrdered, Lock, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
 import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type ManimClipStep, type Step } from '@/lib/lesson-schema'
-import { applyAction, buildBoard, compactPartition, segmentStart, shapeBox, type BoardState, type Box } from './board-state'
+import { applyAction, buildBoard, compactPartition, contentBox, segmentStart, shapeBox, textBoxAt, unionBox, type BoardState, type Box } from './board-state'
 import { BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, ShapeElement, TextElement, type NoteMarkSpec } from './elements'
 import { CheckCard, RichText, type CheckResponse } from './check-card'
 import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
@@ -92,6 +92,21 @@ export interface TranscriptAside { label: string; count?: number; content: React
 const COMPACT_W = 600
 
 const noSubscribe = () => () => {}
+
+/** A box grown by `pad` board units on every side. */
+function padBox(b: Box | null, pad: number): Box | null {
+  return b && { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 }
+}
+
+/** Same measured boxes (to within half a board unit), so re-measuring settles instead of re-rendering forever. */
+function sameBoxes(a: ReadonlyMap<string, Box>, b: ReadonlyMap<string, Box>) {
+  if (a.size !== b.size) return false
+  for (const [k, v] of b) {
+    const u = a.get(k)
+    if (!u || Math.abs(u.x - v.x) > 0.5 || Math.abs(u.y - v.y) > 0.5 || Math.abs(u.w - v.w) > 0.5 || Math.abs(u.h - v.h) > 0.5) return false
+  }
+  return true
+}
 
 /**
  * Plays a lesson scene script on a 16:10 whiteboard. The board is laid out in
@@ -255,16 +270,74 @@ export function WhiteboardPlayer({
   const compact = boxW > 0 && boxW < COMPACT_W
   const layout = useMemo(() => (compact ? compactPartition(board) : null), [compact, board])
   const noteIds = useMemo(() => new Set(layout?.notes.map(n => n.id).filter((x): x is string => !!x) ?? []), [layout])
+  /** Rendered boxes (board units, before move/scale effects) of what the estimates can't know: text and maths as
+   *  KaTeX and the fonts really set them (bigger on a phone, where labels keep a minimum screen size), and the labels
+   *  drawn inside shapes (point labels, tick numbers, axis names). Measured after every change, see below. */
+  const [measured, setMeasured] = useState<ReadonlyMap<string, Box>>(() => new Map())
+  /** Everything that must stay in view, in board units: the diagram and its labels on a phone, the whole board
+   *  otherwise. Nothing on the board is cropped: what reaches past the edges is fitted in by scaling down. */
+  const content = useMemo(() => {
+    if (layout) return layout.region ? unionBox(layout.region, padBox(contentBox(board.els, board.vars, measured, el => el.kind === 'shape' || layout.labels.has(el.key)), 8)) : null
+    return unionBox({ x: 0, y: 0, w: BOARD_W, h: BOARD_H }, padBox(contentBox(board.els, board.vars, measured), 6))
+  }, [layout, board, measured])
   // Board-unit -> screen-pixel transform for the drawing layer.
   const view = useMemo(() => {
     if (!boxW) return { scale: 0, tx: 0, ty: 0, h: 0 }
-    if (!layout) return { scale: boxW / BOARD_W, tx: 0, ty: 0, h: (boxW / BOARD_W) * BOARD_H }
-    const r = layout.region
+    const boxH = (boxW / BOARD_W) * BOARD_H
+    if (!layout) {
+      const c = content ?? { x: 0, y: 0, w: BOARD_W, h: BOARD_H }
+      const sc = Math.min(boxW / c.w, boxH / c.h)
+      return { scale: sc, tx: (boxW - c.w * sc) / 2 - c.x * sc, ty: (boxH - c.h * sc) / 2 - c.y * sc, h: boxH }
+    }
+    const r = content
     if (!r) return { scale: boxW / BOARD_W, tx: 0, ty: 0, h: 0 }
     const sc = Math.min(boxW / r.w, 1.15, 380 / r.h)
     return { scale: sc, tx: (boxW - r.w * sc) / 2 - r.x * sc, ty: -r.y * sc, h: r.h * sc }
-  }, [boxW, layout])
+  }, [boxW, layout, content])
   const scale = view.scale
+
+  /* ── Measuring what is drawn, so the view can keep all of it in sight ── */
+  const [remeasure, setRemeasure] = useState(0)
+  useEffect(() => {
+    // Web fonts (KaTeX, the handwriting and display faces) change text sizes when they arrive.
+    const fonts = typeof document !== 'undefined' ? document.fonts : undefined
+    if (!fonts) return
+    const bump = () => setRemeasure(n => n + 1)
+    fonts.addEventListener('loadingdone', bump)
+    void fonts.ready.then(bump)
+    return () => fonts.removeEventListener('loadingdone', bump)
+  }, [])
+  useLayoutEffect(() => {
+    const cam = layerRef.current?.firstElementChild
+    if (!cam) return
+    const read = () => {
+      const next = new Map<string, Box>()
+      // Text and maths: their laid-out size (transform-free, so in board units), placed by the model's anchor.
+      cam.querySelectorAll<HTMLElement>('[data-wb-text]').forEach(node => {
+        const key = node.dataset.wbText
+        const el = key ? board.els.find(e => e.key === key) : undefined
+        if (!el || (el.kind !== 'text' && el.kind !== 'math') || !node.offsetWidth) return
+        next.set(el.key, textBoxAt(el, node.offsetWidth, node.offsetHeight))
+      })
+      // Labels inside shapes (SVG text): their boxes in the board's own units.
+      cam.querySelectorAll<SVGGElement>('g[data-wb-key]').forEach(g => {
+        let b: Box | null = null
+        g.querySelectorAll('text').forEach(t => {
+          try { const r = t.getBBox(); if (r.width || r.height) b = unionBox(b, { x: r.x, y: r.y, w: r.width, h: r.height }) } catch { /* not rendered */ }
+        })
+        if (b && g.dataset.wbKey) next.set(g.dataset.wbKey, b)
+      })
+      setMeasured(prev => (sameBoxes(prev, next) ? prev : next))
+    }
+    read()
+    // Again whenever a text changes size after mounting (handwriting and KaTeX settle a moment later; live values
+    // change width as they count), and once more after exits and late layout have settled.
+    let raf = 0
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(read) }) : null
+    cam.querySelectorAll('[data-wb-text]').forEach(n => ro?.observe(n))
+    const t = setTimeout(read, 600)
+    return () => { ro?.disconnect(); cancelAnimationFrame(raf); clearTimeout(t) }
+  }, [board, scale, layout, remeasure])
 
   /* ── Element measurement for highlights ── */
   const nodes = useRef(new Map<string, HTMLElement>())
@@ -760,7 +833,7 @@ export function WhiteboardPlayer({
         width: BOARD_W,
         height: BOARD_H,
         transform: `translate(${view.tx}px, ${view.ty}px) scale(${scale})`,
-        transition: layout && !reduced ? 'transform 500ms cubic-bezier(0.45, 0.05, 0.25, 1)' : undefined,
+        transition: reduced ? undefined : 'transform 500ms cubic-bezier(0.45, 0.05, 0.25, 1)',
         visibility: scale ? 'visible' : 'hidden',
       }}
     >
@@ -794,7 +867,7 @@ export function WhiteboardPlayer({
             if (el.kind === 'shape') {
               const anim = el.born === animIdx
               return (
-                <motion.g key={elKey(el)} exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.35 } }}>
+                <motion.g key={elKey(el)} data-wb-key={el.key} exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.35 } }}>
                   <FxWrap fx={el.fx} ms={el.fx ? durs.get(el.fx.act) ?? 0 : 0} reduced={reduced} svg>
                     <InkGuard svg cue={guardCue(cueOf(el))} tag={`shape:${el.key}`}>
                       <ShapeElement el={el} animate={anim} reduced={reduced} duration={durOf(el.act, el.born)} vars={board.vars} />
@@ -830,7 +903,7 @@ export function WhiteboardPlayer({
             </InkGuard>
           )
           return el.fx
-            ? <FxWrap key={textKey(el)} fx={el.fx} ms={durs.get(el.fx.act) ?? 0} reduced={reduced}>{node}</FxWrap>
+            ? <FxWrap key={textKey(el)} fx={el.fx} ms={durs.get(el.fx.act) ?? 0} reduced={reduced} origin={[el.x, el.y]}>{node}</FxWrap>
             : <React.Fragment key={textKey(el)}>{node}</React.Fragment>
         })}
       </AnimatePresence>

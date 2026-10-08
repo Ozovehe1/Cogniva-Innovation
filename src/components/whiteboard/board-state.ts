@@ -289,7 +289,10 @@ export function applyAction(state: BoardState, step: Action, index: number, k = 
           } else if (step.to) {
             if (e.kind === 'shape') {
               const b = shapeBox(e, state.vars)
-              if (b) { fx.dx = step.to[0] - (b.x + b.w / 2); fx.dy = step.to[1] - (b.y + b.h / 2) }
+              // A shape drawn on axes is moved in graph units, like `by` (a point "to" [5, 0] on a -2..6 axis is x = 5,
+              // not the board's top-left corner, where it would vanish off the visible diagram).
+              const to = e.axes && inAxesRange(e.axes, step.to) ? toBoard(e.axes, step.to) : step.to
+              if (b) { fx.dx = to[0] - (b.x + b.w / 2); fx.dy = to[1] - (b.y + b.h / 2) }
             } else { fx.dx = step.to[0] - e.x; fx.dy = step.to[1] - e.y }
           }
         } else if (step.type === 'fade') fx.opacity = step.to
@@ -390,6 +393,13 @@ export function toBoard(axes: AxesDef | undefined, p: [number, number]): [number
   const x = frame.x + ((p[0] - xRange[0]) / (xRange[1] - xRange[0])) * frame.w
   const y = frame.y + frame.h - ((p[1] - yRange[0]) / (yRange[1] - yRange[0])) * frame.h
   return [x, y]
+}
+
+/** Whether a point given for a shape on these axes reads as graph coordinates (inside the axes' ranges, with slack). */
+function inAxesRange(axes: AxesDef, p: [number, number]) {
+  const [x0, x1] = axes.xRange, [y0, y1] = axes.yRange
+  const sx = Math.abs(x1 - x0) * 0.25, sy = Math.abs(y1 - y0) * 0.25
+  return p[0] >= Math.min(x0, x1) - sx && p[0] <= Math.max(x0, x1) + sx && p[1] >= Math.min(y0, y1) - sy && p[1] <= Math.max(y0, y1) + sy
 }
 
 export function xScale(axes: AxesDef | undefined) {
@@ -501,6 +511,62 @@ export function estimateTextBox(el: TextEl): Box {
 }
 
 
+
+/* ───────────── Where elements really end up ───────────── */
+
+/** Box of a text/math element of a given rendered size, placed at its anchor and alignment (board units). */
+export function textBoxAt(el: TextEl, w: number, h: number): Box {
+  const x = el.align === 'center' ? el.x - w / 2 : el.align === 'right' ? el.x - w : el.x
+  return { x, y: el.y, w, h }
+}
+
+/**
+ * An element's own box moved and scaled by its effects (move / scale), as the board draws it once they settle:
+ * shapes scale about their centre, text about its anchor. Null when it has been faded out.
+ */
+export function placedBox(el: BoardEl, own: Box): Box | null {
+  const fx = el.fx
+  if (!fx) return own
+  if (fx.opacity <= 0.02) return null
+  const k = fx.scale || 1
+  if (el.kind === 'text' || el.kind === 'math') {
+    return { x: el.x + (own.x - el.x) * k + fx.dx, y: el.y + (own.y - el.y) * k + fx.dy, w: own.w * k, h: own.h * k }
+  }
+  const cx = own.x + own.w / 2, cy = own.y + own.h / 2
+  return { x: cx - (own.w * k) / 2 + fx.dx, y: cy - (own.h * k) / 2 + fx.dy, w: own.w * k, h: own.h * k }
+}
+
+export function unionBox(a: Box | null, b: Box | null): Box | null {
+  if (!a) return b
+  if (!b) return a
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y)
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y }
+}
+
+/** How far past the board's edges content still counts as on the board (beyond it, it was sent off on purpose). */
+const OFF_BOARD = 0.25
+
+/**
+ * The area the given elements really cover once drawn, in board units: shapes by their geometry, text by its
+ * rendered size when measured (else the estimate), both with labels drawn inside shapes (measured) and their
+ * move/scale effects applied. Kept within a margin around the board, so a thing deliberately sent off it does not
+ * shrink everything else to nothing.
+ */
+export function contentBox(els: BoardEl[], vars: Vars, measured: ReadonlyMap<string, Box>, keep?: (el: BoardEl) => boolean): Box | null {
+  let out: Box | null = null
+  for (const el of els) {
+    if (el.kind === 'highlight' || (keep && !keep(el))) continue
+    const m = measured.get(el.key) ?? null
+    const own = el.kind === 'shape' ? unionBox(shapeBox(el, vars), m) : m ?? estimateTextBox(el)
+    if (!own) continue
+    out = unionBox(out, placedBox(el, own))
+  }
+  if (!out) return null
+  const mx = BOARD_W * OFF_BOARD, my = BOARD_H * OFF_BOARD
+  const x0 = clamp(out.x, -mx, BOARD_W + mx), y0 = clamp(out.y, -my, BOARD_H + my)
+  const x1 = clamp(out.x + out.w, -mx, BOARD_W + mx), y1 = clamp(out.y + out.h, -my, BOARD_H + my)
+  return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
+}
 
 /* ───────────── Compact (phone) layout ───────────── */
 

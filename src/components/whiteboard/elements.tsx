@@ -154,6 +154,7 @@ function BoardText({ el, animate, reduced, registerRef, fontPx, duration }: {
     >
       <div
         ref={node => { if (el.id) registerRef(el.id, node) }}
+        data-wb-text={el.key}
         className={`relative leading-[1.18] ${cls}`}
         style={{ ...style, transform: `translateX(${translateX})` }}
       >
@@ -357,7 +358,9 @@ function MorphMath({ from, to, ms }: { from: string; to: string; ms: number }) {
 /* ───────────── Motion applied after drawing (move / fade / scale / pulse) ───────────── */
 
 /** Wraps an element so move / fade / scale / colour pulses animate over the action's duration. */
-export function FxWrap({ fx, ms, reduced, svg, children }: { fx?: Fx; ms: number; reduced: boolean; svg?: boolean; children: React.ReactNode }) {
+/** Moves, scales and fades an element. `origin` (board units) is what HTML text scales about: its anchor, so a text
+ *  scaled in place stays where it is (the wrapper itself sits at the board's corner). */
+export function FxWrap({ fx, ms, reduced, svg, origin, children }: { fx?: Fx; ms: number; reduced: boolean; svg?: boolean; origin?: [number, number]; children: React.ReactNode }) {
   if (!fx) return <>{children}</>
   const t = { duration: reduced ? 0.15 : Math.max(0.2, ms / 1000), ease: EASE_SMOOTH }
   const anim = { x: reduced ? fx.dx : fx.dx, y: fx.dy, scale: fx.scale, opacity: fx.opacity }
@@ -372,8 +375,8 @@ export function FxWrap({ fx, ms, reduced, svg, children }: { fx?: Fx; ms: number
     )
   }
   return (
-    <motion.div initial={false} animate={anim} transition={t} className="absolute left-0 top-0" style={{ width: 0, height: 0, overflow: 'visible' }}>
-      <motion.div key={fx.pulse ?? 'p'} animate={pulse} style={{ width: 0, height: 0, overflow: 'visible' }}>{children}</motion.div>
+    <motion.div initial={false} animate={anim} transition={t} className="absolute left-0 top-0" style={{ width: 0, height: 0, overflow: 'visible', originX: origin ? `${origin[0]}px` : undefined, originY: origin ? `${origin[1]}px` : undefined }}>
+      <motion.div key={fx.pulse ?? 'p'} animate={pulse} style={{ width: 0, height: 0, overflow: 'visible', originX: origin ? `${origin[0]}px` : undefined, originY: origin ? `${origin[1]}px` : undefined }}>{children}</motion.div>
     </motion.div>
   )
 }
