@@ -8,7 +8,6 @@ import { Badge, Card, EmptyState, PageHeader, buttonClass } from '@/components/u
 import { HandPreload } from '@/components/whiteboard/hand-preload'
 import { TopicStart } from '@/components/topic-start'
 import { LessonDelete } from '@/components/lesson-actions'
-import { FLAGSHIP_LESSON } from '@/lib/flagship-lesson'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,12 +82,6 @@ export default async function LearnPage() {
           ))}
         </div>
       )}
-      <section className="mt-10 border-t border-line pt-6">
-        <h2 className="text-[15px] font-semibold text-ink">Sample lesson</h2>
-        <p className="mt-3">
-          <Link href="/learn/demo" className="inline-flex items-center gap-1.5 text-[15px] font-medium text-accent hover:underline underline-offset-4">{FLAGSHIP_LESSON.title}<span className="font-normal text-muted">· {FLAGSHIP_LESSON.subject}</span></Link>
-        </p>
-      </section>
     </div>
   )
 }

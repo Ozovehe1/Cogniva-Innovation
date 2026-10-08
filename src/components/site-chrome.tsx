@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Logo, buttonClass } from '@/components/ui'
 
 /** The sample lesson at /learn/demo (noindex) is public. */
-export const demoAvailable = true
+export const demoAvailable = false
 
 export function SiteHeader() {
   return (
