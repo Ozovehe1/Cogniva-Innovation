@@ -47,7 +47,7 @@ export interface PathRow {
   status: 'diagnosing' | 'ready' | 'archived'
   graph: DiagGraph
   /** fresh: the learner said they are completely new to the topic, so the check was skipped (see priorKnowledge). */
-  diagnostic: { state?: DiagState; extra?: Record<string, DiagItem[]>; fresh?: boolean; freshReason?: string | null }
+  diagnostic: { state?: DiagState; extra?: Record<string, DiagItem[]>; fresh?: boolean; freshReason?: string | null; skipped?: boolean }
   known: string[]
   ready: string[]
   plan: PathPlan

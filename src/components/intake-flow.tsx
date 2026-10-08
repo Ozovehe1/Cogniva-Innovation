@@ -138,17 +138,17 @@ export function IntakeFlow({
 
   /* ── Diagnostic ── */
   /** Builds the path. With `inPlace` the results screen is already showing (it has what it needs) and only the Start button waits. */
-  const finish = useCallback(async (inPlace = false) => {
+  const finish = useCallback(async (inPlace = false, skip = false) => {
     if (!inPlace) setPhase('finishing')
     setError(null); setFinishing(true)
-    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'finish' })
+    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'finish', skip })
     setFinishing(false)
     if (!r.ok || !r.data.path) { if (inPlace) setPhase('finishing'); setError(r.data.error ?? 'Could not build your path. Please try again.'); return }
     setDiag(r.data.path); setFirstLessonId(r.data.firstLessonId ?? null); setPhase('result')
   }, [])
-  const startDiag = useCallback(async (restart = false) => {
+  const startDiag = useCallback(async (restart = false, skip = false) => {
     setError(null); setPhase('building')
-    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'start', restart })
+    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'start', restart, skip })
     if (!r.ok || !r.data.path) { setError(r.data.error ?? (restart || !fresh ? 'Could not prepare your check. Please try again.' : 'Could not plan your path. Please try again.')); setPhase('ready'); return }
     setDiag(r.data.path)
     if (r.data.path.status === 'ready') {
@@ -274,8 +274,10 @@ export function IntakeFlow({
             {error && <Alert tone="danger" className="mt-5">{error}</Alert>}
             <div className="mt-auto flex flex-col gap-2 pt-10 sm:flex-row">
               <button type="button" onClick={() => startDiag(false)} className={buttonClass('primary', 'lg', 'sm:flex-1')}>Start the check<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
-              <button type="button" onClick={() => { setPhase('intake'); setIdx(0); setPrevItem(null) }} className={buttonClass('secondary', 'lg')}>Change my answers</button>
+              <button type="button" onClick={() => startDiag(false, true)} className={buttonClass('secondary', 'lg')}>Skip the check</button>
+              <button type="button" onClick={() => { setPhase('intake'); setIdx(0); setPrevItem(null) }} className={buttonClass('ghost', 'lg')}>Change my answers</button>
             </div>
+            <p className="mt-3 text-[13px] text-muted">Skipping starts you at the entry level of your goal, from your answers. You can retake the check later.</p>
             </>)}
           </section>
         )}
@@ -303,7 +305,14 @@ export function IntakeFlow({
         )}
 
         {phase === 'diag' && diag?.item && (
-          <DiagQuestion key={`${diag.item.node}:${diag.item.item}`} view={diag} busy={busy} error={error} onAnswer={answerDiag} />
+          <>
+            <DiagQuestion key={`${diag.item.node}:${diag.item.item}`} view={diag} busy={busy} error={error} onAnswer={answerDiag} />
+            <p className="mt-6 text-[14px] text-muted">
+              Rather not finish?{' '}
+              <button type="button" disabled={busy} onClick={() => void finish(false, true)} className="font-medium text-accent hover:underline underline-offset-4">Skip the rest of the check</button>
+              {' '}and I’ll build your path from your answers so far.
+            </p>
+          </>
         )}
 
         {phase === 'result' && diag && (

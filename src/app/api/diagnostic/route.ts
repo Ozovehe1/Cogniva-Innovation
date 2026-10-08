@@ -68,13 +68,14 @@ export async function GET() {
  * POST /api/diagnostic
  *  { action: 'start', restart? }  → builds the prerequisite graph and item bank for the learner's goal (one AI call)
  *  { action: 'answer', node, item, choice: number|null, confidence: 'guess'|'fairly'|'sure'|null }
- *  { action: 'finish' }           → builds the learning path (known / ready, plan, topics, first lesson)
+ *  { action: 'finish', skip? }    → builds the learning path (known / ready, plan, topics, first lesson); skip ends the check early
+ *  { action: 'start', skip: true } → no check at all: the goal's skill map, starting at its entry points
  * Graph, bank and answers stay server-side; the client only ever sees the current question.
  */
 export async function POST(request: Request) {
   const { profile } = await getSessionProfile()
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const body = await request.json().catch(() => ({})) as { action?: string; restart?: boolean; pathId?: string; node?: string; item?: number; choice?: number | null; confidence?: string | null }
+  const body = await request.json().catch(() => ({})) as { action?: string; restart?: boolean; skip?: boolean; pathId?: string; node?: string; item?: number; choice?: number | null; confidence?: string | null }
   const db = createAdminClient()
   // Independent reads in parallel (every answer waits on them).
   const [learner, found] = await Promise.all([loadLearner(db, profile.id), diagnosticPath(db, profile.id, body.pathId)])
@@ -92,6 +93,8 @@ export async function POST(request: Request) {
     // no check. "Retake the check" (restart) always runs the real check.
     const prior = priorKnowledge(learner.answers ?? {})
     const fresh = prior.none && !body.restart
+    // The learner chose to skip the check: map the goal at their stated level, mark the check done, build the path now.
+    const skip = !fresh && !!body.skip
     if (!body.restart) {
       if (path && path.status === 'diagnosing' && path.graph?.nodes && sameGoal(path.goal, goal)) {
         // A fresh path whose build was cut short: build it now (no new skill map needed).
@@ -99,7 +102,7 @@ export async function POST(request: Request) {
           try { return NextResponse.json(await finishPath(db, request, learner, path, (path.diagnostic.state ?? emptyState()) as DiagState)) }
           catch (err) { return NextResponse.json({ error: 'Could not build your path. Please try again.', detail: (err instanceof Error ? err.message : String(err)).slice(0, 200) }, { status: 500 }) }
         }
-        if (!fresh) return NextResponse.json({ path: view(path) })
+        if (!fresh && !skip) return NextResponse.json({ path: view(path) })
       }
       const existing = (await listPaths(db, profile.id)).find(p => p.status === 'ready' && sameGoal(p.goal, goal))
       if (existing) {
@@ -124,18 +127,18 @@ export async function POST(request: Request) {
     // First lessons drafted ahead for checks that will never finish.
     for (const d of (dropped ?? []) as { speculation: Speculation | null }[]) if (d.speculation?.lessonId) after(() => dropSpeculativeLesson(db, d.speculation!.lessonId!).catch(() => undefined))
     const st = emptyState()
-    if (fresh) st.done = true
+    if (fresh || skip) st.done = true
     else st.current = nextItem(graph, st)
     const { data, error } = await db.from('learning_paths').insert({
       student_id: profile.id, goal: goal ?? graph.subject, subject: graph.subject || learner.subject || '',
-      status: 'diagnosing', graph, diagnostic: fresh ? { state: st, fresh: true, freshReason: prior.reason } : { state: st }, learner_snapshot: { ...learnerSnapshot(learner), subject: graph.subject || learner.subject || null },
+      status: 'diagnosing', graph, diagnostic: fresh ? { state: st, fresh: true, freshReason: prior.reason } : skip ? { state: st, skipped: true } : { state: st }, learner_snapshot: { ...learnerSnapshot(learner), subject: graph.subject || learner.subject || null },
     }).select('*').single()
     if (error || !data) return NextResponse.json({ error: error?.message ?? 'Could not save' }, { status: 500 })
     if (graph.subject && !learner.subject) await db.from('learner_profiles').update({ subject: graph.subject }).eq('student_id', profile.id)
-    if (fresh) {
+    if (fresh || skip) {
       // No check: build the path from the foundations now and start drafting its first lesson in the
       // background (finishPath), so the results screen opens with Start ready.
-      console.log(`Fresh start (${prior.reason}): skill map for path ${(data as PathRow).id} in ${Date.now() - t0} ms, no check`)
+      console.log(`${skip ? 'Check skipped' : `Fresh start (${prior.reason})`}: skill map for path ${(data as PathRow).id} in ${Date.now() - t0} ms, no check`)
       try {
         return NextResponse.json(await finishPath(db, request, learner, data as PathRow, st))
       } catch (err) {
@@ -185,6 +188,8 @@ export async function POST(request: Request) {
       const { data: t } = await db.from('path_topics').select('lesson_id').eq('path_id', path.id).not('lesson_id', 'is', null).order('position').limit(1)
       return NextResponse.json({ path: view(path), firstLessonId: (t ?? [])[0]?.lesson_id ?? null })
     }
+    // Skip the rest: the answers so far decide what is known; everything unanswered counts as still to learn.
+    if (body.skip && !st.done) { st.done = true; st.current = null; path.diagnostic = { ...path.diagnostic, state: st, skipped: true }; await db.from('learning_paths').update({ diagnostic: path.diagnostic }).eq('id', path.id) }
     if (!st.done && st.asked.length < MIN_ITEMS) return NextResponse.json({ error: 'A few more questions first.' }, { status: 400 })
     try {
       return NextResponse.json(await finishPath(db, request, learner, path, st))
