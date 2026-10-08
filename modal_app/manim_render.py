@@ -263,6 +263,8 @@ PART_CPU = 2.0
 # The longest parts of a lesson (up to this many) render on more cores: they set the render time.
 HEAVY_PARTS = 16
 HEAVY_CPU = 4.0
+# How long the orchestrator may hold parts back for its Storage prefetch (seconds from the start).
+PREFETCH_WAIT_S = 6.0
 
 
 # Parts are one-shot (one input per container): no 60 s idle window, which would bill ~90 idle containers per render.
@@ -324,10 +326,18 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     want += urls
     fetcher = lv.Prefetcher(32)
     fetches = {}
+
+    def keep_voice(u, f):
+        data = f.result()
+        if data is not None and u.endswith(".mp3"):
+            narration.files[u] = data  # a late download still saves the narration a second fetch
+
     for u in want:
         if u not in fetches and not is_clip(u):
             fetches[u] = fetcher.submit(u)
+            fetches[u].add_done_callback(lambda f, u=u: keep_voice(u, f))
     stamps: dict = {}
+    from concurrent.futures import TimeoutError as FuturesTimeout
 
     # The heaviest parts (the critical path) get 4 cores: SwiftShader captures ~15-40% faster than on 2 and vary less.
     heavy: set = set()
@@ -350,7 +360,13 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
                 if is_clip(u):
                     clips.append(u)
                     continue
-                data = fetches[u].result()
+                # Storage sometimes throttles (429s with backoff): never hold a part back more than PREFETCH_WAIT_S
+                # from the start. A file still on its way is left out and the part fetches it itself, with retries.
+                try:
+                    data = fetches[u].result(timeout=max(0.0, t0 + PREFETCH_WAIT_S - time.time()))
+                except FuturesTimeout:
+                    data = None
+                    stamps["late_assets"] = stamps.get("late_assets", 0) + 1
                 if data is not None:
                     assets[u] = data
                     if u.endswith(".mp3"):
@@ -422,7 +438,7 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     meta = {
         "renderer": "virtual-clock", "parts": len(ranges), "wall_s": round(time.time() - t0, 1), "spawned_s": stamps.get("inputs_s"),
         "first_part_s": stamps.get("first_part_s"), "prefetch_s": round(fetcher.last_done - t0, 1) if fetcher.last_done else None,
-        "prefetch_retries": fetcher.stats["retries"], "heavy_parts": len(heavy), "swiftshader_parts": sum(1 for p in pt if p.get("compositor") == "swiftshader"),
+        "prefetch_retries": fetcher.stats["retries"], "late_assets": stamps.get("late_assets", 0), "heavy_parts": len(heavy), "swiftshader_parts": sum(1 for p in pt if p.get("compositor") == "swiftshader"),
         "prefetched": len(fetches) - len(failed), "prefetch_failed": len(failed), "parts_s": round(t_parts - t0, 1),
         "join_s": round(t_join - t_parts, 1), "upload_s": round(time.time() - t_join, 1),
         "slowest_part_s": pt[slow].get("fn_s", 0), "slowest_part": {"index": slow, **pt[slow]},

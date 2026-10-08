@@ -298,15 +298,21 @@ async def _open(p, page_url: str, channel: str | None, args: list[str], assets: 
             # Narration lines and clip pen paths the orchestrator already downloaded: never ask Storage again.
             body = assets.get(route.request.url.split("?")[0])
             if body is None:
+                # Left out by the orchestrator (Storage was slow): fetch it here with retries rather than through
+                # Chrome, which would give up on the first 429.
                 served["miss"] += 1
-                await route.continue_()
+                body = await asyncio.to_thread(prefetch_one, route.request.url)
+                if body is None:
+                    await route.continue_()
+                    return
+                await route.fulfill(status=200, body=body, headers={"Content-Type": _ctype(route.request.url), "Access-Control-Allow-Origin": "*",
+                                                                     "Cache-Control": "max-age=3600"})
                 return
             served["hit"] += 1
             await route.fulfill(status=200, body=body, headers={"Content-Type": _ctype(route.request.url), "Access-Control-Allow-Origin": "*",
                                                                  "Cache-Control": "max-age=3600"})
 
-        if assets:
-            await ctx.route(lambda url: "/storage/v1/object/public/" in url and not ("/manim-clips/" in url and ".mp4" in url), from_prefetch)
+        await ctx.route(lambda url: "/storage/v1/object/public/" in url and not ("/manim-clips/" in url and ".mp4" in url), from_prefetch)
         page = await ctx.new_page()
         page.on("console", lambda m: console.append(f"{m.type}: {m.text}"[:300]) if m.type in ("error", "warning") else None)
         page.on("pageerror", lambda e: console.append(f"pageerror: {e}"[:300]))
