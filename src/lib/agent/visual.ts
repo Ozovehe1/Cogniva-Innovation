@@ -18,6 +18,38 @@ import { chatJson } from './llm'
 
 export const BOARD_MAX_STEPS = 16
 
+/** Fill in a missing "type" on steps and cues from their keys (the most common model slip in scene JSON). */
+function inferType(o: Record<string, unknown>): string | null {
+  if (typeof o.type === 'string') return o.type
+  if (o.vars && typeof o.vars === 'object') return 'set'
+  if (typeof o.var === 'string') return 'animate'
+  if (o.shape) return 'draw'
+  if (typeof o.zoom === 'number') return 'camera'
+  if (Array.isArray(o.targets)) return 'clear'
+  if (typeof o.target === 'string') {
+    if (typeof o.tex === 'string' || typeof o.text === 'string') return 'transform'
+    if (Array.isArray(o.by) || Array.isArray(o.to)) return 'move'
+    if (typeof o.by === 'number') return 'scale'
+    if (typeof o.to === 'number') return 'fade'
+    if (typeof o.color === 'string') return 'color'
+    return 'highlight'
+  }
+  if (typeof o.tex === 'string') return 'math'
+  if (typeof o.text === 'string') return 'write'
+  return null
+}
+export function fillTypes(raw: unknown): unknown {
+  const steps = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { steps?: unknown }).steps) ? (raw as { steps: unknown[] }).steps : null
+  if (!steps) return raw
+  for (const st of steps) {
+    if (!st || typeof st !== 'object') continue
+    const o = st as Record<string, unknown>
+    const t = inferType(o); if (t) o.type = t
+    if (Array.isArray(o.cues)) o.cues = o.cues.filter(c => c && typeof c === 'object').map(c => { const q = c as Record<string, unknown>; const ct = inferType(q); if (ct) q.type = ct; return q }).filter(q => typeof q.type === 'string')
+  }
+  return raw
+}
+
 export async function makeBoardScene(brief: string, learnerLine: string, trace?: string[]): Promise<{ steps: Step[]; repaired: boolean }> {
   const prompt = `Write a SHORT whiteboard scene (6 to 12 steps, about 40-70 seconds) that explains this, for one learner in a chat:
 """${brief.slice(0, 900)}"""
@@ -29,14 +61,15 @@ ${SCRIPT_SCHEMA_PROMPT}
 ${LAYOUT_RULES}
 - Start with a title (write, size lg, y 30). Draw the picture first, then move/animate it while "say" explains.
 - No "check" or "manim_clip" steps. Every step that teaches has a "say" (one or two short sentences).
+- Every step AND every cue object has its "type".
 Return {"steps": [...]} only.`
   const system = TUTOR_VOICE
-  let raw = await chatJson(prompt, { system, maxTokens: 4000, trace })
+  let raw = fillTypes(await chatJson(prompt, { system, maxTokens: 4000, trace }))
   let v = validateScript(raw, { maxSteps: BOARD_MAX_STEPS })
   let repaired = false
   if (!v.ok || v.steps.length < 3) {
     repaired = true
-    raw = await chatJson(`${prompt}\n\nYour previous answer failed validation:\n${v.errors.slice(0, 10).join('\n') || 'too few valid steps'}\nPrevious answer:\n${JSON.stringify(raw).slice(0, 5000)}\nReturn a corrected {"steps": [...]} only.`, { system, maxTokens: 4000, trace })
+    raw = await chatJson(`${prompt}\n\nYour previous answer failed validation:\n${v.errors.slice(0, 10).join('\n') || 'too few valid steps'}\nPrevious answer:\n${JSON.stringify(raw).slice(0, 5000)}\nReturn a corrected {"steps": [...]} only.`, { system, maxTokens: 4000, trace }).then(fillTypes)
     v = validateScript(raw, { maxSteps: BOARD_MAX_STEPS })
   }
   // Keep only the steps that validate (validateScript drops invalid ones); refuse a scene with nothing to show.
