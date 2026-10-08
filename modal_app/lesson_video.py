@@ -537,25 +537,51 @@ def render_part(page_url: str, max_frames: int, settle_s: float = 0.0, maxrate: 
     }
 
 
-class AudioTrack:
-    """The narration track, encoded to AAC while the parts are still rendering. Parts are fed in order as they finish
-    (part i's samples go in once parts 0..i are in), so when the last part lands only its own seconds are left to
-    encode. One encoder runs over the whole track, so there are no seams or priming gaps between parts."""
+def _adts_frames(data: bytes) -> list[bytes]:
+    out, i = [], 0
+    while i + 7 <= len(data):
+        n = ((data[i + 3] & 3) << 11) | (data[i + 4] << 3) | (data[i + 5] >> 5)
+        if n < 7 or data[i] != 0xFF:
+            raise RuntimeError("bad ADTS stream")
+        out.append(data[i:i + n])
+        i += n
+    return out
 
-    def __init__(self, workdir: str, narration: Narration):
+
+class AudioTrack:
+    """The narration track, encoded to AAC while the parts are still rendering, in chunks on several cores.
+
+    Parts are laid on the track in order as they finish (part i's samples are known once parts 0..i are in). The track
+    is cut into chunks at silent moments (between narration lines) on the AAC frame grid (1024 samples); each chunk
+    is encoded on its own (with a little real audio before it, whose frames are dropped) and the chunks' AAC frames
+    are joined by stream copy. A seam inside speech would click (two encoders' windows do not cancel), a seam in
+    silence is inaudible. When the last part lands only the rest of the track is left, and it is split over the cores.
+    The joined ADTS stream carries no priming edit list, so the track starts 1024 samples in (the encoder's delay)
+    and decodes exactly on the video's timeline."""
+
+    FRAME = 1024
+    PRE = 2048          # real audio encoded before each chunk; its frames are dropped (PRE // FRAME of them)
+    QUIET = 4096        # samples of silence on each side of a seam
+    MIN_CHUNK = 20 * SAMPLE_RATE
+    MAX_CHUNK = 120 * SAMPLE_RATE  # no silence found within this: cut anyway
+
+    def __init__(self, workdir: str, narration: Narration, workers: int | None = None):
         import queue
         import threading
         self.narration = narration
-        self.path = os.path.join(workdir, "narration.m4a")
+        self.path = os.path.join(workdir, "narration.aac")
         self.parts: dict[int, tuple[list, int]] = {}
         self.next = 0
         self.offset_s = 0.0
+        self.pcm = bytearray()      # 16-bit mono samples laid so far (parts 0..next-1)
+        self.cs = self.FRAME        # start sample of the next chunk to encode
         self.placed = 0.0
         self.missing = 0
         self.segments = 0
+        self.workers = workers or max(2, min(6, os.cpu_count() or 2))
+        self.pool = ThreadPoolExecutor(max_workers=self.workers)
+        self.chunks: list = []      # futures of AAC frame lists, in track order
         self.q: "queue.Queue" = queue.Queue()
-        self.enc = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1", "-i", "-",
-                                     "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-ac", "1", "-f", "mp4", self.path], stdin=subprocess.PIPE)
         self.err: Exception | None = None
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -569,32 +595,68 @@ class AudioTrack:
             self.offset_s += n / FPS
             self.next += 1
 
+    def _lay(self, off: float, segs: list, dur: float):
+        start = int(round(off * SAMPLE_RATE))
+        n = max(0, int(round((off + dur) * SAMPLE_RATE)) - start)
+        buf = bytearray(n * 2)
+        for src, pos, ts, te in segs:
+            self.segments += 1
+            data = self.narration.pcm(src)
+            if not data:
+                self.missing += 1
+                continue
+            a = int(pos * SAMPLE_RATE) * 2
+            chunk = data[a:a + max(0, int(round((te - ts) * SAMPLE_RATE))) * 2]
+            o = (int(round((ts + off) * SAMPLE_RATE)) - start) * 2
+            if o < 0:
+                chunk, o = chunk[-o:], 0
+            chunk = chunk[: max(0, len(buf) - o)]
+            if chunk:
+                buf[o:o + len(chunk)] = chunk
+                self.placed += len(chunk) / 2 / SAMPLE_RATE
+        self.pcm += buf
+
+    def _quiet(self, b: int) -> bool:
+        # Near silence: every sample within +-255 (high byte 0x00 or 0xFF), about -42 dBFS.
+        seg = bytes(self.pcm[(b - self.QUIET) * 2 + 1:(b + self.QUIET) * 2:2])
+        return len(seg) == self.QUIET * 2 and not seg.translate(None, b"\x00\xff")
+
+    def _cut(self, start: int, limit: int, min_len: int) -> int | None:
+        """The first silent frame boundary in [start + min_len, limit - QUIET], or a forced cut after MAX_CHUNK."""
+        F = self.FRAME
+        b = start + -(-min_len // F) * F
+        while b + self.QUIET <= limit:
+            if self._quiet(b) or b - start >= self.MAX_CHUNK:
+                return b
+            b += F
+        return None
+
+    def _encode(self, s: int, e: int | None) -> list[bytes]:
+        """AAC frames of samples [s, e) (e None: to the end of the track, encoder tail included)."""
+        pre = bytes(self.pcm[max(0, s - self.PRE) * 2:s * 2])
+        pre = bytes(self.PRE * 2 - len(pre)) + pre
+        body = bytes(self.pcm[s * 2:(e * 2 if e is not None else len(self.pcm))])
+        r = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1", "-i", "-", "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k",
+                            "-ac", "1", "-f", "adts", "-"], input=pre + body, capture_output=True, timeout=600)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.decode()[-300:])
+        frames = _adts_frames(r.stdout)[self.PRE // self.FRAME:]
+        return frames if e is None else frames[: (e - s) // self.FRAME]
+
     def _run(self):
         try:
             while True:
                 item = self.q.get()
                 if item is None:
                     break
-                off, segs, dur = item
-                start = int(round(off * SAMPLE_RATE))
-                n = max(0, int(round((off + dur) * SAMPLE_RATE)) - start)
-                buf = bytearray(n * 2)
-                for src, pos, ts, te in segs:
-                    self.segments += 1
-                    data = self.narration.pcm(src)
-                    if not data:
-                        self.missing += 1
-                        continue
-                    a = int(pos * SAMPLE_RATE) * 2
-                    chunk = data[a:a + max(0, int(round((te - ts) * SAMPLE_RATE))) * 2]
-                    o = (int(round((ts + off) * SAMPLE_RATE)) - start) * 2
-                    if o < 0:
-                        chunk, o = chunk[-o:], 0
-                    chunk = chunk[: max(0, len(buf) - o)]
-                    if chunk:
-                        buf[o:o + len(chunk)] = chunk
-                        self.placed += len(chunk) / 2 / SAMPLE_RATE
-                self.enc.stdin.write(bytes(buf))
+                self._lay(*item)
+                total = len(self.pcm) // 2
+                while True:
+                    b = self._cut(self.cs, total, self.MIN_CHUNK)
+                    if b is None:
+                        break
+                    self.chunks.append(self.pool.submit(self._encode, self.cs, b))
+                    self.cs = b
         except Exception as exc:  # noqa: BLE001
             self.err = exc
 
@@ -603,10 +665,23 @@ class AudioTrack:
         self.thread.join(timeout)
         if self.err:
             raise RuntimeError(f"narration track failed: {self.err}")
-        self.enc.stdin.close()
-        if self.enc.wait(timeout=timeout) != 0:
-            raise RuntimeError("the narration track could not be encoded")
-        return {"segments": self.segments, "segments_missing": self.missing, "speech_s": round(self.placed, 1)}
+        total = len(self.pcm) // 2
+        # The rest of the track, split over the cores at silent moments.
+        rest = total - self.cs
+        step = max(5 * SAMPLE_RATE, rest // (self.workers * 2))
+        while total - self.cs > step + self.QUIET:
+            b = self._cut(self.cs, total, step)
+            if b is None:
+                break
+            self.chunks.append(self.pool.submit(self._encode, self.cs, b))
+            self.cs = b
+        if self.cs < total or not self.chunks:
+            self.chunks.append(self.pool.submit(self._encode, self.cs, None))
+        with open(self.path, "wb") as f:
+            for c in self.chunks:
+                f.write(b"".join(c.result(timeout=timeout)))
+        self.pool.shutdown(wait=False)
+        return {"segments": self.segments, "segments_missing": self.missing, "speech_s": round(self.placed, 1), "chunks": len(self.chunks)}
 
 
 def assemble(parts: list[dict], workdir: str, narration: Narration | None = None, track: AudioTrack | None = None, written: bool = False) -> dict:
