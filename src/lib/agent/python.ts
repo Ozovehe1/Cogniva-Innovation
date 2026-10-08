@@ -40,13 +40,15 @@ export async function runPython(code: string): Promise<PyResult> {
     try {
       const res = await fetch(`${url}/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN },
-        body: JSON.stringify({ code }), signal: AbortSignal.timeout(55_000),
+        body: JSON.stringify({ code }), signal: AbortSignal.timeout(80_000),
       })
       if (res.ok) {
         const j = await res.json() as { ok: boolean; stdout: string; error: string | null; images: string[]; ms: number }
         return { ok: j.ok, stdout: String(j.stdout ?? '').slice(0, 8000), error: j.error ?? null, images: (j.images ?? []).slice(0, 4).filter(b => typeof b === 'string' && b.length < 2_500_000), ms: j.ms ?? Date.now() - t0, engine: 'modal' }
       }
-      console.warn('Python sandbox answered', res.status)
+      const detail = (await res.text().catch(() => '')).slice(0, 300)
+      console.warn('Python sandbox answered', res.status, detail)
+      if (!process.env.AGENT_PY_GROQ_FALLBACK) return { ok: false, stdout: '', error: `The Python sandbox failed (${res.status}).`, images: [], ms: Date.now() - t0, engine: 'modal' }
     } catch (err) {
       console.warn('Python sandbox unreachable:', err instanceof Error ? err.message : err)
     }

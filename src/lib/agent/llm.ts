@@ -162,20 +162,25 @@ export async function chat(req: ChatRequest): Promise<ChatResult> {
 
 /** Strict JSON from the 'json' chain. */
 export async function chatJson(prompt: string, opts: { system?: string; maxTokens?: number; purpose?: Purpose; trace?: string[]; deadline?: number } = {}): Promise<unknown> {
-  const r = await chat({
-    purpose: opts.purpose ?? 'json', json: true, maxTokens: opts.maxTokens ?? 3000, temperature: 0.4, trace: opts.trace, deadline: opts.deadline,
-    messages: [...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []), { role: 'user', content: prompt }],
-  })
-  return parseJsonLoose(r.text)
+  const messages: Msg[] = [...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []), { role: 'user', content: prompt }]
+  const ask = () => chat({ purpose: opts.purpose ?? 'json', json: true, maxTokens: opts.maxTokens ?? 3000, temperature: 0.4, trace: opts.trace, deadline: opts.deadline, messages })
+  const r = await ask()
+  try { return parseJsonLoose(r.text) } catch (err) {
+    // One retry with the parse error (often a stray backslash or a truncated array).
+    opts.trace?.push(`${r.model}: ${err instanceof Error ? err.message : err}`)
+    messages.push({ role: 'assistant', content: r.text.slice(0, 6000) }, { role: 'user', content: `That was not valid JSON (${err instanceof Error ? err.message : 'parse error'}). Reply again with the complete, valid JSON only. Escape every backslash in strings as \\\\.` })
+    return parseJsonLoose((await ask()).text)
+  }
 }
 
 export function parseJsonLoose(raw: string): unknown {
   const t = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-  try { return JSON.parse(t) } catch {
-    const a = t.indexOf('{'), b = t.lastIndexOf('}')
-    if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1))
-    throw new Error('The model returned malformed JSON')
+  const a = t.indexOf('{'), b = t.lastIndexOf('}')
+  const body = a >= 0 && b > a ? t.slice(a, b + 1) : t
+  for (const candidate of [t, body, body.replace(/\\(?!["\\/bfnrtu])/g, '\\\\'), body.replace(/,\s*([\]}])/g, '$1')]) {
+    try { return JSON.parse(candidate) } catch { /* next repair */ }
   }
+  throw new Error('The model returned malformed JSON')
 }
 
 /* ───────────── Groq (OpenAI-compatible) ───────────── */
