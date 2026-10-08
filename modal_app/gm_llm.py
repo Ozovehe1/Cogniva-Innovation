@@ -25,7 +25,7 @@ STRONG = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash"]  # composi
 def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, temperature=0.4, timeout=60, log=None, strong=False) -> str:
     import httpx
 
-    keys = [k.strip() for k in (os.environ.get(n, "") for n in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3")) if k.strip()]
+    keys = [k.strip() for k in (os.environ.get(n, "") for n in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_API_KEY_4")) if k.strip()]
     key = keys[0] if keys else ""
     if not key and os.environ.get("GM_GEMINI_PROXY"):
         for attempt in range(5):
@@ -62,7 +62,8 @@ def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, tem
             alive = [m for m in STRONG for k in range(len(keys)) if _skip.get(m if k == 0 else f"{m}#{k}", 0) - time.time() < 120]
             if alive:
                 order = STRONG
-        for slot in [m if k == 0 else f"{m}#{k}" for k in range(len(keys)) for m in order]:
+        # model-major: each model is tried on every key (a 429 on one key rotates to the next) before the next model
+        for slot in [m if k == 0 else f"{m}#{k}" for m in order for k in range(len(keys))]:
             model, _, kidx = slot.partition("#")
             key = keys[int(kidx or 0)]
             cfg = {"temperature": temperature}
