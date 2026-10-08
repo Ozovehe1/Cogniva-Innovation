@@ -714,6 +714,12 @@ def binding_pdb(ctx, rig, ref):
         f = closure(st)
         g, P = host_geom(f)
         grp = VGroup(_sp_mob(g, pcol, sw=2.5))
+        if f > 0.02:  # the open shape it came from, dashed, so the closing of the cleft reads against it
+            from manim import DashedVMobject
+            g0_, _ = host_geom(0.0)
+            xy0 = np.array(g0_.exterior.coords)[:-1]
+            ghost = DashedVMobject(Polygon(*[np.array([x, y, 0.0]) for x, y in xy0]).set_stroke("#E4E6EA", 1.6, opacity=0.55 * min(1.0, f * 3)), num_dashes=90)
+            grp.add(ghost)
         gs = cache[round(f * 40) / 40][2]
         if gs is not None and not gs.is_empty and gs.area > 0.05:
             grp.add(_sp_mob(gs, dcol, sw=1.6, op=0.92))

@@ -540,7 +540,8 @@ def solve_binding(sc: Scene):
             if L["part"] == hp and chem["enzyme"].lower() not in L["text"].lower():
                 L["text"] = f"{L['text']} ({chem['enzyme'].lower()})" if L["text"].lower() in ("enzyme", "protein") else L["text"]
                 L["keep"] = True
-        if not sc.G.get("equation"):
+        eq0 = str(sc.G.get("equation") or "")
+        if not any(m.lower() in eq0.lower() for m in sub + prd):  # a generic E + S -> ES equation gives way to the real reaction
             sc.G["equation"] = chem["equation"]
     if graph:
         t_g = 0.8
