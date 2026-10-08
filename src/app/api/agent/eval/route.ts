@@ -1,0 +1,28 @@
+import { createAdminClient } from '@/lib/supabase/admin'
+import { agentSecretOk } from '@/lib/agent/secret'
+import { giveawayCases, injectionCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
+
+export const maxDuration = 300
+export const dynamic = 'force-dynamic'
+
+/**
+ * POST /api/agent/eval?group=static|tools|giveaway|injection|visual&student=<profile id>   (Bearer AGENT_SECRET)
+ * Runs the agent eval set on production (real models, budgets and services). Writes only to the given test student.
+ */
+export async function POST(request: Request) {
+  if (!agentSecretOk(request)) return Response.json({ error: 'Forbidden' }, { status: 403 })
+  const url = new URL(request.url)
+  const group = url.searchParams.get('group') ?? 'static'
+  const student = url.searchParams.get('student') ?? ''
+  if (group !== 'static' && !/^[0-9a-f-]{36}$/i.test(student)) return Response.json({ error: 'student (a test profile id) is required' }, { status: 400 })
+  const admin = createAdminClient()
+  const only = url.searchParams.get('only')?.split(',')
+  let results: CaseResult[] = []
+  if (group === 'static') results = staticCases()
+  else if (group === 'tools') results = await toolCases(admin, student, only)
+  else if (group === 'giveaway') results = await giveawayCases(admin, student)
+  else if (group === 'injection') results = await injectionCases(admin, student)
+  else if (group === 'visual') results = await visualCases(admin, student)
+  else return Response.json({ error: 'unknown group' }, { status: 400 })
+  return Response.json({ group, summary: summarise(results), results, groq: !!process.env.GROQ_API_KEY })
+}
