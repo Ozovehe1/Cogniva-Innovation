@@ -29,7 +29,7 @@ export const VIDEO_DAILY_LIMIT = 5
 /** Lesson time per part: each part renders in its own container in ~15-40 s, all parts at once. */
 const PART_MS = 10_000
 /** More parts than this and they get longer instead (cost, and Modal's 100-container cap on the account's plan). */
-const MAX_PARTS = 80
+const MAX_PARTS = 90
 /** Expected wall time of a render, whatever the lesson's length (containers start, parts render, join, upload). */
 const RENDER_MS = 60_000
 /** An active job that has not reported for this long is treated as dead (the renderer reports every few seconds). */
@@ -86,6 +86,21 @@ export function videoEstimateMs(steps: Step[]) {
   return Math.round(RENDER_MS + Math.max(0, total / MAX_PARTS - PART_MS) * 1.5)
 }
 
+/** Real length of each clip of the lesson in ms, from the pen paths saved beside it (missing ones are left out). */
+export async function clipDurations(steps: Step[], timeoutMs = 4000): Promise<Map<string, number>> {
+  const urls = [...new Set(steps.flatMap(s => (s.type === 'manim_clip' && /\.mp4(\?|$)/i.test(s.url) ? [s.url] : [])))]
+  const out = new Map<string, number>()
+  await Promise.all(urls.map(async u => {
+    try {
+      const r = await fetch(u.replace(/\.mp4(\?.*)?$/i, '.pen.json'), { signal: AbortSignal.timeout(timeoutMs) })
+      if (!r.ok) return
+      const j = await r.json() as { duration?: number }
+      if (typeof j.duration === 'number' && j.duration > 0) out.set(u, Math.round(j.duration * 1000) + 400)
+    } catch { /* unknown: the estimate stands */ }
+  }))
+  return out
+}
+
 /**
  * Every Storage file the parts will read (narration audio + timings, clips + their pen paths), in part order, and the
  * indices each part needs. The renderer downloads them once and serves them to its parts' browsers.
@@ -123,37 +138,50 @@ export async function videoAssets(steps: Step[], parts: [number, number][]): Pro
 }
 
 /**
- * Cut the lesson into parts of about PART_MS for parallel rendering: [from, to) step ranges. Each part starts from the
- * board as it stands at its first step, so any step can start one; a full clear (a fresh board, where the hand starts
- * from rest anyway) is preferred when one is near the ideal cut.
+ * Cut the lesson into parts for parallel rendering: [from, to) step ranges. Each part starts from the board as it
+ * stands at its first step, so any step can start one. The longest part sets the render time, so the cuts minimise it:
+ * the shortest length L such that packing whole steps greedily into parts of at most L needs no more than the allowed
+ * number of parts (a step, e.g. a 30 s clip, is never split).
  */
-export function planVideoParts(steps: Step[]): { parts: [number, number][]; totalMs: number; steps: Step[] } {
-  const ms = steps.map((s, i) => estimateStepMs(s, i))
+export function planVideoParts(steps: Step[], clipMs?: Map<string, number>): { parts: [number, number][]; totalMs: number; steps: Step[] } {
+  // A clip plays to its end: its real length (when known) beats the narration estimate.
+  const ms = steps.map((s, i) => Math.max(estimateStepMs(s, i), s.type === 'manim_clip' ? (clipMs?.get(s.url) ?? 0) : 0))
   const totalMs = ms.reduce((a, b) => a + b, 0)
+  if (!steps.length) return { parts: [], totalMs, steps }
   const n = Math.max(1, Math.min(MAX_PARTS, steps.length, Math.round(totalMs / PART_MS)))
-  const at: number[] = [0]
-  for (let i = 0; i < steps.length; i++) at.push(at[i] + ms[i])
-  const cuts: number[] = []
-  let prev = 0
-  for (let k = 1; k < n; k++) {
-    const ideal = (totalMs * k) / n
-    const slack = (totalMs / n) * 0.25
-    let best = -1, bestCost = Infinity
-    for (let i = prev + 1; i < steps.length; i++) {
-      if (at[i] < ideal - slack) continue
-      if (at[i] > ideal + slack) break
-      const s = steps[i]
-      const fresh = s.type === 'clear' && !s.targets
-      const cost = Math.abs(at[i] - ideal) - (fresh ? slack : 0)
-      if (cost < bestCost) { best = i; bestCost = cost }
+  const pack = (limit: number) => {
+    const bounds = [0]
+    let acc = 0
+    for (let i = 0; i < steps.length; i++) {
+      if (acc > 0 && acc + ms[i] > limit) { bounds.push(i); acc = 0 }
+      acc += ms[i]
     }
-    if (best < 0) {
-      // No step boundary near the ideal (one long step): take the nearest one after the previous cut.
-      for (let i = prev + 1; i < steps.length; i++) if (best < 0 || Math.abs(at[i] - ideal) < Math.abs(at[best] - ideal)) best = i
-    }
-    if (best > prev && best < steps.length) { cuts.push(best); prev = best }
+    bounds.push(steps.length)
+    return bounds
   }
-  const bounds = [0, ...cuts, steps.length]
+  let lo = Math.max(...ms, totalMs / n), hi = totalMs
+  for (let k = 0; k < 40 && hi - lo > 50; k++) {
+    const mid = (lo + hi) / 2
+    if (pack(mid).length - 1 <= n) hi = mid
+    else lo = mid
+  }
+  // Then spread the steps over all n parts without exceeding that length: every part is as short as it can be, so a
+  // part that lands on a slow host costs less (cut nearest each part's even share of what is left).
+  const spread = () => {
+    const bounds = [0]
+    let acc = 0, left = totalMs
+    for (let i = 0; i < steps.length; i++) {
+      const partsLeft = n - (bounds.length - 1)
+      const share = left / Math.max(1, partsLeft)
+      if (acc > 0 && partsLeft > 1 && (acc + ms[i] > hi || acc + ms[i] / 2 > share)) { bounds.push(i); left -= acc; acc = 0 }
+      acc += ms[i]
+    }
+    bounds.push(steps.length)
+    return bounds
+  }
+  let bounds = spread()
+  const longest = (b: number[]) => Math.max(...b.slice(1).map((e, k) => ms.slice(b[k], e).reduce((x, y) => x + y, 0)))
+  if (bounds.length - 1 > n || longest(bounds) > hi + 1) bounds = pack(hi)
   return { parts: bounds.slice(1).map((b, i) => [bounds[i], b] as [number, number]), totalMs, steps }
 }
 

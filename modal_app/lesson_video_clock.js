@@ -216,12 +216,23 @@
       el.style.opacity = '0'
       el.__gmFrame = img
     }
-    const n = Math.max(0, Math.min(fr.count - 1, Math.floor(t * fr.fps + 1e-6)))
+    const k = Math.max(0, Math.min(fr.count - 1, Math.floor(t * fr.fps + 1e-6)))
+    // Identical frames (a clip's holds) share one file: an unchanged frame needs no new capture.
+    const n = fr.same ? fr.same[k] : k
     if (img.__n === n) return null
     img.__n = n
     dirty = true
-    img.src = fr.base + n + '.jpg'
-    return Promise.race([img.decode().catch(() => {}), new Promise((r) => nativeSetTimeout(r, 4000))])
+    const url = fr.base + n + '.jpg'
+    // The next frames load and decode ahead, so showing one is a cache hit.
+    const ahead = (el.__gmAhead = el.__gmAhead || new Map())
+    for (let j = k + 1; j <= Math.min(fr.count - 1, k + 12); j++) {
+      const m = fr.same ? fr.same[j] : j
+      if (!ahead.has(m)) { const im = new Image(); im.src = fr.base + m + '.jpg'; ahead.set(m, im.decode().catch(() => {})) }
+    }
+    for (const m of ahead.keys()) if (m < n) ahead.delete(m)
+    const ready = ahead.get(n)
+    img.src = url
+    return Promise.race([Promise.all([ready, img.decode().catch(() => {})]), new Promise((r) => nativeSetTimeout(r, 4000))])
   }
 
   /** Put every visible video's real frame on its virtual playhead before a capture. */
@@ -343,7 +354,9 @@
       phase = 'seek'
       await seekVideos()
       phase = 'done'
-      const d = dirty || media.size > 0 && [...media.values()].some((s) => s.playing && s.announced && document.querySelector('video'))
+      // A playing video changes every frame, except clips shown as still frames (showFrame marks those).
+      let d = dirty
+      if (!d) for (const [el, s] of media) if (s.playing && s.announced && el.tagName === 'VIDEO' && el.isConnected && !el.__gmFrame) { d = true; break }
       dirty = false
       return { t: vt, dirty: d }
     },

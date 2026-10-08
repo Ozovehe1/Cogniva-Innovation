@@ -265,14 +265,15 @@ PART_CPU = 2.0
 @app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=3072, max_containers=90,
               retries=modal.Retries(max_retries=1, initial_delay=0.0, backoff_coefficient=1.0))
 def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None, assets: dict | None = None,
-                      t_spawn: float | None = None) -> dict:
+                      t_spawn: float | None = None, clip_urls: list | None = None) -> dict:
     import sys
     import time
     sys.path.insert(0, "/root")
     import lesson_video as lv
 
     t = time.time()
-    res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome", assets=assets or {})
+    res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome", assets=assets or {},
+                         clip_urls=clip_urls or [])
     res["timing"]["fn_s"] = round(time.time() - t, 2)
     if t_spawn:
         res["timing"]["queue_s"] = round(t - t_spawn, 2)  # spawn -> running (container start)
@@ -308,17 +309,23 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     urls = list(dict.fromkeys(str(u) for u in (asset_urls or [])))[:5000]
     workdir = tempfile.mkdtemp(prefix="lesson-video-")
     narration = lv.Narration(workdir)
-    fetch_pool = ThreadPoolExecutor(max_workers=16)
-    fetches = {u: fetch_pool.submit(lv.prefetch_one, u) for u in urls}
-    spawner = ThreadPoolExecutor(max_workers=16)
+    track = lv.AudioTrack(workdir, narration)
+    is_clip = lambda u: "/manim-clips/" in u and u.split("?")[0].lower().endswith(".mp4")  # noqa: E731
+    # Clip MP4s are not prefetched: each part downloads its own (one part per clip), so dispatch never waits on them.
+    fetch_pool = ThreadPoolExecutor(max_workers=32)
+    fetches = {u: fetch_pool.submit(lv.prefetch_one, u) for u in urls if not is_clip(u)}
+    spawner = ThreadPoolExecutor(max_workers=32)
     spawns = []
     try:
         for i, (a, b) in enumerate(ranges):
             last = i == len(ranges) - 1
             url = page_url + (f"{sep}from={a}&to={b}" if parts else "")
             mine = [urls[k] for k in (part_assets[i] if part_assets and i < len(part_assets) else []) if 0 <= k < len(urls)]
-            assets = {}
+            assets, clips = {}, []
             for u in mine:
+                if is_clip(u):
+                    clips.append(u)
+                    continue
                 data = fetches[u].result()
                 if data is not None:
                     assets[u] = data
@@ -328,7 +335,7 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
             # Generous frame cap per part (a part normally runs ~10-40 s of video): stops a page that never finishes.
             max_frames = int(min(max_s, max(600, total * 3 / len(ranges) + 300)) * lv.FPS)
             # Each spawn is a round trip to Modal: spawn from a pool so the parts start together.
-            spawns.append(spawner.submit(lesson_video_part.spawn, i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time()))
+            spawns.append(spawner.submit(lesson_video_part.spawn, i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time(), clips))
         calls = [f.result() for f in spawns]
     except Exception as exc:  # noqa: BLE001
         print(f"lesson video failed to start: {exc}")
@@ -345,14 +352,19 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
             futs = [waiters.submit(c.get, timeout=900) for c in calls]
             for fut in as_completed(futs):
                 res = fut.result()  # raises when a part failed (after its retry)
-                done[res["index"]] = res
+                i = res["index"]
+                # Write the part's video now and hand its narration to the encoder (AAC is encoded as parts land).
+                with open(os.path.join(workdir, f"part{i:03d}.mp4"), "wb") as v:
+                    v.write(res.pop("video"))
+                done[i] = res
                 narration.want(sg[0] for sg in res["segments"])
+                track.add(i, res["segments"], res["frames"])
                 now = time.time()
                 if now - last_report > 2 or len(done) == len(ranges):
                     last_report = now
                     _video_callback(callback_url, job_id, "rendering", progress=round(0.05 + 0.85 * len(done) / len(ranges), 3))
         t_parts = time.time()
-        out = lv.assemble([done[i] for i in range(len(ranges))], workdir, narration)
+        out = lv.assemble([done[i] for i in range(len(ranges))], workdir, narration, track=track, written=True)
         t_join = time.time()
         with open(out["path"], "rb") as f:
             data = f.read()
@@ -368,7 +380,7 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     slow = max(range(len(pt)), key=lambda i: pt[i].get("fn_s", 0))
     meta = {
         "renderer": "virtual-clock", "parts": len(ranges), "wall_s": round(time.time() - t0, 1), "spawned_s": round(t_pre - t0, 1),
-        "prefetched": len(urls) - len(failed), "prefetch_failed": len(failed), "parts_s": round(t_parts - t0, 1),
+        "prefetched": len(fetches) - len(failed), "prefetch_failed": len(failed), "parts_s": round(t_parts - t0, 1),
         "join_s": round(t_join - t_parts, 1), "upload_s": round(time.time() - t_join, 1),
         "slowest_part_s": pt[slow].get("fn_s", 0), "slowest_part": {"index": slow, **pt[slow]},
         "max_queue_s": max(p.get("queue_s", 0) for p in pt),

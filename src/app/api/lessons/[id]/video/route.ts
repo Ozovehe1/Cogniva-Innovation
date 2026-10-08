@@ -5,7 +5,7 @@ import { validateScript, type Step } from '@/lib/lesson-schema'
 import { LESSON_MAX_STEPS, normalizeChapters, type Chapter } from '@/lib/lesson-sections'
 import { exportFileName } from '@/lib/lesson-export'
 import {
-  VIDEO_BUCKET, VIDEO_DAILY_LIMIT, dispatchVideo, isActive, planVideoParts, videoEstimateMs, videoPath, videoScriptHash,
+  VIDEO_BUCKET, VIDEO_DAILY_LIMIT, clipDurations, dispatchVideo, isActive, planVideoParts, videoEstimateMs, videoPath, videoScriptHash,
   videoServiceConfigured, videoState, voiceForVideo, type LessonVideoRow,
 } from '@/lib/lesson-video'
 
@@ -109,10 +109,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   after(async () => {
     await db.from('lesson_videos').update({ status: 'preparing', updated_at: new Date().toISOString() }).eq('id', job.id)
     // Missing narration is voiced first (in parallel; normally every line is already cached), then the parts render.
-    const voiced = await voiceForVideo(lesson.steps).catch(() => null)
-    const plan = planVideoParts(lesson.steps)
-    await db.from('lesson_videos').update({ meta: { lines: voiced?.lines ?? null, unvoiced: voiced?.missing ?? null, parts: plan.parts.length, est_lesson_ms: Math.round(plan.totalMs) } }).eq('id', job.id)
-    await dispatchVideo(db, job, origin, plan)
+    const [voiced, clipMs] = await Promise.all([voiceForVideo(lesson.steps).catch(() => null), clipDurations(lesson.steps).catch(() => undefined)])
+    const plan = planVideoParts(lesson.steps, clipMs)
+    await Promise.all([
+      db.from('lesson_videos').update({ meta: { lines: voiced?.lines ?? null, unvoiced: voiced?.missing ?? null, parts: plan.parts.length, est_lesson_ms: Math.round(plan.totalMs) } }).eq('id', job.id),
+      dispatchVideo(db, job, origin, plan),
+    ])
   })
   return NextResponse.json(videoState(row), { status: 202 })
 }
