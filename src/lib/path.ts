@@ -88,10 +88,11 @@ export async function createTopicLesson(db: SupabaseClient, learner: LearnerRow,
   const { data, error } = await db.from('lessons').insert({ ...fields, draft_status: 'outlining', script: [], chapters: [] }).select('id').single()
   if (error || !data) throw new Error(error?.message ?? 'Could not create the lesson')
   const id = (data as { id: string }).id
+  // A mastered topic whose lesson was deleted keeps its mastery when the lesson is written again.
   // A prefetched lesson (written ahead while an earlier one plays) leaves the topic's status alone: a locked topic stays locked.
   // Only one lesson per topic, even when two requests race: the loser drops its lesson and uses the winner's.
   const { data: won } = await db.from('path_topics')
-    .update(opts.prefetch ? { lesson_id: id } : { lesson_id: id, status: topic.status === 'locked' ? 'ready' : 'learning' })
+    .update(opts.prefetch ? { lesson_id: id } : { lesson_id: id, status: topic.status === 'locked' ? 'ready' : topic.status === 'mastered' ? 'mastered' : 'learning' })
     .eq('id', topic.id).is('lesson_id', null).select('id')
   if (!won?.length) {
     await db.from('lessons').delete().eq('id', id)

@@ -7,6 +7,7 @@ import { VoiceWarm } from '@/components/voice-warm'
 import { Badge, Card, EmptyState, PageHeader, buttonClass } from '@/components/ui'
 import { HandPreload } from '@/components/whiteboard/hand-preload'
 import { TopicStart } from '@/components/topic-start'
+import { LessonDelete } from '@/components/lesson-actions'
 import { FLAGSHIP_LESSON } from '@/lib/flagship-lesson'
 
 export const dynamic = 'force-dynamic'
@@ -68,6 +69,7 @@ export default async function LearnPage() {
                                   {p?.completed_at ? 'Review lesson' : (p?.step_index ?? 0) > 0 ? 'Continue' : 'Start lesson'}<ArrowRight className="h-4 w-4" strokeWidth={2} />
                                 </Link>
                                 {t.status !== 'mastered' && <Link href={`/learn/${t.lesson_id}/check`} className={buttonClass(p?.completed_at ? 'primary' : 'ghost', 'md')}>Mastery check</Link>}
+                                <span className="ml-auto"><LessonDelete lessonId={t.lesson_id} title={t.title} compact inPath /></span>
                               </>
                             ) : <TopicStart topicId={t.id} />}
                           </div>

@@ -12,6 +12,7 @@ import { LESSON_MAX_STEPS, estimateMs, formatDuration, normalizeChapters } from 
 import { Eyebrow } from '@/components/ui'
 import { LessonSession } from '@/components/lesson-session'
 import { LessonPreparing } from '@/components/lesson-preparing'
+import { LessonDelete, LessonDownload } from '@/components/lesson-actions'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -91,9 +92,17 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
       </Link>
       <Eyebrow className="mb-2">{l.subject}</Eyebrow>
       <h1 className="font-display text-[28px] leading-[1.1] text-ink md:text-[36px]"><RichText text={l.title} /></h1>
-      <p className="tnum mb-5 mt-2 text-[13px] text-muted md:mb-6">
-        {steps.length ? <>About {formatDuration(totalMs)}{chapters.length > 1 ? ` · ${chapters.length} sections` : ''}</> : own ? 'Written for you by your AI tutor' : null}
-      </p>
+      <div className="mb-5 mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 md:mb-6">
+        <p className="tnum text-[13px] text-muted">
+          {steps.length ? <>About {formatDuration(totalMs)}{chapters.length > 1 ? ` · ${chapters.length} sections` : ''}</> : own ? 'Written for you by your AI tutor' : null}
+        </p>
+        {(own || steps.length > 0) && (
+          <div className="flex items-center gap-1">
+            {steps.length > 0 && <LessonDownload lessonId={l.id} />}
+            {own && <LessonDelete lessonId={l.id} title={l.title} redirectTo="/learn" inPath={!!topicRow} />}
+          </div>
+        )}
+      </div>
       {steps.length === 0 ? (
         <LessonPreparing lessonId={l.id} own={own} />
       ) : (
