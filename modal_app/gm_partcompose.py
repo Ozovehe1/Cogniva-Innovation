@@ -1443,7 +1443,7 @@ def compose_parts(desc: str, narr: dict | None, workdir: str | None = None, log:
     timings["preview_s"] = round(time.time() - t3, 1)
     # 5. final render + pen coverage + checklist
     t4 = time.time()
-    r = render(best["S"], os.path.join(wd, "final"), "-qm", int(max(120, budget_s - (time.time() - t0))))
+    r = render(best["S"], os.path.join(wd, "final"), "-qm", int(max(1200, budget_s - (time.time() - t0))))  # long narrated clips (60 s+) need more than the leftover budget
     timings["render_s"] = r.get("render_s")
     if not r.get("ok"):
         log.append(f"final render failed: {r.get('error', '')[-400:]}")
