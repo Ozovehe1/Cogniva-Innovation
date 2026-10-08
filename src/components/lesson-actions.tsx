@@ -25,7 +25,7 @@ export function LessonDownload({ lessonId }: { lessonId: string }) {
         <Download className="h-4 w-4" strokeWidth={1.75} />Download<ChevronDown className="h-3.5 w-3.5 text-muted" strokeWidth={2} />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-40 mt-2 w-[min(18rem,calc(100vw-2rem))] rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-raised)]">
+        <div role="menu" className="absolute left-0 z-40 mt-2 w-[min(18rem,calc(100vw-2rem))] rounded-[14px] border border-line bg-surface p-1.5 shadow-[var(--shadow-raised)]">
           <a role="menuitem" href={`/api/lessons/${lessonId}/export?format=html`} download onClick={() => setOpen(false)} className={item}>
             <Globe className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={1.75} />
             <span><span className="block text-sm font-medium text-ink">Offline lesson (.html)</span><span className="block text-[12px] leading-snug text-muted">Transcript, boards and clips in one file. Print it to save a PDF.</span></span>
