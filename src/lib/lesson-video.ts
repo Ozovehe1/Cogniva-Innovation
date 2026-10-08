@@ -18,7 +18,7 @@ import { ensureNarration, scriptLines } from './tts-server'
 
 export const VIDEO_BUCKET = 'lesson-videos'
 /** Bump when the render page or the recorder changes what a video looks like: every cached video is re-rendered. */
-export const VIDEO_RENDER_VERSION = 1
+export const VIDEO_RENDER_VERSION = 2
 /** Per learner: one render at a time, and at most this many new renders a day (finished videos are free to download). */
 export const VIDEO_DAILY_LIMIT = 5
 /** Recorder overhead on top of the lesson's own running time (browser start, narration check, encode, upload). */
@@ -123,7 +123,9 @@ function sign(lessonId: string, jobId: string, exp: number) {
 /** URL of the render page for one job; valid for `ttlMs` (long enough for the longest lesson to play through). */
 export function renderPageUrl(origin: string, lessonId: string, jobId: string, ttlMs: number) {
   const exp = Math.floor((Date.now() + ttlMs) / 1000)
-  return `${origin}/render/lesson/${lessonId}?job=${jobId}&exp=${exp}&sig=${sign(lessonId, jobId, exp)}`
+  // hand=photo: the photographic hand (the player's own fallback). The 3D hand renders in software on the recorder's
+  // CPU-only container and halved the captured frame rate (~11 fps instead of ~25).
+  return `${origin}/render/lesson/${lessonId}?job=${jobId}&exp=${exp}&sig=${sign(lessonId, jobId, exp)}&hand=photo`
 }
 
 export function verifyRenderToken(lessonId: string, jobId: string | undefined, exp: string | undefined, sig: string | undefined) {

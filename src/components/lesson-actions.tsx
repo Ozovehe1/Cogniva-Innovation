@@ -127,7 +127,7 @@ export function LessonDownload({ lessonId }: { lessonId: string }) {
               <p className="mt-0.5 text-[12px] leading-snug text-muted">
                 {error ?? (video?.status === 'failed' ? (video.error ?? 'Something went wrong while recording.') : video?.status === 'done'
                   ? <>It should download now. <button type="button" onClick={download} className="font-medium text-accent underline-offset-2 hover:underline">Download again</button></>
-                  : 'You can keep learning or leave this page. It will be ready here when you come back.')}
+                  : 'Keep learning meanwhile. If you leave, tap Video again later and it downloads straight away.')}
               </p>
               {rendering && video && (
                 <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-label="Video progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(video.progress * 100)}>
