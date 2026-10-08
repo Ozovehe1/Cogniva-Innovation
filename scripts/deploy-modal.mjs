@@ -4,6 +4,7 @@
  * (runs before `next build`):
  *   - manim_render.py  -> app "geniusmap-manim" (Manim clip renders)
  *   - tts.py           -> app "geniusmap-tts"   (Kokoro narration voice)
+ *   - py_sandbox.py    -> app "geniusmap-py"    (agent run_python sandbox)
  *
  * Runs only when:
  *   - VERCEL_ENV === 'production'
@@ -37,6 +38,8 @@ function run(cmd, args, { timeoutMs = 10 * 60_000, env = process.env, quiet = fa
 const APPS = [
   { file: 'modal_app/manim_render.py', deps: ['modal_app/pen_export.py', 'modal_app/gm_scene.py', 'modal_app/gm_compose.py', 'modal_app/gm_llm.py', 'modal_app/gm_grammar.md', 'modal_app/gm_parts.py', 'modal_app/gm_rigs.py', 'modal_app/gm_refdata.py', 'modal_app/gm_mesh3d.py', 'modal_app/gm_partcompose.py', 'modal_app/gm_memory.json', 'modal_app/lesson_video.py', 'modal_app/lesson_video_clock.js'], urlRe: /https:\/\/[a-z0-9-]+--geniusmap-manim-render[a-z0-9-]*\.modal\.run/i, env: 'MODAL_RENDER_URL' },
   { file: 'modal_app/tts.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-tts[a-z0-9-]*\.modal\.run/i, env: 'MODAL_TTS_URL' },
+  // Python sandbox for the agent's run_python tool (no network, 1 CPU, 1 GiB, 20 s per run).
+  { file: 'modal_app/py_sandbox.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-py[a-z0-9-]*\.modal\.run/i, env: 'MODAL_PY_URL' },
 ]
 
 /** Which app files need a deploy. */
