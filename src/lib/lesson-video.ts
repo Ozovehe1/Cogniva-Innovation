@@ -83,7 +83,7 @@ export function videoPath(lessonId: string, hash: string) {
 /** Expected wall time of a render. Parts render in parallel, so it barely depends on the lesson's length. */
 export function videoEstimateMs(steps: Step[]) {
   const total = steps.reduce((t, s, i) => t + estimateStepMs(s, i), 0)
-  return RENDER_MS + Math.max(0, total / MAX_PARTS - PART_MS) * 1.5
+  return Math.round(RENDER_MS + Math.max(0, total / MAX_PARTS - PART_MS) * 1.5)
 }
 
 /**
