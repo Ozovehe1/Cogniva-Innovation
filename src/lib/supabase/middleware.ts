@@ -33,6 +33,9 @@ export async function updateSession(request: NextRequest) {
     path.startsWith('/whiteboard/') ||
     // Called by the Modal render service; authenticated with X-Render-Token instead of a session.
     path === '/api/manim/callback' ||
+    // Lesson video recorder (Modal): the callback uses X-Render-Token, the render page a signed, expiring job token.
+    path === '/api/video/callback' ||
+    /^\/render\/lesson\/[0-9a-f-]{36}$/i.test(path) ||
     // Lesson drafting hand-over (x-draft-key HMAC) and the cron / pg_cron ticks (bearer secrets): they
     // authenticate themselves. Without this they were redirected to /login, so unattended drafting stalled.
     /^\/api\/lessons\/[^/]+\/draft\/run$/.test(path) ||

@@ -175,6 +175,9 @@ class WebSpeechNarrator implements Narrator {
 
 /* ───────────── Natural voice (Kokoro audio) ───────────── */
 
+/** One narration audio event, logged only on the lesson video render page (window.__gmAudioLog). */
+export interface AudioLogEntry { ev: 'play' | 'stop'; t: number; src: string; pos: number }
+
 /** Lesson the current page plays, so on-demand synthesis can be attributed (and allowed) server-side. */
 let currentLessonId: string | null = null
 export function setNarrationLesson(id: string | null) { currentLessonId = id }
@@ -214,6 +217,18 @@ class AudioNarrator implements Narrator {
       // Whether the audio clock is really running: false from a new source until it plays, and while it waits for data.
       a.addEventListener('playing', () => { this.flowing = true })
       for (const ev of ['waiting', 'stalled', 'pause', 'ended', 'emptied', 'seeking', 'loadstart']) a.addEventListener(ev, () => { this.flowing = false })
+      // Lesson video recorder (render page): log when narration audio really plays and stops, on the wall clock, so
+      // the recorder can rebuild the exact narration track under the screen recording.
+      const log = (window as Window & { __gmAudioLog?: AudioLogEntry[] }).__gmAudioLog
+      if (Array.isArray(log)) {
+        const rec = (ev: AudioLogEntry['ev']) => () => {
+          const src = a.currentSrc || a.src
+          if (!src || src.startsWith('data:')) return
+          log.push({ ev, t: Date.now(), src, pos: a.currentTime })
+        }
+        a.addEventListener('playing', rec('play'))
+        for (const ev of ['waiting', 'pause', 'ended', 'emptied']) a.addEventListener(ev, rec('stop'))
+      }
     }
   }
 

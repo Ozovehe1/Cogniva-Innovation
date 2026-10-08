@@ -69,6 +69,11 @@ export interface WhiteboardPlayerProps {
   controlRef?: React.MutableRefObject<PlayerControl | null>
   /** Slower pacing: longer pauses between steps (after a low check-in). */
   slow?: boolean
+  /**
+   * Lesson video recording (the /render/lesson page): no controls, sections strip or transcript; checks are shown on
+   * the board, given a moment to think, answered by themselves and the lesson carries on; clips have no Skip.
+   */
+  renderMode?: boolean
 }
 
 export interface PlayerControl {
@@ -111,6 +116,7 @@ export function WhiteboardPlayer({
   transcriptAside,
   controlRef,
   slow = false,
+  renderMode = false,
 }: WhiteboardPlayerProps) {
   const reduced = !!useReducedMotion()
   const [steps, setSteps] = useState<Step[]>(initialSteps)
@@ -692,6 +698,22 @@ export function WhiteboardPlayer({
     }
   }, [pendingCheck, steps, emit, continueFrom, goTo, reteach, origCursor])
 
+  /* ── Checks in a recorded video: shown on the board, a pause to think, the answer, then on ── */
+  const [revealFor, setRevealFor] = useState<number | null>(null)
+  const onCheckRef = useRef(onCheck)
+  useEffect(() => { onCheckRef.current = onCheck }, [onCheck])
+  const checkSpoken = pendingCheck !== null && !(animIdx === pendingCheck && doneId !== playId)
+  useEffect(() => {
+    if (!renderMode || pendingCheck === null || !checkSpoken) return
+    const st = stepsRef.current[pendingCheck]
+    if (st?.type !== 'check') return
+    const answer = checkAnswerText(st)
+    const at = pendingCheck
+    const t1 = answer ? setTimeout(() => setRevealFor(at), RENDER_THINK_MS) : undefined
+    const t2 = setTimeout(() => onCheckRef.current('continue'), RENDER_THINK_MS + (answer ? RENDER_REVEAL_MS + Math.min(4000, (st.explanation?.length ?? 0) * 35) : 0))
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [renderMode, pendingCheck, checkSpoken])
+
   /* ── Transcript ── */
   const lines = useMemo(() => steps.slice(sectionStart, cursor).flatMap((st, i) => stepLines(st, sectionStart + i)), [steps, cursor, sectionStart])
   const currentIdx = lines.length ? lines[lines.length - 1].index : -1
@@ -829,7 +851,7 @@ export function WhiteboardPlayer({
   return (
     <div className={cx('w-full', className)}>
       {/* Section strip */}
-      {(multi || steps.length > 40) && (
+      {!renderMode && (multi || steps.length > 40) && (
         <div className="mb-3 flex items-end justify-between gap-3">
           <div className="min-w-0">
             {multi && (
@@ -855,7 +877,7 @@ export function WhiteboardPlayer({
           </div>
         </div>
       )}
-      {multi && showSections && (
+      {!renderMode && multi && showSections && (
         <nav id="wb-sections" aria-label="Lesson sections" className="mb-3 max-h-[320px] overflow-y-auto overscroll-contain rounded-[14px] border border-line bg-surface">
           <ol className="divide-y divide-line">
             {chapters.map((c, k) => {
@@ -958,12 +980,28 @@ export function WhiteboardPlayer({
                   step={clip}
                   pen={pen}
                   handOn={!reduced}
+                  recording={renderMode}
                   onDone={() => { setClipEnded(true); setPlaying(true) }}
                   onSkip={() => { narratorRef.current?.cancel(); setClipEnded(false); setClipIdx(null); setPlaying(true) }}
                 />
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* Recorded video: the check on the board, then its answer; and each section's title as it begins. */}
+          {renderMode && check && pendingCheck !== null && <RecordedCheck key={`rc-${pendingCheck}-${playId}`} step={check} reveal={revealFor === pendingCheck} />}
+          {renderMode && multi && sectionTitle && (
+            <motion.div
+              key={`sec-${section}`}
+              className="pointer-events-none absolute bottom-5 left-5 z-[12] max-w-[70%] rounded-[12px] border border-line bg-surface/95 px-4 py-2.5 shadow-[var(--shadow-raised)]"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: [0, 1, 1, 0], y: [6, 0, 0, 0] }}
+              transition={{ duration: 4.2, times: [0, 0.08, 0.85, 1] }}
+            >
+              <p className="tnum text-[11px] font-medium uppercase tracking-[0.08em] text-muted">Section {section + 1} of {chapters.length}</p>
+              <p className="mt-0.5 font-display text-[19px] leading-snug text-ink"><RichText text={sectionTitle} /></p>
+            </motion.div>
+          )}
 
           {/* Resume overlay: the board behind it is already rebuilt (silently) to where the student stopped. */}
           {resumeOffer && (
@@ -1018,6 +1056,7 @@ export function WhiteboardPlayer({
       </PenProvider>
 
       {/* Controls */}
+      {!renderMode && <>
       <div className="mt-3 flex items-center gap-0.5 sm:gap-2">
         <ControlButton label="Restart" onClick={restart}><RotateCcw className="h-[17px] w-[17px]" strokeWidth={1.75} /></ControlButton>
         <ControlButton label="Previous step" onClick={prev} disabled={cursor <= 1}><ChevronLeft className="h-5 w-5" strokeWidth={1.75} /></ControlButton>
@@ -1117,6 +1156,7 @@ export function WhiteboardPlayer({
 
       {/* Transcript */}
       <Transcript lines={lines} currentIdx={currentIdx} reduced={reduced} heading={multi ? `Section ${section + 1} · ${sectionTitle}` : undefined} aside={transcriptAside} />
+      </>}
     </div>
   )
 }
@@ -1218,8 +1258,14 @@ function ControlButton({ label, onClick, disabled, children }: { label: string; 
   )
 }
 
-function ClipVideo({ step, onDone, onSkip, pen, handOn }: { step: ManimClipStep; onDone: () => void; onSkip: () => void; pen: PenEngine; handOn: boolean }) {
+function ClipVideo({ step, onDone, onSkip, pen, handOn, recording = false }: { step: ManimClipStep; onDone: () => void; onSkip: () => void; pen: PenEngine; handOn: boolean; recording?: boolean }) {
   const [failed, setFailed] = useState(false)
+  // A recorded video never waits on a button: a clip that cannot load is passed over.
+  useEffect(() => {
+    if (!recording || !failed) return
+    const t = setTimeout(onDone, 1200)
+    return () => clearTimeout(t)
+  }, [recording, failed, onDone])
   const videoRef = useRef<HTMLVideoElement>(null)
   // The hand draws along with the clip when the clip comes with its pen paths (and keeps the clip on the narration clock).
   useEffect(() => {
@@ -1250,10 +1296,59 @@ function ClipVideo({ step, onDone, onSkip, pen, handOn }: { step: ManimClipStep;
       </div>
       <div className="flex items-center justify-between gap-3 px-3 py-2">
         <p className="min-w-0 truncate text-[12px] text-white/70">{step.caption ?? ''}</p>
-        <button type="button" onClick={failed ? onDone : onSkip} className="h-8 flex-shrink-0 rounded-full border border-white/20 px-3 text-[12px] font-medium text-white hover:bg-white/10">
-          {failed ? 'Continue' : 'Skip'}
-        </button>
+        {!recording && (
+          <button type="button" onClick={failed ? onDone : onSkip} className="h-8 flex-shrink-0 rounded-full border border-white/20 px-3 text-[12px] font-medium text-white hover:bg-white/10">
+            {failed ? 'Continue' : 'Skip'}
+          </button>
+        )}
       </div>
     </>
+  )
+}
+
+/** Recorded video: how long a check stays up before its answer, and how long the answer is shown. */
+const RENDER_THINK_MS = 4500
+const RENDER_REVEAL_MS = 3500
+
+/** The answer a recorded video reveals for a check (none for "do you understand?" checks). */
+function checkAnswerText(st: CheckStep): string | null {
+  if (st.kind === 'choice' && st.options && typeof st.answer === 'number' && st.options[st.answer] !== undefined) return st.options[st.answer]
+  if (st.kind === 'short' && st.accept?.length) return st.accept[0]
+  return null
+}
+
+/** A check as a card on the board, for the recorded video: the question (and options), then the answer. */
+function RecordedCheck({ step, reveal }: { step: CheckStep; reveal: boolean }) {
+  const answer = checkAnswerText(step)
+  return (
+    <motion.div
+      className="absolute inset-0 z-[11] flex items-end justify-center bg-gradient-to-t from-[#FDFCF9]/85 via-[#FDFCF9]/40 to-transparent px-10 pb-7"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+    >
+      <div className="w-full max-w-[640px] rounded-[16px] border border-line bg-surface p-6 shadow-[var(--shadow-raised)]">
+        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{step.kind === 'understand' ? 'Quick check' : 'Your turn'}</p>
+        <p className="mt-2 font-display text-[22px] leading-snug text-ink"><RichText text={step.prompt} /></p>
+        {step.kind === 'choice' && step.options && (
+          <ol className="mt-4 grid gap-2">
+            {step.options.map((o, i) => {
+              const right = reveal && i === step.answer
+              return (
+                <li key={i} className={cx('flex items-center gap-3 rounded-[12px] border px-3.5 py-2.5 text-[16px] transition-colors duration-300', right ? 'border-accent bg-accent-soft text-ink' : reveal ? 'border-line text-muted' : 'border-line text-ink-2')}>
+                  <span className={cx('tnum flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[12px] font-medium', right ? 'bg-accent text-white' : 'border border-line text-muted')}>{right ? <Check className="h-3.5 w-3.5" strokeWidth={2.25} /> : String.fromCharCode(65 + i)}</span>
+                  <RichText text={o} />
+                </li>
+              )
+            })}
+          </ol>
+        )}
+        {step.kind === 'short' && reveal && answer && (
+          <p className="mt-4 rounded-[12px] border border-accent bg-accent-soft px-3.5 py-2.5 text-[16px] text-ink"><span className="mr-2 text-[12px] font-medium uppercase tracking-[0.08em] text-accent">Answer</span><RichText text={answer} /></p>
+        )}
+        {reveal && step.explanation && <p className="mt-3 text-[15px] leading-relaxed text-ink-2"><RichText text={step.explanation} /></p>}
+        {!reveal && <p className="mt-4 text-[13px] text-muted">{step.kind === 'understand' ? 'Take a moment: does this make sense so far?' : 'Pause the video and try it yourself.'}</p>}
+      </div>
+    </motion.div>
   )
 }

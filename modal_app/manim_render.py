@@ -2,6 +2,7 @@
 GeniusMap Manim render service (Modal app "geniusmap-manim").
 
 POST /render  (header X-Render-Token must equal the RENDER_TOKEN secret)
+POST /video   records a lesson as an MP4 (function lesson_video, see lesson_video.py) and calls back /api/video/callback
   body: {"job_id": str, "code": str, "scene_name": str, "upload_url": str, "paths_upload_url"?: str}
   -> 202 {"accepted": true}; the render runs asynchronously.
 
@@ -68,6 +69,18 @@ web_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("fastapi[standard]==0.115.6", "httpx==0.27.2")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_llm.py"), "/root/gm_llm.py")
+)
+
+# Lesson videos (Download -> Video): headless Google Chrome (H.264 for the Manim clips) records the render page.
+video_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("ffmpeg", "wget", "ca-certificates", "fonts-liberation", "fonts-dejavu-core", "fonts-noto-color-emoji")
+    .run_commands(
+        "wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb",
+        "apt-get update && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb",
+    )
+    .pip_install("playwright==1.55.0", "httpx==0.27.2")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video.py"), "/root/lesson_video.py")
 )
 
 secret = modal.Secret.from_name(SECRET_NAME)
@@ -225,6 +238,54 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str, paths_uploa
 
     _callback(job_id, "done")
     return {"ok": True, "bytes": len(data), "pen_bytes": pen_bytes}
+
+
+def _video_callback(callback_url: str | None, job_id: str, status: str, **extra) -> None:
+    import httpx
+
+    url = callback_url or (os.environ.get("APP_URL", "").rstrip("/") + "/api/video/callback")
+    for attempt in range(3):
+        try:
+            r = httpx.post(url, json={"job_id": job_id, "status": status, **extra}, headers={"X-Render-Token": os.environ.get("RENDER_TOKEN", "")}, timeout=30)
+            if r.status_code < 500:
+                return
+        except Exception as exc:  # noqa: BLE001
+            print(f"video callback attempt {attempt + 1} failed: {exc}")
+
+
+# Real time: the lesson plays through once while it is recorded, so a 20-minute lesson takes ~22 minutes. Kept small
+# (2 CPUs, at most 2 at once; more requests queue) because renders only happen when a learner taps Download -> Video.
+@app.function(image=video_image, secrets=[secret], timeout=4 * 3600, cpu=2.0, memory=3072, max_containers=2)
+def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200, callback_url: str | None = None) -> dict:
+    import sys
+    import time
+
+    import httpx
+
+    sys.path.insert(0, "/root")
+    import lesson_video as lv
+
+    t0 = time.time()
+    _video_callback(callback_url, job_id, "rendering", progress=0)
+    try:
+        res = lv.render_lesson_video(page_url, max_s=max_s, channel="chrome",
+                                     on_progress=lambda p: _video_callback(callback_url, job_id, "rendering", progress=round(p, 3)))
+    except Exception as exc:  # noqa: BLE001
+        print(f"lesson video failed: {exc}")
+        _video_callback(callback_url, job_id, "failed", error=f"{type(exc).__name__}: {exc}"[:3000])
+        return {"ok": False, "error": str(exc)[:500]}
+    with open(res["path"], "rb") as f:
+        data = f.read()
+    try:
+        r = httpx.put(upload_url, content=data, headers={"Content-Type": "video/mp4", "x-upsert": "true", "cache-control": "max-age=31536000"}, timeout=300)
+        if r.status_code >= 300:
+            raise RuntimeError(f"upload failed ({r.status_code}): {r.text[:300]}")
+    except Exception as exc:  # noqa: BLE001
+        _video_callback(callback_url, job_id, "failed", error=str(exc)[:3000])
+        return {"ok": False, "error": str(exc)[:500]}
+    meta = {**res["meta"], "wall_s": round(time.time() - t0, 1)}
+    _video_callback(callback_url, job_id, "done", bytes=res["bytes"], duration_ms=res["duration_ms"], meta=meta)
+    return {"ok": True, "bytes": res["bytes"], "duration_ms": res["duration_ms"], "meta": meta}
 
 
 def _put(url: str | None, data: bytes, ctype: str) -> bool:
@@ -397,6 +458,23 @@ def web():
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=str(exc)[:300])
         return {"text": text, "log": log}
+
+    class VideoRequest(BaseModel):
+        job_id: str = Field(min_length=1, max_length=64)
+        page_url: str = Field(min_length=10, max_length=2000)
+        upload_url: str = Field(min_length=10, max_length=4000)
+        max_s: int = Field(default=7200, ge=60, le=4 * 3600 - 900)
+        callback_url: str | None = Field(default=None, max_length=500)
+
+    @api.post("/video", status_code=202)
+    def video_endpoint(req: VideoRequest, x_render_token: str | None = Header(default=None)):
+        # Record a lesson as an MP4 (lesson_video): the page URL carries its own signed, expiring job token.
+        _auth(x_render_token)
+        for u in (req.page_url, req.upload_url, req.callback_url):
+            if u and not u.startswith("https://"):
+                raise HTTPException(status_code=400, detail="urls must be https")
+        call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url)
+        return {"accepted": True, "call_id": call.object_id}
 
     @api.post("/warm", status_code=202)
     def warm(x_render_token: str | None = Header(default=None)):

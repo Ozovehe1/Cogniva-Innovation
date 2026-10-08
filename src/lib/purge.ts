@@ -9,6 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient, MANIM_BUCKET } from '@/lib/supabase/admin'
 import { penPathFor } from '@/lib/manim'
 import { getSessionProfile } from '@/lib/auth'
+import { purgeLessonVideos } from '@/lib/lesson-video'
 
 export type PurgeResult = { ok: true; remainingGoals?: number } | { ok: false; status: number; error: string }
 
@@ -54,7 +55,7 @@ async function purgeClipJobs(db: SupabaseClient, filter: { lessonIds?: string[];
 
 /**
  * Delete lessons owned by studentId and everything hanging off them: progress, beats/sections and
- * material rows (FK cascade), clip jobs and their rendered files, uploaded material files. With
+ * material rows (FK cascade), clip jobs and their rendered files, rendered lesson videos, uploaded material files. With
  * resetTopics, a path topic that pointed at a lesson goes back to "ready" (mastered/locked stay) with
  * its quiz state cleared, so it can be written again; a path's speculative-draft pointer is cleared.
  */
@@ -75,6 +76,7 @@ export async function purgeLessons(db: SupabaseClient, studentId: string, lesson
     }
   }
   await purgeClipJobs(db, { lessonIds: ids })
+  await purgeLessonVideos(db, ids)
   const { data: mats } = await db.from('lesson_materials').select('path').in('lesson_id', ids)
   await removeObjects(db, MATERIALS_BUCKET, ((mats ?? []) as { path: string | null }[]).map(m => m.path ?? ''))
   const { error } = await db.from('lessons').delete().in('id', ids).eq('owner_student_id', studentId)
