@@ -8,8 +8,9 @@ import { selfOrigin } from '@/lib/lesson-drafting'
 import { displayItem, storedItemProblems } from '@/lib/question-quality'
 import { normalizeMathText } from '@/lib/math-text'
 import { MASTERY_ITEMS_VERSION, masteryContext, type MasteryContext } from '@/lib/lesson-digest'
+import { kickDirector } from '@/lib/agent/director'
 
-export const maxDuration = 120
+export const maxDuration = 300
 
 /** Mastery threshold: 3 of 4 (75%) to unlock the next topic. */
 const PASS = 0.75
@@ -97,8 +98,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!items.length) return NextResponse.json({ error: 'Start the check first' }, { status: 400 })
     const results = items.map(displayItem).map((it, i) => ({ correct: answers[i] === it.answer, answer: it.options[it.answer], explain: it.explain ?? null }))
     const score = results.filter(x => x.correct).length / items.length
+    // The 3-of-4 gate below decides mastery; the Learning Director then takes a turn on the result (never on the gate).
+    const forDirector = items.map(displayItem).map((it, i) => ({ q: it.q, correct: results[i].correct, chosen: typeof answers[i] === 'number' ? it.options[answers[i] as number] ?? null : null, answer: it.options[it.answer], explain: it.explain ?? null }))
+    const kick = (passed: boolean) => kickDirector('post_check', profile.id, { topic_id: topic.id, score, passed, attempt: topic.mastery_attempts + (passed ? 0 : 1), results: forDirector }, new URL(request.url).origin).catch(() => undefined)
     if (score >= PASS) {
       const { unlocked } = await masterTopic(db, path, topic, score)
+      await kick(true)
       const { data: next } = await db.from('path_topics').select('id, title, lesson_id').eq('path_id', path.id).in('status', ['ready', 'review']).order('position').limit(1)
       // Keep one lesson written ahead: the one after the topic that just opened up.
       const nextLesson = ((next ?? [])[0] as { lesson_id: string | null } | undefined)?.lesson_id
@@ -113,6 +118,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       mastery: { ...topic.mastery, items: undefined, lastScore: score, recheck: recheck.length ? recheck : undefined },
     }).eq('id', topic.id)
     const { data: fresh } = await db.from('path_topics').select('*').eq('id', topic.id).single()
+    await kick(false)
     return NextResponse.json({ passed: false, score, results, recheck: recheck.length > 0, quiz: publicQuiz(fresh as TopicRow, path) })
   }
 

@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
+import { kickDirector } from '@/lib/agent/director'
+
+// The Learning Director's turn runs after the response.
+export const maxDuration = 300
 
 /**
  * POST /api/lessons/:id/progress  (students only; also sent with navigator.sendBeacon)
@@ -68,5 +72,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     completed_at: completed ? new Date().toISOString() : restart ? null : prev?.completed_at ?? null,
   }, { onConflict: 'student_id,lesson_id' })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // First completion: the Learning Director takes a turn (memory, next lesson, today's plan).
+  if (completed && !prev?.completed_at) await kickDirector('post_lesson', profile.id, { lesson_id: id }, new URL(request.url).origin).catch(() => undefined)
   return NextResponse.json({ ok: true })
 }

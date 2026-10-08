@@ -39,7 +39,9 @@ export async function updateSession(request: NextRequest) {
     // Lesson drafting hand-over (x-draft-key HMAC) and the cron / pg_cron ticks (bearer secrets): they
     // authenticate themselves. Without this they were redirected to /login, so unattended drafting stalled.
     /^\/api\/lessons\/[^/]+\/draft\/run$/.test(path) ||
-    path === '/api/cron/lesson-drafts'
+    path === '/api/cron/lesson-drafts' ||
+    // Agent queue drain (pg_cron) and eval runner: Bearer AGENT_SECRET.
+    path === '/api/agent/tick' || path === '/api/agent/eval'
   if (!user && !isPublic) {
     const login = new URL('/login', request.url)
     // Pages (not API calls) come back to where they were after signing in.

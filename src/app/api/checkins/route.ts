@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getSessionProfile } from '@/lib/auth'
+import { kickDirector } from '@/lib/agent/director'
+
+// The Learning Director's turn runs after the response.
+export const maxDuration = 300
 
 /**
  * POST /api/checkins  { context: 'lesson'|'mastery', lessonId?, mood?, energy?, confidence? }  (1-5 each)
@@ -23,5 +27,8 @@ export async function POST(request: Request) {
   // Two very low moods in a row (sustained) is a safety signal, not just a pacing one.
   const { data: recent } = await supabase.from('learner_checkins').select('mood').eq('student_id', profile.id).order('created_at', { ascending: false }).limit(2)
   const sustainedLow = (recent ?? []).length === 2 && (recent ?? []).every(r => (r as { mood: number | null }).mood === 1)
+  // Low mood/energy/confidence: the Learning Director re-plans today (lighter); a normal check-in needs no turn.
+  const low = (row.mood ?? 3) <= 2 || (row.energy ?? 3) <= 2 || (row.confidence ?? 3) <= 2
+  if (low) await kickDirector('checkin', profile.id, { mood: row.mood, energy: row.energy, confidence: row.confidence, lesson_id: row.lesson_id, checkin_id: new Date().toISOString().slice(0, 13) }, new URL(request.url).origin).catch(() => undefined)
   return NextResponse.json({ ok: true, low: (row.mood ?? 3) <= 2 || (row.confidence ?? 3) <= 2, sustainedLow })
 }
