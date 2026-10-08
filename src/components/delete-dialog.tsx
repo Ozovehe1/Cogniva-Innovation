@@ -118,7 +118,7 @@ export function GoalDelete({ pathId, goal, compact = false, lessons, className }
   return (
     <DeleteButton what="goal" title={goal} endpoint={`/api/paths/${pathId}`} keepLabel="Keep goal" confirmLabel="Delete goal" compact={compact} className={className}
       redirectTo={json => (json.remainingGoals === 0 ? '/start?new=1' : undefined)}
-      body={<>This removes the goal and its whole path: every topic{typeof lessons === 'number' ? `, ${lessons === 1 ? 'its 1 lesson' : `its ${lessons} lessons`}` : ' and lesson'}, your progress and mastery checks, the starting check and the animations made for it. It can’t be undone. Your other goals stay as they are.</>} />
+      body={<>This removes the goal and its whole path: every topic{typeof lessons === 'number' ? (lessons > 0 ? `, ${lessons === 1 ? 'its 1 lesson' : `its ${lessons} lessons`}` : '') : ' and lesson'}, your progress and mastery checks, the starting check and the animations made for it. It can’t be undone. Your other goals stay as they are.</>} />
   )
 }
 
