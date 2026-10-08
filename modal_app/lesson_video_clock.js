@@ -236,7 +236,9 @@
   }
 
   /** Put every visible video's real frame on its virtual playhead before a capture. */
-  async function seekVideos() {
+  async function seekVideos(skip) {
+    // A frame that is not captured (a part starting inside a long step steps up to its start) needs no video frame.
+    if (skip) return
     const waits = []
     const frames = W.__gmClipFrames || null
     for (const el of document.querySelectorAll('video')) {
@@ -326,8 +328,8 @@
       for (const el of document.querySelectorAll('audio,video')) if (nPaused.get.call(el) === false) { nPause.call(el); vplay(el) }
       return vt
     },
-    /** Advance the clock by `ms` and render the frame. Resolves {t, dirty}. */
-    async step(ms) {
+    /** Advance the clock by `ms` and render the frame (`skip`: the frame will not be captured). Resolves {t, dirty}. */
+    async step(ms, skip) {
       const target = vt + ms
       phase = 'settle1'
       await settleMedia(20000)
@@ -352,7 +354,7 @@
       phase = 'anims'
       syncAnimations()
       phase = 'seek'
-      await seekVideos()
+      await seekVideos(!!skip)
       phase = 'done'
       // A playing video changes every frame, except clips shown as still frames (showFrame marks those).
       let d = dirty

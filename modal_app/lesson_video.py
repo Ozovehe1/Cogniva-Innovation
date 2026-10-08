@@ -198,7 +198,7 @@ def _ctype(url: str) -> str:
 
 async def record(page_url: str, out_video: str, max_frames: int, settle_s: float = 0.0, on_progress=None, channel: str | None = None,
                  maxrate: int | None = None, extra_args: list[str] | None = None, assets: dict[str, bytes] | None = None,
-                 stop_at_max: bool = False, clip_urls: list[str] | None = None) -> dict:
+                 stop_at_max: bool = False, clip_urls: list[str] | None = None, skip_frames: int = 0) -> dict:
     """Play the render page on a virtual clock (lesson_video_clock.js): step it one frame at a time, capture each frame
     that changed and pipe them to ffmpeg as constant-25-fps H.264. Returns timings, the narration log and page info.
 
@@ -265,7 +265,7 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
         timing["compositor"] = chosen
         timing["open_s"] = round(time.time() - t_launch, 2)
         try:
-            res = await _capture(st, out_video, max_frames, settle_s, on_progress, maxrate, stop_at_max, shot_args)
+            res = await _capture(st, out_video, max_frames, settle_s, on_progress, maxrate, stop_at_max, shot_args, skip_frames)
         finally:
             for k, task in opens.items():
                 if task.done() and not task.cancelled() and task.exception() is None:
@@ -328,7 +328,9 @@ async def _open(p, page_url: str, channel: str | None, args: list[str], assets: 
 
 
 async def _capture(st: dict, out_video: str, max_frames: int, settle_s: float, on_progress, maxrate: int | None, stop_at_max: bool,
-                   shot_args: dict) -> dict:
+                   shot_args: dict, skip_frames: int = 0) -> dict:
+    """`skip_frames`: frames stepped through without capture first (a part that starts inside a long step); the part's
+    video and its narration timeline start after them."""
     page, cdp, info = st["page"], st["cdp"], st["info"]
     timing: dict = {}
     ok = False
@@ -337,11 +339,19 @@ async def _capture(st: dict, out_video: str, max_frames: int, settle_s: float, o
                            *x264_args(maxrate), "-an", "-movflags", "+faststart", out_video], stdin=subprocess.PIPE)
     try:
         t0 = await page.evaluate("__vclock.enable(), __gmRender.start()") / 1000.0
+        t_skip = time.time()
+        for k in range(skip_frames):
+            s = await asyncio.wait_for(page.evaluate("__vclock.step(%s, true).then(() => __gmRender.done)" % (0 if k == 0 else FRAME_MS)), 60.0)
+            if s:
+                raise RuntimeError(f"the steps ended {k} frames in, before this part's start ({skip_frames} frames)")
+        if skip_frames:
+            t0 += skip_frames * FRAME_MS / 1000.0  # the first captured frame is frame `skip_frames` of the steps
+            timing["skip_s"] = round(time.time() - t_skip, 2)
         t_cap = time.time()
         last = None
         settle_frames = int(round(settle_s * FPS))
         done_at = None
-        first = True
+        first = not skip_frames
         prof = {"step_s": 0.0, "shot_s": 0.0, "pipe_s": 0.0}
         while True:
             ts = time.time()
@@ -361,6 +371,8 @@ async def _capture(st: dict, out_video: str, max_frames: int, settle_s: float, o
             ff.stdin.write(last)
             prof["pipe_s"] += time.time() - t1
             frames += 1
+            if os.environ.get("LV_DEBUG") and frames > max(0, int(os.environ["LV_DEBUG"])):
+                _log(f"frame {frames}: dirty={s['d']} cursor={s['c']} done={s['e']}")
             if s["e"] and done_at is None:
                 done_at = frames
             if done_at is not None and frames - done_at >= settle_frames:
@@ -566,14 +578,15 @@ def host_info() -> dict:
 
 def render_part(page_url: str, max_frames: int, settle_s: float = 0.0, maxrate: int | None = None, channel: str | None = None, on_progress=None,
                 extra_args: list[str] | None = None, assets: dict[str, bytes] | None = None, stop_at_max: bool = False,
-                clip_urls: list[str] | None = None) -> dict:
+                clip_urls: list[str] | None = None, skip_frames: int = 0) -> dict:
     """Render one part (the render page with its from/to). Returns the H.264 bytes and its narration segments."""
     workdir = tempfile.mkdtemp(prefix="lesson-part-")
     out = os.path.join(workdir, "part.mp4")
     t = time.time()
     host = host_info()
     rec = asyncio.run(record(page_url, out, max_frames, settle_s=settle_s, on_progress=on_progress, channel=channel, maxrate=maxrate, extra_args=extra_args,
-                             assets=assets, stop_at_max=stop_at_max, clip_urls=clip_urls))
+                             assets=assets, stop_at_max=stop_at_max, clip_urls=clip_urls,
+                             skip_frames=skip_frames))
     segs = narration_segments(rec["audio_log"], rec["t0"] * 1000.0, rec["duration_s"])
     with open(out, "rb") as f:
         data = f.read()

@@ -268,7 +268,7 @@ HEAVY_CPU = 4.0
 @app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=3072, max_containers=90,
               retries=modal.Retries(max_retries=1, initial_delay=0.0, backoff_coefficient=1.0))
 def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None, assets: dict | None = None,
-                      t_spawn: float | None = None, clip_urls: list | None = None) -> dict:
+                      t_spawn: float | None = None, clip_urls: list | None = None, skip_frames: int = 0, stop_at_max: bool = False) -> dict:
     import sys
     import time
     sys.path.insert(0, "/root")
@@ -276,7 +276,7 @@ def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: floa
 
     t = time.time()
     res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome", assets=assets or {},
-                         clip_urls=clip_urls or [])
+                         clip_urls=clip_urls or [], skip_frames=skip_frames, stop_at_max=stop_at_max)
     res["timing"]["fn_s"] = round(time.time() - t, 2)
     if t_spawn:
         res["timing"]["queue_s"] = round(t - t_spawn, 2)  # input ready -> running (upload + container start)
@@ -301,7 +301,9 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     import lesson_video as lv
 
     t0 = time.time()
+    # [from, to) steps, or a piece of one long clip step: [step, step + 1, skip ms into it, length ms (0: to its end)].
     ranges = [(int(p[0]), int(p[1])) for p in (parts or [])] or [(0, 10 ** 6)]
+    pieces = [(int(p[2]), int(p[3])) if len(p) >= 4 else (0, 0) for p in (parts or [])] or [(0, 0)]
     total = float(total_s or max_s / 2)
     maxrate = lv.max_video_rate(total)
     sep = "&" if "?" in page_url else "?"
@@ -330,7 +332,7 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     heavy: set = set()
     if part_ms and len(part_ms) == len(ranges):
         top = max(float(x or 0) for x in part_ms)
-        heavy = {i for i in order[:HEAVY_PARTS] if float(part_ms[i] or 0) >= max(20_000.0, 0.7 * top)}
+        heavy = {i for i in order[:HEAVY_PARTS] if float(part_ms[i] or 0) >= max(8_000.0, 0.85 * top)}
 
     def inputs(which):
         # Parts are handed to Modal in order as soon as their own files are in, so downloading overlaps the
@@ -355,7 +357,10 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
                         narration.want([u])  # decode while the parts render
             # Generous frame cap per part (a part normally runs ~10-40 s of video): stops a page that never finishes.
             max_frames = int(min(max_s, max(600, total * 3 / len(ranges) + 300)) * lv.FPS)
-            yield (i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time(), clips)
+            skip_ms, len_ms = pieces[i]
+            if len_ms > 0:
+                max_frames = max(1, round(len_ms / lv.FRAME_MS))  # a piece that ends inside its step stops there
+            yield (i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time(), clips, round(skip_ms / lv.FRAME_MS), len_ms > 0)
         stamps["inputs_s"] = max(stamps.get("inputs_s", 0), round(time.time() - t0, 1))
 
     import queue
@@ -427,9 +432,10 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
         "unvoiced": sum((p.get("info") or {}).get("missing", 0) for p in parts_meta),
         "storage_fetches_in_parts": sum(p.get("fetched", 0) for p in pt),
         "errors": [e for p in parts_meta for e in p.get("errors", [])][:5],
-        # Per part: [index, seconds in the function, frames, frames drawn, probe ms, compositor (s/w), heavy]
-        "per_part": [[i, p.get("fn_s"), parts_meta[i]["frames"], parts_meta[i]["shots"], p.get("probe_ms"), (p.get("compositor") or "?")[0],
-                      int(bool(p.get("heavy")))] for i, p in enumerate(pt)],
+        # Per part: [index, seconds in the function, frames, frames drawn, probe ms, compositor (C software / G SwiftShader), heavy,
+        # seconds to open the page, seconds stepping to a piece's start]
+        "per_part": [[i, p.get("fn_s"), parts_meta[i]["frames"], parts_meta[i]["shots"], p.get("probe_ms"), "G" if p.get("compositor") == "swiftshader" else "C",
+                      int(bool(p.get("heavy"))), p.get("open_s"), p.get("skip_s", 0)] for i, p in enumerate(pt)],
     }
     print(f"lesson video {job_id}: {meta}")
     _video_callback(callback_url, job_id, "done", bytes=out["bytes"], duration_ms=out["duration_ms"], meta=meta)
