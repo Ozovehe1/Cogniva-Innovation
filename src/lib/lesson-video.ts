@@ -5,8 +5,9 @@
  * page /render/lesson/:id in headless Chrome at 1280x720. That page plays the lesson exactly as the player does (boards
  * drawn by the hand, Manim clips, KaTeX), with no controls and checks shown as a card and answered by themselves.
  * The page runs on a virtual clock and is captured frame by frame as fast as the CPU allows (not in real time), and
- * the lesson is cut into parts (planVideoParts) that render side by side and are joined, so any lesson takes about a
- * minute and a half. The narration track is rebuilt from the timeline the page logs. The MP4 goes to the private
+ * the lesson is cut into short parts (planVideoParts) that render side by side and are joined, so any lesson is ready
+ * in well under two minutes. The renderer reads every narration line and clip from Storage once (videoAssets) and
+ * hands each part its own files. The narration track is rebuilt from the timeline the page logs. The MP4 goes to the private
  * lesson-videos bucket through a signed upload URL and /api/video/callback is called. A finished render is cached per
  * lesson + script hash. Server only.
  */
@@ -15,22 +16,22 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Step } from './lesson-schema'
 import type { Chapter } from './lesson-sections'
 import { estimateStepMs } from './lesson-sections'
-import { NARRATION_VOICE } from './narration'
+import { NARRATION_VOICE, audioPaths, audioPublicBase, narrationKey } from './narration'
 import { normalizeSpoken, MAX_TTS_CHARS } from './narration'
 import { stepSpeech } from '@/components/whiteboard/speech'
 import { ensureNarration } from './tts-server'
 
 export const VIDEO_BUCKET = 'lesson-videos'
 /** Bump when the render page or the recorder changes what a video looks like: every cached video is re-rendered. */
-export const VIDEO_RENDER_VERSION = 3
+export const VIDEO_RENDER_VERSION = 4
 /** Per learner: one render at a time, and at most this many new renders a day (finished videos are free to download). */
 export const VIDEO_DAILY_LIMIT = 5
-/** Lesson time per part: each part renders in its own container in ~40-60 s, all parts at once. */
-const PART_MS = 40_000
-/** More parts than this and they get longer instead (cost and the Modal container cap). */
-const MAX_PARTS = 60
+/** Lesson time per part: each part renders in its own container in ~20-40 s, all parts at once. */
+const PART_MS = 18_000
+/** More parts than this and they get longer instead (cost, and Modal's 100-container cap on the account's plan). */
+const MAX_PARTS = 80
 /** Expected wall time of a render, whatever the lesson's length (containers start, parts render, join, upload). */
-const RENDER_MS = 80_000
+const RENDER_MS = 60_000
 /** An active job that has not reported for this long is treated as dead (the renderer reports every few seconds). */
 const STALE_RENDERING_MS = 6 * 60_000
 const STALE_QUEUED_MS = 5 * 60_000
@@ -82,7 +83,43 @@ export function videoPath(lessonId: string, hash: string) {
 /** Expected wall time of a render. Parts render in parallel, so it barely depends on the lesson's length. */
 export function videoEstimateMs(steps: Step[]) {
   const total = steps.reduce((t, s, i) => t + estimateStepMs(s, i), 0)
-  return RENDER_MS + Math.max(0, total / MAX_PARTS - PART_MS) * 1.2
+  return RENDER_MS + Math.max(0, total / MAX_PARTS - PART_MS) * 1.5
+}
+
+/**
+ * Every Storage file the parts will read (narration audio + timings, clips + their pen paths), in part order, and the
+ * indices each part needs. The renderer downloads them once and serves them to its parts' browsers.
+ */
+export async function videoAssets(steps: Step[], parts: [number, number][]): Promise<{ urls: string[]; perPart: number[][] }> {
+  const base = audioPublicBase()
+  const urls: string[] = []
+  const index = new Map<string, number>()
+  const add = (u: string) => {
+    let k = index.get(u)
+    if (k === undefined) { k = urls.length; urls.push(u); index.set(u, k) }
+    return k
+  }
+  const keys = new Map<string, string>()
+  const perPart: number[][] = []
+  for (const [from, to] of parts) {
+    const mine = new Set<number>()
+    for (const s of steps.slice(from, to)) {
+      const text = normalizeSpoken(stepSpeech(s)).slice(0, MAX_TTS_CHARS)
+      if (text && base.startsWith('http')) {
+        let key = keys.get(text)
+        if (!key) { key = await narrationKey(text); keys.set(text, key) }
+        const p = audioPaths(key)
+        mine.add(add(`${base}/${p.json}`)); mine.add(add(`${base}/${p.mp3}`))
+      }
+      if (s.type === 'manim_clip' && /^https:\/\//.test(s.url)) {
+        const clip = s.url.split('?')[0]
+        mine.add(add(clip))
+        if (/\.mp4$/i.test(clip)) mine.add(add(clip.replace(/\.mp4$/i, '.pen.json')))
+      }
+    }
+    perPart.push([...mine])
+  }
+  return { urls, perPart }
 }
 
 /**
@@ -90,7 +127,7 @@ export function videoEstimateMs(steps: Step[]) {
  * board as it stands at its first step, so any step can start one; a full clear (a fresh board, where the hand starts
  * from rest anyway) is preferred when one is near the ideal cut.
  */
-export function planVideoParts(steps: Step[]): { parts: [number, number][]; totalMs: number } {
+export function planVideoParts(steps: Step[]): { parts: [number, number][]; totalMs: number; steps: Step[] } {
   const ms = steps.map((s, i) => estimateStepMs(s, i))
   const totalMs = ms.reduce((a, b) => a + b, 0)
   const n = Math.max(1, Math.min(MAX_PARTS, steps.length, Math.round(totalMs / PART_MS)))
@@ -117,7 +154,7 @@ export function planVideoParts(steps: Step[]): { parts: [number, number][]; tota
     if (best > prev && best < steps.length) { cuts.push(best); prev = best }
   }
   const bounds = [0, ...cuts, steps.length]
-  return { parts: bounds.slice(1).map((b, i) => [bounds[i], b] as [number, number]), totalMs }
+  return { parts: bounds.slice(1).map((b, i) => [bounds[i], b] as [number, number]), totalMs, steps }
 }
 
 export function isStale(row: Pick<LessonVideoRow, 'status' | 'updated_at'>) {
@@ -185,7 +222,7 @@ export function videoServiceConfigured() {
 }
 
 /** Ask the Modal recorder to render this job. Updates the row with the outcome. */
-export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow, 'id' | 'lesson_id' | 'script_hash'>, origin: string, plan: { parts: [number, number][]; totalMs: number }) {
+export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow, 'id' | 'lesson_id' | 'script_hash'>, origin: string, plan: { parts: [number, number][]; totalMs: number; steps: Step[] }) {
   const fail = async (error: string) => {
     await db.from('lesson_videos').update({ status: 'failed', error, updated_at: new Date().toISOString() }).eq('id', row.id)
     return { ok: false as const, error }
@@ -198,12 +235,13 @@ export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow
   // A cap on any one part's video length (a page that never finishes is stopped).
   const maxS = Math.round(Math.min(4 * 3600 - 900, Math.max(600, (totalMs * 3) / 1000)))
   const pageUrl = renderPageUrl(origin, row.lesson_id, row.id, 2 * 3600_000)
+  const assets = await videoAssets(plan.steps, parts).catch(() => null)
   try {
     const base = process.env.MODAL_RENDER_URL!.replace(/\/+$/, '')
     const res = await fetch(`${base}/video`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN! },
-      body: JSON.stringify({ job_id: row.id, page_url: pageUrl, upload_url: signed.signedUrl, max_s: maxS, callback_url: `${origin}/api/video/callback`, parts, total_s: totalMs / 1000 }),
+      body: JSON.stringify({ job_id: row.id, page_url: pageUrl, upload_url: signed.signedUrl, max_s: maxS, callback_url: `${origin}/api/video/callback`, parts, total_s: totalMs / 1000, asset_urls: assets?.urls, part_assets: assets?.perPart }),
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) throw new Error(`video service answered ${res.status}: ${(await res.text()).slice(0, 300)}`)

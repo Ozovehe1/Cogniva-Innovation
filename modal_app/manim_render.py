@@ -81,8 +81,6 @@ video_image = (
         "apt-get update && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb",
     )
     .pip_install("playwright==1.55.0", "httpx==0.27.2")
-    # Playwright's headless shell (the old, lighter headless mode); clips are re-encoded to VP8 for it (no H.264).
-    .run_commands("playwright install --with-deps --only-shell chromium")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video.py"), "/root/lesson_video.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video_clock.js"), "/root/lesson_video_clock.js")
 )
@@ -257,39 +255,36 @@ def _video_callback(callback_url: str | None, job_id: str, status: str, **extra)
             print(f"video callback attempt {attempt + 1} failed: {exc}")
 
 
-VIDEO_ENGINE = "chrome"
-
-
 # Lesson videos render on a virtual clock (lesson_video.py): each part of the lesson is drawn frame by frame as fast as
-# the CPU allows (~25-35 frames a second, i.e. faster than real time), and the parts render side by side, so a lesson
-# of any length is ready in about a minute and a half. CPU only; a part container lives ~40-70 s.
-@app.function(image=video_image, secrets=[secret], timeout=600, cpu=2.0, memory=3072, max_containers=64,
+# the CPU allows, and the parts render side by side. Parts are ~15-25 s of lesson, so a lesson of any length is ready in
+# well under two minutes. 4 guaranteed cores per part: with only 2, Chrome's capture ran 3x slower on a busy host.
+PART_CPU = 4.0
+
+
+@app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=4096, max_containers=90,
               retries=modal.Retries(max_retries=1, initial_delay=0.0, backoff_coefficient=1.0))
-def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None, engine: str = VIDEO_ENGINE, bench: bool = False) -> dict:
+def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None, assets: dict | None = None,
+                      t_spawn: float | None = None) -> dict:
     import sys
     import time
     sys.path.insert(0, "/root")
     import lesson_video as lv
 
     t = time.time()
-    # engine: "chrome" = Google Chrome (new headless, plays H.264); "shell" = Playwright's headless shell, clips as VP8.
-    # A "+flag,flag" suffix adds Chrome flags (benchmarks).
-    name, _, flags = engine.partition("+")
-    os.environ["LV_CLIP_CODEC"] = "vp8" if name == "shell" else "h264"
-    if bench:
-        os.environ["LV_TEST"] = "1"  # stop at max_frames instead of failing
-    res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome" if name == "chrome" else None,
-                         extra_args=[f for f in flags.split(",") if f])
-    res["timing"]["cpus"] = os.cpu_count()
+    res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome", assets=assets or {})
     res["timing"]["fn_s"] = round(time.time() - t, 2)
+    if t_spawn:
+        res["timing"]["queue_s"] = round(t - t_spawn, 2)  # spawn -> running (container start)
     print(f"part {index}: {res['duration_s']:.1f}s of video, {res['shots']}/{res['frames']} frames drawn, {res['timing']}")
     return {"index": index, **res}
 
 
-@app.function(image=video_image, secrets=[secret], timeout=1800, cpu=2.0, memory=4096, max_containers=8)
+@app.function(image=video_image, secrets=[secret], timeout=1800, cpu=4.0, memory=4096, max_containers=8)
 def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200, callback_url: str | None = None,
-                 parts: list | None = None, total_s: float | None = None) -> dict:
-    """Render the parts in parallel, join them, upload the MP4 and call back. `parts` are [from, to) step ranges."""
+                 parts: list | None = None, total_s: float | None = None, asset_urls: list | None = None,
+                 part_assets: list | None = None) -> dict:
+    """Render the parts in parallel, join them, upload the MP4 and call back. `parts` are [from, to) step ranges;
+    `asset_urls` are every narration line / clip of the lesson and `part_assets[i]` the indices part i needs."""
     import sys
     import tempfile
     import time
@@ -304,27 +299,53 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     total = float(total_s or max_s / 2)
     maxrate = lv.max_video_rate(total)
     sep = "&" if "?" in page_url else "?"
-    args = []
-    for i, (a, b) in enumerate(ranges):
-        last = i == len(ranges) - 1
-        url = page_url + (f"{sep}from={a}&to={b}" if parts else "")
-        # Generous frame cap per part (a part normally runs ~30-60 s of video): stops a page that never finishes.
-        args.append((i, url, int(min(max_s, max(600, total * 3 / len(ranges) + 300)) * lv.FPS), 2.0 if last else 0.0, maxrate))
     _video_callback(callback_url, job_id, "rendering", progress=0.02)
+    # Read Storage once for the whole lesson (a few files at a time, with backoff) and hand each part its files. Parts
+    # are spawned in order as soon as their own files are in, so downloading overlaps the containers starting.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    urls = list(dict.fromkeys(str(u) for u in (asset_urls or [])))[:5000]
     workdir = tempfile.mkdtemp(prefix="lesson-video-")
     narration = lv.Narration(workdir)
+    fetch_pool = ThreadPoolExecutor(max_workers=16)
+    fetches = {u: fetch_pool.submit(lv.prefetch_one, u) for u in urls}
+    calls = []
+    try:
+        for i, (a, b) in enumerate(ranges):
+            last = i == len(ranges) - 1
+            url = page_url + (f"{sep}from={a}&to={b}" if parts else "")
+            mine = [urls[k] for k in (part_assets[i] if part_assets and i < len(part_assets) else []) if 0 <= k < len(urls)]
+            assets = {}
+            for u in mine:
+                data = fetches[u].result()
+                if data is not None:
+                    assets[u] = data
+                    if u.endswith(".mp3"):
+                        narration.files[u] = data
+                        narration.want([u])  # decode while the parts render
+            # Generous frame cap per part (a part normally runs ~15-40 s of video): stops a page that never finishes.
+            max_frames = int(min(max_s, max(600, total * 3 / len(ranges) + 300)) * lv.FPS)
+            calls.append(lesson_video_part.spawn(i, url, max_frames, 2.0 if last else 0.0, maxrate, assets, time.time()))
+    except Exception as exc:  # noqa: BLE001
+        print(f"lesson video failed to start: {exc}")
+        _video_callback(callback_url, job_id, "failed", error=f"{type(exc).__name__}: {exc}"[:3000])
+        return {"ok": False, "error": str(exc)[:500]}
+    t_pre = time.time()
+    failed = [u for u, f in fetches.items() if f.result() is None]
+    fetch_pool.shutdown(wait=False)
     done: dict[int, dict] = {}
     last_report = 0.0
     try:
-        for res in lesson_video_part.starmap(args, order_outputs=False, return_exceptions=True):
-            if isinstance(res, BaseException):
-                raise RuntimeError(f"a part of the video failed: {res}")
-            done[res["index"]] = res
-            narration.want(sg[0] for sg in res["segments"])  # fetch its narration while the other parts render
-            now = time.time()
-            if now - last_report > 2 or len(done) == len(ranges):
-                last_report = now
-                _video_callback(callback_url, job_id, "rendering", progress=round(0.05 + 0.85 * len(done) / len(ranges), 3))
+        with ThreadPoolExecutor(max_workers=len(calls)) as waiters:
+            futs = [waiters.submit(c.get, timeout=900) for c in calls]
+            for fut in as_completed(futs):
+                res = fut.result()  # raises when a part failed (after its retry)
+                done[res["index"]] = res
+                narration.want(sg[0] for sg in res["segments"])
+                now = time.time()
+                if now - last_report > 2 or len(done) == len(ranges):
+                    last_report = now
+                    _video_callback(callback_url, job_id, "rendering", progress=round(0.05 + 0.85 * len(done) / len(ranges), 3))
         t_parts = time.time()
         out = lv.assemble([done[i] for i in range(len(ranges))], workdir, narration)
         t_join = time.time()
@@ -338,15 +359,20 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
         _video_callback(callback_url, job_id, "failed", error=f"{type(exc).__name__}: {exc}"[:3000])
         return {"ok": False, "error": str(exc)[:500]}
     parts_meta = [done[i] for i in range(len(ranges))]
+    pt = [p["timing"] for p in parts_meta]
+    slow = max(range(len(pt)), key=lambda i: pt[i].get("fn_s", 0))
     meta = {
-        "renderer": "virtual-clock", "parts": len(ranges), "wall_s": round(time.time() - t0, 1), "parts_s": round(t_parts - t0, 1),
+        "renderer": "virtual-clock", "parts": len(ranges), "wall_s": round(time.time() - t0, 1), "spawned_s": round(t_pre - t0, 1),
+        "prefetched": len(urls) - len(failed), "prefetch_failed": len(failed), "parts_s": round(t_parts - t0, 1),
         "join_s": round(t_join - t_parts, 1), "upload_s": round(time.time() - t_join, 1),
-        "slowest_part_s": max(p["timing"].get("total_s", 0) for p in parts_meta),
+        "slowest_part_s": pt[slow].get("fn_s", 0), "slowest_part": {"index": slow, **pt[slow]},
+        "max_queue_s": max(p.get("queue_s", 0) for p in pt),
+        "part_cpu_s": round(sum(p.get("fn_s", 0) for p in pt), 1),
         "frames": sum(p["frames"] for p in parts_meta), "frames_drawn": sum(p["shots"] for p in parts_meta),
         "audio": out["audio"], "width": out["width"], "height": out["height"], "has_audio": out["has_audio"],
         "unvoiced": sum((p.get("info") or {}).get("missing", 0) for p in parts_meta),
+        "storage_fetches_in_parts": sum(p.get("fetched", 0) for p in pt),
         "errors": [e for p in parts_meta for e in p.get("errors", [])][:5],
-        "part_timing": [p["timing"] for p in parts_meta][:12],
     }
     print(f"lesson video {job_id}: {meta}")
     _video_callback(callback_url, job_id, "done", bytes=out["bytes"], duration_ms=out["duration_ms"], meta=meta)
@@ -354,8 +380,23 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
 
 
 @app.function(image=web_image, secrets=[secret], timeout=900)
-def video_bench_fn(page_url: str, max_frames: int, engine: str) -> dict:
-    res = lesson_video_part.remote(0, page_url, max_frames, 0.0, None, engine, True)
+def video_bench_fn(page_url: str, max_frames: int, flags: str, cpu: float) -> dict:
+    import time
+    sys_flags = [f for f in flags.split(",") if f]
+    fn = lesson_video_part_bench.with_options(cpu=cpu) if cpu != PART_CPU else lesson_video_part_bench
+    res = fn.remote(page_url, max_frames, sys_flags, time.time())
+    return res
+
+
+@app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=4096, max_containers=16)
+def lesson_video_part_bench(page_url: str, max_frames: int, flags: list, t_spawn: float) -> dict:
+    import sys
+    import time
+    sys.path.insert(0, "/root")
+    import lesson_video as lv
+    t = time.time()
+    res = lv.render_part(page_url, max_frames=max_frames, channel="chrome", extra_args=flags, stop_at_max=True)
+    res["timing"]["queue_s"] = round(t - t_spawn, 2)
     return {k: v for k, v in res.items() if k not in ("video", "segments")} | {"video_bytes": len(res["video"])}
 
 
@@ -538,6 +579,8 @@ def web():
         callback_url: str | None = Field(default=None, max_length=500)
         parts: list[list[int]] | None = Field(default=None, max_length=200)
         total_s: float | None = Field(default=None, ge=0, le=6 * 3600)
+        asset_urls: list[str] | None = Field(default=None, max_length=5000)
+        part_assets: list[list[int]] | None = Field(default=None, max_length=200)
 
     @api.post("/video", status_code=202)
     def video_endpoint(req: VideoRequest, x_render_token: str | None = Header(default=None)):
@@ -546,19 +589,24 @@ def web():
         for u in (req.page_url, req.upload_url, req.callback_url):
             if u and not u.startswith("https://"):
                 raise HTTPException(status_code=400, detail="urls must be https")
-        call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url, req.parts, req.total_s)
+        for u in req.asset_urls or []:
+            if not u.startswith("https://"):
+                raise HTTPException(status_code=400, detail="asset urls must be https")
+        call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url, req.parts, req.total_s,
+                                  req.asset_urls, req.part_assets)
         return {"accepted": True, "call_id": call.object_id}
 
     class VideoBenchRequest(BaseModel):
         page_url: str = Field(min_length=10, max_length=2000)
         max_frames: int = Field(default=500, ge=1, le=25 * 600)
-        engine: str = Field(default="chrome", max_length=300)
+        flags: str = Field(default="", max_length=300)
+        cpu: float = Field(default=4.0, ge=1.0, le=16.0)
 
     @api.post("/video/bench", status_code=202)
     def video_bench(req: VideoBenchRequest, x_render_token: str | None = Header(default=None)):
         # One part rendered with a chosen engine; read the timing with GET /result/{call_id} (video bytes dropped).
         _auth(x_render_token)
-        call = video_bench_fn.spawn(req.page_url, req.max_frames, req.engine)
+        call = video_bench_fn.spawn(req.page_url, req.max_frames, req.flags, req.cpu)
         return {"accepted": True, "call_id": call.object_id}
 
     @api.post("/warm", status_code=202)

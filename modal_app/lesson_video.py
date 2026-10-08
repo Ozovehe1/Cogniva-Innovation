@@ -15,6 +15,13 @@ To go faster still, the lesson is split into parts at step boundaries (?from=&to
 starts from the board exactly as it stands at that step) and the parts render in parallel containers. assemble()
 joins the parts' H.264 by stream copy, lays every part's narration on one track and muxes the MP4.
 
+Storage is read once per render: the orchestrator downloads every narration line and clip of the lesson (prefetch())
+and hands each part the files it needs; the part's browser is served those bytes instead of asking Supabase Storage
+(dozens of parts asking at once got 429 "too many connections").
+
+Capture speed: Chrome paces screenshots to its 60 Hz frame clock, which on a busy CPU cost 100-175 ms a frame; with
+--disable-frame-rate-limit --disable-gpu-vsync a capture is only the draw itself.
+
 Local test of one part:  python lesson_video.py "<render page url>" /tmp/out
 """
 
@@ -35,12 +42,23 @@ from concurrent.futures import ThreadPoolExecutor
 
 FPS = 25
 WIDTH, HEIGHT = 1280, 720
-SAMPLE_RATE = 44100
+# The narration voice (Kokoro) is 24 kHz mono: the track is built and encoded at that rate.
+SAMPLE_RATE = 24000
 # Supabase Storage's per-file limit is 50 MB on this project; stay safely under it.
 MAX_BYTES = 47 * 1024 * 1024
-AUDIO_KBPS = 96
+AUDIO_KBPS = 64
 CLOCK_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video_clock.js")
 FRAME_MS = 1000 / FPS
+# Threads for each part's H.264 encoder (it runs beside Chrome in the same container).
+X264_THREADS = 2
+CHROME_ARGS = [
+    "--autoplay-policy=no-user-gesture-required", "--disable-dev-shm-usage", "--hide-scrollbars", "--force-color-profile=srgb",
+    "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
+    # Draw a frame the moment the recorder asks for it instead of waiting for the next 60 Hz tick.
+    "--disable-frame-rate-limit", "--disable-gpu-vsync",
+    # The clips come from a local file server (ClipCache); let the public page load them.
+    "--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,LocalNetworkAccessChecks",
+]
 
 
 def _log(*a):
@@ -50,7 +68,7 @@ def _log(*a):
 def x264_args(maxrate: int | None) -> list[str]:
     """One encoder setting for every part, so the parts join by stream copy."""
     rate = ["-crf", "26"] + (["-maxrate", str(maxrate), "-bufsize", str(maxrate * 2)] if maxrate else [])
-    return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "animation", *rate, "-pix_fmt", "yuv420p", "-r", str(FPS),
+    return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "animation", "-threads", str(X264_THREADS), *rate, "-pix_fmt", "yuv420p", "-r", str(FPS),
             "-x264-params", f"keyint={FPS * 10}:min-keyint={FPS}:scenecut=40"]
 
 
@@ -61,122 +79,110 @@ def max_video_rate(total_s: float) -> int:
 
 
 class ClipCache:
-    """Serves the lesson's Manim clips re-encoded with every frame a keyframe, so the virtual clock can seek them to
-    the exact frame each time (seeking a normal H.264 file means decoding from the last keyframe, ~0.3 s a frame).
-    The page's clip requests are redirected to a small local file server with byte ranges (sending ~20 MB bodies
-    through the DevTools pipe on every range request is far too slow)."""
+    """The lesson's Manim clips as still frames. Seeking a <video> to every frame and compositing it cost ~30 ms a step
+    and ~150-180 ms a capture on the recorder's CPU (a clip-heavy part ran at ~5 fps), so the clock never seeks clip
+    videos: each clip is cut once into JPEG frames at the video's frame rate, and lesson_video_clock.js shows the frame
+    for the clip's virtual playhead in an <img> laid exactly over the (hidden) video. The page still loads the original
+    MP4 (duration, size and the narration clock come from it); it is served from memory with byte ranges."""
 
-    def __init__(self, workdir: str):
-        import http.server
-        import threading
-
+    def __init__(self, workdir: str, assets: dict[str, bytes] | None = None):
         self.dir = workdir
         os.makedirs(workdir, exist_ok=True)
-        self.files: dict[str, asyncio.Future] = {}
-        self.codec = os.environ.get("LV_CLIP_CODEC", "h264")  # vp8 for local tests in Chromium (no H.264)
-        root = workdir
+        self.assets = assets or {}
+        self.jobs: dict[str, asyncio.Future] = {}
+        self.data: dict[str, bytes] = {}
 
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, *a):  # noqa: D401
-                pass
+    @staticmethod
+    def key(url: str) -> str:
+        return url.split("?")[0]
 
-            def _cors(self):
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Private-Network", "true")
-
-            def do_OPTIONS(self):  # noqa: N802
-                self.send_response(204)
-                self._cors()
-                self.send_header("Access-Control-Allow-Headers", "*")
-                self.end_headers()
-
-            def do_GET(self):  # noqa: N802
-                path = os.path.join(root, os.path.basename(self.path.split("?")[0]))
-                if not os.path.isfile(path):
-                    self.send_response(404)
-                    self._cors()
-                    self.end_headers()
-                    return
-                size = os.path.getsize(path)
-                start, end = 0, size - 1
-                rng = self.headers.get("Range")
-                if rng and rng.startswith("bytes="):
-                    x, _, y = rng[6:].partition("-")
-                    start = int(x or 0)
-                    end = min(size - 1, int(y) if y else size - 1)
-                    self.send_response(206)
-                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-                else:
-                    self.send_response(200)
-                self._cors()
-                self.send_header("Content-Type", "video/webm" if path.endswith(".webm") else "video/mp4")
-                self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Content-Length", str(end - start + 1))
-                self.send_header("Cache-Control", "max-age=3600")
-                self.end_headers()
-                try:
-                    with open(path, "rb") as f:
-                        f.seek(start)
-                        left = end - start + 1
-                        while left > 0:
-                            chunk = f.read(min(left, 1 << 20))
-                            if not chunk:
-                                break
-                            self.wfile.write(chunk)
-                            left -= len(chunk)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.server.daemon_threads = True
-        self.port = self.server.server_address[1]
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def close(self):
-        try:
-            self.server.shutdown()
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _convert(self, url: str) -> str | None:
+    def _cut(self, url: str) -> dict | None:
         import hashlib
-        base = os.path.join(self.dir, hashlib.sha1(url.encode()).hexdigest()[:16])
-        src = base + ".src.mp4"
-        out = base + (".webm" if self.codec == "vp8" else ".mp4")
-        if os.environ.get("LV_CLIP_DIR") and os.path.exists(out):
-            return out
+        h = hashlib.sha1(url.encode()).hexdigest()[:16]
+        out = os.path.join(self.dir, h)
+        os.makedirs(out, exist_ok=True)
         try:
-            _fetch(url, src)
-            if self.codec == "vp8":
-                enc = ["-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "4M", "-g", "1", "-auto-alt-ref", "0"]
-            else:
-                enc = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "20", "-g", "1", "-bf", "0", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
-            _run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-an", *enc, out], timeout=300)
-            return out
+            data = self.assets.get(url)
+            if data is None:
+                data = _get(url)
+            self.data[url] = data
+            src = os.path.join(out, "src.mp4")
+            with open(src, "wb") as f:
+                f.write(data)
+            _run(["ffmpeg", "-y", "-loglevel", "error", "-threads", "2", "-i", src, "-an", "-vf", f"fps={FPS}", "-q:v", "3", "-start_number", "0",
+                  os.path.join(out, "%d.jpg")], timeout=300)
+            if os.environ.get("LV_CLIP_CODEC") == "vp8":
+                # Local runs in Playwright's Chromium, which has no H.264: the page gets a VP8 copy for its metadata.
+                webm = os.path.join(out, "src.webm")
+                _run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-an", "-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "1M", webm], timeout=300)
+                with open(webm, "rb") as f:
+                    self.data[url] = f.read()
+            n = len([x for x in os.listdir(out) if x.endswith(".jpg")])
+            return {"base": f"/__gmclip/{h}/", "count": n, "fps": FPS, "dir": out} if n else None
         except Exception as exc:  # noqa: BLE001
-            _log(f"clip re-encode failed ({url[-60:]}): {exc}")
-            return src if os.path.exists(src) else None
+            _log(f"clip frames failed ({url[-60:]}): {exc}")
+            return None
 
-    async def get(self, url: str) -> str | None:
-        key = url.split("?")[0]
-        if key not in self.files:
-            self.files[key] = asyncio.ensure_future(asyncio.get_running_loop().run_in_executor(None, self._convert, key))
-        return await self.files[key]
+    def prepare(self, url: str) -> asyncio.Future:
+        k = self.key(url)
+        if k not in self.jobs:
+            self.jobs[k] = asyncio.ensure_future(asyncio.get_running_loop().run_in_executor(None, self._cut, k))
+        return self.jobs[k]
 
-    async def handle(self, route):
+    async def frames_map(self) -> dict:
+        out = {}
+        for k, fut in list(self.jobs.items()):
+            r = await fut
+            if r:
+                out[k] = {"base": r["base"], "count": r["count"], "fps": r["fps"]}
+        return out
+
+    async def handle_video(self, route):
+        """The clip's MP4 itself, from memory, honouring Range."""
+        k = self.key(route.request.url)
         try:
-            path = await self.get(route.request.url)
-            if not path:
+            fut = self.prepare(k)
+            data = self.data.get(k) or (self.assets.get(k) if os.environ.get("LV_CLIP_CODEC") != "vp8" else None)
+            if data is None:
+                await fut
+                data = self.data.get(k)
+            if data is None:
                 await route.continue_()
                 return
-            await route.fulfill(status=302, headers={"Location": f"http://127.0.0.1:{self.port}/{os.path.basename(path)}", "Access-Control-Allow-Origin": "*"})
+            size = len(data)
+            start, end = 0, size - 1
+            rng = route.request.headers.get("range")
+            hdr = {"Content-Type": "video/webm" if data[:4] == b"\x1a\x45\xdf\xa3" else "video/mp4", "Accept-Ranges": "bytes", "Access-Control-Allow-Origin": "*", "Cache-Control": "max-age=3600"}
+            if rng and rng.startswith("bytes="):
+                x, _, y = rng[6:].partition("-")
+                start = min(size - 1, int(x or 0))
+                end = min(size - 1, int(y) if y else size - 1)
+                hdr["Content-Range"] = f"bytes {start}-{end}/{size}"
+                await route.fulfill(status=206, body=data[start:end + 1], headers=hdr)
+            else:
+                await route.fulfill(status=200, body=data, headers=hdr)
         except Exception as exc:  # noqa: BLE001
             _log(f"clip route failed: {exc}")
             await route.continue_()
 
+    async def handle_frame(self, route):
+        from urllib.parse import urlparse
+        parts = urlparse(route.request.url).path.split("/")  # /__gmclip/<hash>/<n>.jpg
+        path = os.path.join(self.dir, os.path.basename(parts[-2]), os.path.basename(parts[-1]))
+        if not os.path.isfile(path):
+            await route.fulfill(status=404, body=b"")
+            return
+        await route.fulfill(status=200, path=path, headers={"Content-Type": "image/jpeg", "Cache-Control": "max-age=3600"})
+
+
+def _ctype(url: str) -> str:
+    u = url.split("?")[0].lower()
+    return "audio/mpeg" if u.endswith(".mp3") else "application/json" if u.endswith(".json") else "video/mp4" if u.endswith(".mp4") else "application/octet-stream"
+
 
 async def record(page_url: str, out_video: str, max_frames: int, settle_s: float = 0.0, on_progress=None, channel: str | None = None,
-                 maxrate: int | None = None, extra_args: list[str] | None = None) -> dict:
+                 maxrate: int | None = None, extra_args: list[str] | None = None, assets: dict[str, bytes] | None = None,
+                 stop_at_max: bool = False) -> dict:
     """Play the render page on a virtual clock (lesson_video_clock.js): step it one frame at a time, capture each frame
     that changed and pipe them to ffmpeg as constant-25-fps H.264. Returns timings, the narration log and page info."""
     from playwright.async_api import async_playwright
@@ -185,7 +191,12 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
     timing: dict = {}
     t_launch = time.time()
     ff = None
-    clips = ClipCache(os.environ.get("LV_CLIP_DIR") or tempfile.mkdtemp(prefix="lv-clips-"))
+    assets = assets or {}
+    clips = ClipCache(tempfile.mkdtemp(prefix="lv-clips-"), assets)
+    for u in assets:
+        if "/manim-clips/" in u and u.endswith(".mp4"):
+            clips.prepare(u)  # cut the frames while the page loads
+    served = {"hit": 0, "miss": 0}
     frames = shots = 0
     async with async_playwright() as p:
         proxy = None
@@ -193,49 +204,45 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
             from urllib.parse import urlparse
             u = urlparse(os.environ["LV_PROXY"])
             proxy = {"server": f"{u.scheme}://{u.hostname}:{u.port}", "username": u.username or "", "password": u.password or ""}
-        if os.environ.get("LV_DEBUG"):
-            _log("launching")
-        browser = await p.chromium.launch(
-            channel=channel, proxy=proxy,
-            args=["--autoplay-policy=no-user-gesture-required", "--disable-dev-shm-usage", "--hide-scrollbars", "--force-color-profile=srgb",
-                  "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
-                  # The clips come from a local file server (ClipCache); let the public page load them.
-                  "--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,LocalNetworkAccessChecks",
-                  *(extra_args or []), *[a for a in os.environ.get("LV_EXTRA_ARGS", "").split() if a]],
-        )
+        browser = await p.chromium.launch(channel=channel, proxy=proxy, args=[*CHROME_ARGS, *(extra_args or [])])
         try:
             ctx = await browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=1, reduced_motion="no-preference")
             await ctx.add_init_script(path=CLOCK_JS)
-            await ctx.route(lambda url: "/manim-clips/" in url and ".mp4" in url, clips.handle)
+            await ctx.route(lambda url: "/manim-clips/" in url and ".mp4" in url, clips.handle_video)
+            await ctx.route(lambda url: "/__gmclip/" in url, clips.handle_frame)
+
+            async def from_prefetch(route):
+                # Narration lines and clip pen paths the orchestrator already downloaded: never ask Storage again.
+                body = assets.get(route.request.url.split("?")[0])
+                if body is None:
+                    served["miss"] += 1
+                    await route.continue_()
+                    return
+                served["hit"] += 1
+                await route.fulfill(status=200, body=body, headers={"Content-Type": _ctype(route.request.url), "Access-Control-Allow-Origin": "*",
+                                                                     "Cache-Control": "max-age=3600"})
+
+            if assets:
+                await ctx.route(lambda url: "/storage/v1/object/public/" in url and not ("/manim-clips/" in url and ".mp4" in url), from_prefetch)
             page = await ctx.new_page()
-            if os.environ.get("LV_DEBUG"):
-                _log("page open, loading", page_url[:80])
             page.on("console", lambda m: console.append(f"{m.type}: {m.text}"[:300]) if m.type in ("error", "warning") else None)
             page.on("pageerror", lambda e: console.append(f"pageerror: {e}"[:300]))
             t_open = time.time()
             timing["launch_s"] = round(t_open - t_launch, 2)
             resp = await page.goto(page_url, wait_until="load", timeout=120_000)
-            if os.environ.get("LV_DEBUG"):
-                _log(f"page loaded {time.time() - t_open:.1f}s", resp and resp.status, resp and await resp.all_headers(), resp and resp.url)
             if not resp or resp.status >= 400:
                 raise RuntimeError(f"render page answered {resp.status if resp else 'nothing'}")
             # The page fetches its narration lines and clips before it says it is ready.
-            if os.environ.get("LV_DEBUG"):
-                page.on("requestfailed", lambda r: _log("request failed", r.url[:100], r.failure))
-                page.on("response", lambda r: _log("response", r.status, r.url[:100]) if ("127.0.0.1" in r.url or "manim" in r.url) else None)
             await page.wait_for_function("window.__gmRender && window.__gmRender.ready", timeout=180_000, polling=100)
             info = await page.evaluate("({missing: __gmRender.missing, lines: __gmRender.lines, total: __gmRender.total})")
+            frames_map = await clips.frames_map()
+            await page.evaluate("(m) => { window.__gmClipFrames = m }", frames_map)
+            info["clips"] = len(frames_map)
             timing["ready_s"] = round(time.time() - t_open, 2)
-            if os.environ.get("LV_DEBUG"):
-                _log("ready", timing, info)
             ff = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", str(FPS), "-i", "-",
                                    *x264_args(maxrate), "-an", "-movflags", "+faststart", out_video], stdin=subprocess.PIPE)
             cdp = await ctx.new_cdp_session(page)
-            if os.environ.get("LV_DEBUG"):
-                _log("cdp ok")
             t0 = await page.evaluate("__vclock.enable(), __gmRender.start()") / 1000.0
-            if os.environ.get("LV_DEBUG"):
-                _log("started", t0)
             t_cap = time.time()
             last = None
             settle_frames = int(round(settle_s * FPS))
@@ -245,21 +252,11 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
             while True:
                 ts = time.time()
                 try:
-                    st = await asyncio.wait_for(page.evaluate("__vclock.step(%s).then(r => ({d: r.dirty, c: __gmRender.cursor, t: __gmRender.total, e: __gmRender.done}))" % (0 if first else FRAME_MS)), float(os.environ.get('LV_STEP_TIMEOUT', 60)))
+                    st = await asyncio.wait_for(page.evaluate("__vclock.step(%s).then(r => ({d: r.dirty, c: __gmRender.cursor, t: __gmRender.total, e: __gmRender.done}))" % (0 if first else FRAME_MS)), 60.0)
                 except asyncio.TimeoutError:
-                    if os.environ.get("LV_DEBUG"):
-                        _log("step timed out; pausing the page")
-                        fut = asyncio.get_running_loop().create_future()
-                        cdp.on("Debugger.paused", lambda e: fut.done() or fut.set_result(e))
-                        await cdp.send("Debugger.pause")
-                        ev = await asyncio.wait_for(fut, 20)
-                        for fr in ev["callFrames"][:25]:
-                            _log("  at", fr["functionName"], fr["url"][-60:], fr["location"]["lineNumber"])
                     raise RuntimeError(f"the page stopped responding at frame {frames}: {await page.evaluate('__vclock.stats()')}")
                 first = False
                 prof["step_s"] += time.time() - ts
-                if os.environ.get("LV_DEBUG") and (time.time() - ts > 0.5 or frames % 250 == 0):
-                    _log(f"frame {frames} step {time.time() - ts:.2f}s cursor {st['c']}/{st['t']} wall {time.time() - t_cap:.1f}s", await page.evaluate("__vclock.stats()"))
                 if st["d"] or last is None:
                     t1 = time.time()
                     shot = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 88, "optimizeForSpeed": True})
@@ -275,18 +272,19 @@ async def record(page_url: str, out_video: str, max_frames: int, settle_s: float
                 if done_at is not None and frames - done_at >= settle_frames:
                     break
                 if frames >= max_frames:
-                    if os.environ.get("LV_TEST"):
+                    if stop_at_max:
                         break
                     raise RuntimeError(f"the lesson did not finish within {max_frames // FPS} s of video (at step {st['c']} of {st['t']})")
                 if on_progress and frames % 125 == 0:
                     on_progress(st["c"], st["t"], frames)
             timing["capture_s"] = round(time.time() - t_cap, 2)
             timing.update({k: round(v, 2) for k, v in prof.items()})
+            timing["prefetched"] = served["hit"]
+            timing["fetched"] = served["miss"]
             audio_log = await page.evaluate("window.__gmAudioLog || []")
             errors = await page.evaluate("(window.__gmRender.errors || []).concat(window.__vclock.errors || [])")
         finally:
             await browser.close()
-            clips.close()
             if ff and ff.poll() is None and sys.exc_info()[0] is not None:
                 ff.kill()
     ff.stdin.close()
@@ -305,10 +303,39 @@ def _run(cmd: list[str], timeout: float = 3600):
     return r
 
 
+def _get(url: str, attempts: int = 5) -> bytes:
+    """GET with retry and backoff on Storage's 429 / 5xx and network errors."""
+    import random
+    import urllib.error
+    delay = 0.4
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "geniusmap-lesson-video"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (408, 425, 429, 500, 502, 503, 504) or attempt == attempts - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            if attempt == attempts - 1:
+                raise
+        time.sleep(delay + random.random() * delay)
+        delay *= 2
+    raise RuntimeError("unreachable")
+
+
 def _fetch(url: str, dest: str):
-    req = urllib.request.Request(url, headers={"User-Agent": "geniusmap-lesson-video"})
-    with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
+    data = _get(url)
+    with open(dest, "wb") as f:
+        f.write(data)
+
+
+def prefetch_one(url: str) -> bytes | None:
+    """One file for the orchestrator's prefetch; None when it is missing (a line never voiced) or keeps failing."""
+    try:
+        return _get(url)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _decode(path: str) -> bytes:
@@ -337,26 +364,29 @@ def narration_segments(audio_log: list[dict], t0_ms: float, dur_s: float) -> lis
 class Narration:
     """Fetches and decodes narration files in the background (started as soon as a part reports its lines)."""
 
-    def __init__(self, workdir: str):
+    def __init__(self, workdir: str, files: dict[str, bytes] | None = None):
         self.dir = os.path.join(workdir, "audio")
         os.makedirs(self.dir, exist_ok=True)
-        self.pool = ThreadPoolExecutor(max_workers=8)
+        self.pool = ThreadPoolExecutor(max_workers=max(4, os.cpu_count() or 4))
         self.jobs: dict[str, object] = {}
+        self.files = files or {}
 
     def want(self, srcs):
         for src in srcs:
             if src not in self.jobs:
                 self.jobs[src] = self.pool.submit(self._load, src, os.path.join(self.dir, f"{len(self.jobs)}.mp3"))
 
-    @staticmethod
-    def _load(src: str, dest: str) -> bytes | None:
-        for attempt in range(3):
-            try:
+    def _load(self, src: str, dest: str) -> bytes | None:
+        try:
+            data = self.files.get(src.split("?")[0])
+            if data is not None:
+                with open(dest, "wb") as f:
+                    f.write(data)
+            else:
                 _fetch(src, dest)
-                return _decode(dest)
-            except Exception as exc:  # noqa: BLE001
-                if attempt == 2:
-                    _log(f"narration file failed ({src[-60:]}): {exc}")
+            return _decode(dest)
+        except Exception as exc:  # noqa: BLE001
+            _log(f"narration file failed ({src[-60:]}): {exc}")
         return None
 
     def pcm(self, src: str) -> bytes | None:
@@ -403,12 +433,13 @@ def probe(path: str) -> dict:
 
 
 def render_part(page_url: str, max_frames: int, settle_s: float = 0.0, maxrate: int | None = None, channel: str | None = None, on_progress=None,
-                extra_args: list[str] | None = None) -> dict:
+                extra_args: list[str] | None = None, assets: dict[str, bytes] | None = None, stop_at_max: bool = False) -> dict:
     """Render one part (the render page with its from/to). Returns the H.264 bytes and its narration segments."""
     workdir = tempfile.mkdtemp(prefix="lesson-part-")
     out = os.path.join(workdir, "part.mp4")
     t = time.time()
-    rec = asyncio.run(record(page_url, out, max_frames, settle_s=settle_s, on_progress=on_progress, channel=channel, maxrate=maxrate, extra_args=extra_args))
+    rec = asyncio.run(record(page_url, out, max_frames, settle_s=settle_s, on_progress=on_progress, channel=channel, maxrate=maxrate, extra_args=extra_args,
+                             assets=assets, stop_at_max=stop_at_max))
     segs = narration_segments(rec["audio_log"], rec["t0"] * 1000.0, rec["duration_s"])
     with open(out, "rb") as f:
         data = f.read()
@@ -466,6 +497,7 @@ def assemble(parts: list[dict], workdir: str, narration: Narration | None = None
 if __name__ == "__main__":
     url, outdir = sys.argv[1], sys.argv[2]
     os.makedirs(outdir, exist_ok=True)
-    part = render_part(url, max_frames=int(os.environ.get("MAX_FRAMES", str(FPS * 3600))), settle_s=2.0, channel=os.environ.get("CHROME_CHANNEL") or None)
+    part = render_part(url, max_frames=int(os.environ.get("MAX_FRAMES", str(FPS * 3600))), settle_s=2.0, channel=os.environ.get("CHROME_CHANNEL") or None,
+                       stop_at_max=bool(os.environ.get("MAX_FRAMES")))
     res = assemble([part], outdir)
     print(json.dumps({**{k: v for k, v in part.items() if k not in ("video", "segments")}, "result": res}, indent=1, default=str))

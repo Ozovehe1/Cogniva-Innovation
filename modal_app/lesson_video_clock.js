@@ -200,12 +200,39 @@
     }
   }
 
+  /**
+   * Clips cut into still frames by the recorder (window.__gmClipFrames: src -> {base, count, fps}) are never seeked:
+   * the frame for the virtual playhead is shown in an <img> laid over the hidden video (a video seek + composite per
+   * frame was the slowest thing on the recorder's CPU).
+   */
+  function showFrame(el, fr, t) {
+    let img = el.__gmFrame
+    if (!img || !img.isConnected) {
+      img = document.createElement('img')
+      img.alt = ''
+      img.decoding = 'sync'
+      img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none'
+      el.insertAdjacentElement('afterend', img)
+      el.style.opacity = '0'
+      el.__gmFrame = img
+    }
+    const n = Math.max(0, Math.min(fr.count - 1, Math.floor(t * fr.fps + 1e-6)))
+    if (img.__n === n) return null
+    img.__n = n
+    dirty = true
+    img.src = fr.base + n + '.jpg'
+    return Promise.race([img.decode().catch(() => {}), new Promise((r) => nativeSetTimeout(r, 4000))])
+  }
+
   /** Put every visible video's real frame on its virtual playhead before a capture. */
   async function seekVideos() {
     const waits = []
+    const frames = W.__gmClipFrames || null
     for (const el of document.querySelectorAll('video')) {
       if (!el.isConnected || el.readyState < 1) continue
       const want = pos(el, st(el))
+      const fr = frames && frames[(el.getAttribute('src') || '').split('?')[0]]
+      if (fr && fr.count > 0) { const w = showFrame(el, fr, want); if (w) waits.push(w); continue }
       const have = nCurrentTime.get.call(el)
       if (Math.abs(want - have) < 0.0005) continue
       dirty = true
