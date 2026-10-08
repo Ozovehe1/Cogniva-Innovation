@@ -1,31 +1,39 @@
 /**
  * Lesson videos (Download -> Video (.mp4)), rendered only when a learner asks for one.
  *
- * The Modal app (modal_app/manim_render.py, function `lesson_video`) opens the token-protected render page
- * /render/lesson/:id in headless Chrome at 1280x720. That page plays the lesson exactly as the player does (boards
- * drawn by the hand, Manim clips, KaTeX), with no controls and checks shown as a card and answered by themselves. The
- * function records the screen, rebuilds the narration track from the real audio timeline the page logs, muxes them
- * with ffmpeg, uploads the MP4 to the private lesson-videos bucket through a signed upload URL and calls back
- * /api/video/callback. A finished render is cached per lesson + script hash. Server only.
+ * The Modal app (modal_app/manim_render.py, functions `lesson_video` + `lesson_video_part`) renders the token-protected
+ * page /render/lesson/:id in headless Chrome at 1280x720. That page plays the lesson exactly as the player does (boards
+ * drawn by the hand, Manim clips, KaTeX), with no controls and checks shown as a card and answered by themselves.
+ * The page runs on a virtual clock and is captured frame by frame as fast as the CPU allows (not in real time), and
+ * the lesson is cut into parts (planVideoParts) that render side by side and are joined, so any lesson takes about a
+ * minute and a half. The narration track is rebuilt from the timeline the page logs. The MP4 goes to the private
+ * lesson-videos bucket through a signed upload URL and /api/video/callback is called. A finished render is cached per
+ * lesson + script hash. Server only.
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Step } from './lesson-schema'
 import type { Chapter } from './lesson-sections'
-import { estimateMs } from './lesson-sections'
+import { estimateStepMs } from './lesson-sections'
 import { NARRATION_VOICE } from './narration'
-import { ensureNarration, scriptLines } from './tts-server'
+import { normalizeSpoken, MAX_TTS_CHARS } from './narration'
+import { stepSpeech } from '@/components/whiteboard/speech'
+import { ensureNarration } from './tts-server'
 
 export const VIDEO_BUCKET = 'lesson-videos'
 /** Bump when the render page or the recorder changes what a video looks like: every cached video is re-rendered. */
-export const VIDEO_RENDER_VERSION = 2
+export const VIDEO_RENDER_VERSION = 3
 /** Per learner: one render at a time, and at most this many new renders a day (finished videos are free to download). */
 export const VIDEO_DAILY_LIMIT = 5
-/** Recorder overhead on top of the lesson's own running time (browser start, narration check, encode, upload). */
-const OVERHEAD_MS = 90_000
-/** An active job that has not reported for this long is treated as dead (the recorder reports every ~20 s). */
-const STALE_RENDERING_MS = 12 * 60_000
-const STALE_QUEUED_MS = 10 * 60_000
+/** Lesson time per part: each part renders in its own container in ~40-60 s, all parts at once. */
+const PART_MS = 40_000
+/** More parts than this and they get longer instead (cost and the Modal container cap). */
+const MAX_PARTS = 60
+/** Expected wall time of a render, whatever the lesson's length (containers start, parts render, join, upload). */
+const RENDER_MS = 80_000
+/** An active job that has not reported for this long is treated as dead (the renderer reports every few seconds). */
+const STALE_RENDERING_MS = 6 * 60_000
+const STALE_QUEUED_MS = 5 * 60_000
 
 export type VideoStatus = 'queued' | 'preparing' | 'rendering' | 'done' | 'failed'
 
@@ -71,9 +79,45 @@ export function videoPath(lessonId: string, hash: string) {
   return `${lessonId}/${hash}.mp4`
 }
 
-/** Expected wall time of a render: the lesson plays in real time while it is recorded. */
+/** Expected wall time of a render. Parts render in parallel, so it barely depends on the lesson's length. */
 export function videoEstimateMs(steps: Step[]) {
-  return estimateMs(steps) + OVERHEAD_MS
+  const total = steps.reduce((t, s, i) => t + estimateStepMs(s, i), 0)
+  return RENDER_MS + Math.max(0, total / MAX_PARTS - PART_MS) * 1.2
+}
+
+/**
+ * Cut the lesson into parts of about PART_MS for parallel rendering: [from, to) step ranges. Each part starts from the
+ * board as it stands at its first step, so any step can start one; a full clear (a fresh board, where the hand starts
+ * from rest anyway) is preferred when one is near the ideal cut.
+ */
+export function planVideoParts(steps: Step[]): { parts: [number, number][]; totalMs: number } {
+  const ms = steps.map((s, i) => estimateStepMs(s, i))
+  const totalMs = ms.reduce((a, b) => a + b, 0)
+  const n = Math.max(1, Math.min(MAX_PARTS, steps.length, Math.round(totalMs / PART_MS)))
+  const at: number[] = [0]
+  for (let i = 0; i < steps.length; i++) at.push(at[i] + ms[i])
+  const cuts: number[] = []
+  let prev = 0
+  for (let k = 1; k < n; k++) {
+    const ideal = (totalMs * k) / n
+    const slack = (totalMs / n) * 0.25
+    let best = -1, bestCost = Infinity
+    for (let i = prev + 1; i < steps.length; i++) {
+      if (at[i] < ideal - slack) continue
+      if (at[i] > ideal + slack) break
+      const s = steps[i]
+      const fresh = s.type === 'clear' && !s.targets
+      const cost = Math.abs(at[i] - ideal) - (fresh ? slack : 0)
+      if (cost < bestCost) { best = i; bestCost = cost }
+    }
+    if (best < 0) {
+      // No step boundary near the ideal (one long step): take the nearest one after the previous cut.
+      for (let i = prev + 1; i < steps.length; i++) if (best < 0 || Math.abs(at[i] - ideal) < Math.abs(at[best] - ideal)) best = i
+    }
+    if (best > prev && best < steps.length) { cuts.push(best); prev = best }
+  }
+  const bounds = [0, ...cuts, steps.length]
+  return { parts: bounds.slice(1).map((b, i) => [bounds[i], b] as [number, number]), totalMs }
 }
 
 export function isStale(row: Pick<LessonVideoRow, 'status' | 'updated_at'>) {
@@ -91,15 +135,12 @@ export function videoState(row: LessonVideoRow | null, cached = false): VideoSta
   if (!row) return { status: 'none', progress: 0, etaSec: null }
   if (row.status === 'done') return { status: 'done', progress: 1, etaSec: 0, bytes: row.bytes, durationMs: row.duration_ms, cached }
   if (row.status === 'failed' || isStale(row)) return { status: 'failed', progress: row.progress ?? 0, etaSec: null, error: row.status === 'failed' ? friendlyError(row.error) : 'The render stopped responding.' }
-  const est = row.est_ms ?? 0
+  const est = row.est_ms ?? RENDER_MS
   const p = Math.max(0, Math.min(1, row.progress ?? 0))
-  let left = est
-  if (row.status === 'rendering' && row.started_at) {
-    // Real time since the recording started, against the estimate, whichever says longer.
-    const elapsed = Date.now() - new Date(row.started_at).getTime()
-    left = Math.max((est - OVERHEAD_MS) * (1 - p) + 45_000, est - elapsed)
-  }
-  return { status: row.status, progress: p, etaSec: Math.max(15, Math.round(left / 1000)) }
+  // Time since the learner asked, against the estimate; never promises less than a few seconds.
+  const elapsed = Date.now() - new Date(row.created_at).getTime()
+  const left = Math.max(est * (1 - p) * 0.9, est - elapsed)
+  return { status: row.status, progress: p, etaSec: Math.max(5, Math.round(left / 1000)) }
 }
 
 function friendlyError(e: string | null) {
@@ -120,7 +161,7 @@ function sign(lessonId: string, jobId: string, exp: number) {
   return createHmac('sha256', secret()).update(`lesson-video:${lessonId}:${jobId}:${exp}`).digest('base64url')
 }
 
-/** URL of the render page for one job; valid for `ttlMs` (long enough for the longest lesson to play through). */
+/** URL of the render page for one job; valid for `ttlMs`. The renderer adds &from=&to= for each part. */
 export function renderPageUrl(origin: string, lessonId: string, jobId: string, ttlMs: number) {
   const exp = Math.floor((Date.now() + ttlMs) / 1000)
   // hand=photo: the photographic hand (the player's own fallback). The 3D hand renders in software on the recorder's
@@ -144,7 +185,7 @@ export function videoServiceConfigured() {
 }
 
 /** Ask the Modal recorder to render this job. Updates the row with the outcome. */
-export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow, 'id' | 'lesson_id' | 'script_hash' | 'est_ms'>, origin: string) {
+export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow, 'id' | 'lesson_id' | 'script_hash'>, origin: string, plan: { parts: [number, number][]; totalMs: number }) {
   const fail = async (error: string) => {
     await db.from('lesson_videos').update({ status: 'failed', error, updated_at: new Date().toISOString() }).eq('id', row.id)
     return { ok: false as const, error }
@@ -153,15 +194,16 @@ export async function dispatchVideo(db: SupabaseClient, row: Pick<LessonVideoRow
   const path = videoPath(row.lesson_id, row.script_hash)
   const { data: signed, error: signErr } = await db.storage.from(VIDEO_BUCKET).createSignedUploadUrl(path, { upsert: true })
   if (signErr || !signed) return fail(`Could not create an upload URL: ${signErr?.message ?? 'unknown error'}`)
-  const est = row.est_ms ?? 30 * 60_000
-  const maxS = Math.round((est * 1.6 + 10 * 60_000) / 1000)
-  const pageUrl = renderPageUrl(origin, row.lesson_id, row.id, est * 2 + 60 * 60_000)
+  const { parts, totalMs } = plan
+  // A cap on any one part's video length (a page that never finishes is stopped).
+  const maxS = Math.round(Math.min(4 * 3600 - 900, Math.max(600, (totalMs * 3) / 1000)))
+  const pageUrl = renderPageUrl(origin, row.lesson_id, row.id, 2 * 3600_000)
   try {
     const base = process.env.MODAL_RENDER_URL!.replace(/\/+$/, '')
     const res = await fetch(`${base}/video`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN! },
-      body: JSON.stringify({ job_id: row.id, page_url: pageUrl, upload_url: signed.signedUrl, max_s: maxS, callback_url: `${origin}/api/video/callback` }),
+      body: JSON.stringify({ job_id: row.id, page_url: pageUrl, upload_url: signed.signedUrl, max_s: maxS, callback_url: `${origin}/api/video/callback`, parts, total_s: totalMs / 1000 }),
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) throw new Error(`video service answered ${res.status}: ${(await res.text()).slice(0, 300)}`)
@@ -193,19 +235,27 @@ export async function purgeLessonVideos(db: SupabaseClient, lessonIds: string[])
 }
 
 /**
- * Make sure every spoken line of the script is in the narration cache before recording (the render page has no
- * session, so it can only play cached lines). Cached lines cost one lookup; missing ones are voiced within a budget.
- * Returns how many lines are still missing (those would be silent in the video).
+ * Make sure every spoken line of the script is in the narration cache before rendering (the render page has no
+ * session, so it can only play cached lines). Cached lines cost one lookup; missing ones are voiced in parallel
+ * batches within a budget. Returns how many lines are still missing (those would be silent in the video).
  */
-export async function voiceForVideo(steps: Step[], budgetMs = 180_000): Promise<{ lines: number; missing: number }> {
+export async function voiceForVideo(steps: Step[], budgetMs = 45_000): Promise<{ lines: number; missing: number }> {
   const t0 = Date.now()
-  const lines = scriptLines(steps)
+  // Only the lines the video speaks (a recorded check never re-teaches).
+  const lines = [...new Set(steps.map(s => normalizeSpoken(stepSpeech(s)).slice(0, MAX_TTS_CHARS)).filter(Boolean))]
   const first = await ensureNarration(lines, { cacheOnly: true }).catch(() => null)
   let missing = first ? lines.filter((_, i) => !first.clips[i]) : lines
-  for (let k = 0; k < missing.length && Date.now() - t0 < budgetMs; k += 6) {
-    await ensureNarration(missing.slice(k, k + 6), { timeoutMs: Math.max(30_000, Math.min(120_000, budgetMs - (Date.now() - t0))) }).catch(() => null)
-  }
   if (missing.length) {
+    const batches: string[][] = []
+    for (let k = 0; k < missing.length; k += 4) batches.push(missing.slice(k, k + 4))
+    let next = 0
+    // The voice service runs several containers with a few requests each: keep 8 batches in flight.
+    await Promise.all(Array.from({ length: Math.min(8, batches.length) }, async () => {
+      while (next < batches.length && Date.now() - t0 < budgetMs) {
+        const b = batches[next++]
+        await ensureNarration(b, { timeoutMs: Math.max(15_000, budgetMs - (Date.now() - t0)) }).catch(() => null)
+      }
+    }))
     const again = await ensureNarration(missing, { cacheOnly: true }).catch(() => null)
     missing = again ? missing.filter((_, i) => !again.clips[i]) : missing
   }

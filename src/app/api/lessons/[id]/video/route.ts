@@ -5,12 +5,12 @@ import { validateScript, type Step } from '@/lib/lesson-schema'
 import { LESSON_MAX_STEPS, normalizeChapters, type Chapter } from '@/lib/lesson-sections'
 import { exportFileName } from '@/lib/lesson-export'
 import {
-  VIDEO_BUCKET, VIDEO_DAILY_LIMIT, dispatchVideo, isActive, videoEstimateMs, videoPath, videoScriptHash,
+  VIDEO_BUCKET, VIDEO_DAILY_LIMIT, dispatchVideo, isActive, planVideoParts, videoEstimateMs, videoPath, videoScriptHash,
   videoServiceConfigured, videoState, voiceForVideo, type LessonVideoRow,
 } from '@/lib/lesson-video'
 
 export const dynamic = 'force-dynamic'
-// Starting a render first makes sure every line is voiced (cached lines are one lookup each).
+// Starting a render first makes sure every line is voiced (cached lines are one lookup each, missing ones in parallel).
 export const maxDuration = 300
 
 const COLS = 'id, lesson_id, script_hash, status, requested_by, storage_path, bytes, duration_ms, est_ms, progress, call_id, error, started_at, finished_at, created_at, updated_at'
@@ -108,9 +108,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const job = row
   after(async () => {
     await db.from('lesson_videos').update({ status: 'preparing', updated_at: new Date().toISOString() }).eq('id', job.id)
+    // Missing narration is voiced first (in parallel; normally every line is already cached), then the parts render.
     const voiced = await voiceForVideo(lesson.steps).catch(() => null)
-    if (voiced) await db.from('lesson_videos').update({ meta: { lines: voiced.lines, unvoiced: voiced.missing } }).eq('id', job.id)
-    await dispatchVideo(db, job, origin)
+    const plan = planVideoParts(lesson.steps)
+    await db.from('lesson_videos').update({ meta: { lines: voiced?.lines ?? null, unvoiced: voiced?.missing ?? null, parts: plan.parts.length, est_lesson_ms: Math.round(plan.totalMs) } }).eq('id', job.id)
+    await dispatchVideo(db, job, origin, plan)
   })
   return NextResponse.json(videoState(row), { status: 202 })
 }

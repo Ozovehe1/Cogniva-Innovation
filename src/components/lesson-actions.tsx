@@ -8,13 +8,14 @@ export { LessonDelete } from './delete-dialog'
 type VideoStatus = 'none' | 'queued' | 'preparing' | 'rendering' | 'done' | 'failed'
 interface VideoState { status: VideoStatus; progress: number; etaSec: number | null; error?: string | null; cached?: boolean }
 
-const POLL_MS = 5000
+const POLL_MS = 2000
 const active = (s: VideoStatus | undefined) => s === 'queued' || s === 'preparing' || s === 'rendering'
 
 function etaLabel(v: VideoState) {
   if (v.status === 'queued' || v.status === 'preparing') return 'Getting the video ready…'
-  const min = v.etaSec ? Math.max(1, Math.round(v.etaSec / 60)) : null
-  return min ? `Rendering video… about ${min} min` : 'Rendering video…'
+  const pct = Math.round(v.progress * 100)
+  const left = v.etaSec ? (v.etaSec < 60 ? `about ${Math.max(5, Math.round(v.etaSec / 5) * 5)} s left` : `about ${Math.round(v.etaSec / 60)} min left`) : null
+  return `Making your video… ${pct > 2 ? `${pct}%` : ''}${pct > 2 && left ? ' · ' : ''}${left ?? ''}`.trim()
 }
 
 /**
@@ -107,7 +108,7 @@ export function LessonDownload({ lessonId }: { lessonId: string }) {
             <span>
               <span className="block text-sm font-medium text-ink">Video (.mp4)</span>
               <span className="block text-[12px] leading-snug text-muted">
-                {rendering && video ? etaLabel(video) : video?.status === 'done' ? 'Ready. Tap to download again.' : 'The lesson as it plays, with the voice. Made when you tap.'}
+                {rendering && video ? etaLabel(video) : video?.status === 'done' ? 'Ready. Tap to download again.' : 'The lesson as it plays, with the voice. Ready in about 2 minutes.'}
               </span>
             </span>
           </button>
@@ -127,7 +128,7 @@ export function LessonDownload({ lessonId }: { lessonId: string }) {
               <p className="mt-0.5 text-[12px] leading-snug text-muted">
                 {error ?? (video?.status === 'failed' ? (video.error ?? 'Something went wrong while recording.') : video?.status === 'done'
                   ? <>It should download now. <button type="button" onClick={download} className="font-medium text-accent underline-offset-2 hover:underline">Download again</button></>
-                  : 'Keep learning meanwhile. If you leave, tap Video again later and it downloads straight away.')}
+                  : 'It takes about a minute and a half. Keep learning meanwhile; if you leave, tap Video again later and it downloads straight away.')}
               </p>
               {rendering && video && (
                 <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-label="Video progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(video.progress * 100)}>

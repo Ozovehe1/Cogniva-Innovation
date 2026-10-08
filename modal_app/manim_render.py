@@ -2,7 +2,8 @@
 GeniusMap Manim render service (Modal app "geniusmap-manim").
 
 POST /render  (header X-Render-Token must equal the RENDER_TOKEN secret)
-POST /video   records a lesson as an MP4 (function lesson_video, see lesson_video.py) and calls back /api/video/callback
+POST /video   renders a lesson as an MP4 (function lesson_video: parts in parallel on a virtual clock, see lesson_video.py)
+              and calls back /api/video/callback
   body: {"job_id": str, "code": str, "scene_name": str, "upload_url": str, "paths_upload_url"?: str}
   -> 202 {"accepted": true}; the render runs asynchronously.
 
@@ -81,6 +82,7 @@ video_image = (
     )
     .pip_install("playwright==1.55.0", "httpx==0.27.2")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video.py"), "/root/lesson_video.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "lesson_video_clock.js"), "/root/lesson_video_clock.js")
 )
 
 secret = modal.Secret.from_name(SECRET_NAME)
@@ -253,11 +255,27 @@ def _video_callback(callback_url: str | None, job_id: str, status: str, **extra)
             print(f"video callback attempt {attempt + 1} failed: {exc}")
 
 
-# Real time: the lesson plays through once while it is recorded, so a 20-minute lesson takes ~22 minutes. Kept small
-# (2 CPUs, at most 2 at once; more requests queue) because renders only happen when a learner taps Download -> Video.
-@app.function(image=video_image, secrets=[secret], timeout=4 * 3600, cpu=2.0, memory=3072, max_containers=2)
-def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200, callback_url: str | None = None) -> dict:
+# Lesson videos render on a virtual clock (lesson_video.py): each part of the lesson is drawn frame by frame as fast as
+# the CPU allows (~25-35 frames a second, i.e. faster than real time), and the parts render side by side, so a lesson
+# of any length is ready in about a minute and a half. CPU only; a part container lives ~40-70 s.
+@app.function(image=video_image, secrets=[secret], timeout=600, cpu=2.0, memory=3072, max_containers=64,
+              retries=modal.Retries(max_retries=1, initial_delay=0.0, backoff_coefficient=1.0))
+def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None) -> dict:
     import sys
+    sys.path.insert(0, "/root")
+    import lesson_video as lv
+
+    res = lv.render_part(page_url, max_frames=max_frames, settle_s=settle_s, maxrate=maxrate, channel="chrome")
+    print(f"part {index}: {res['duration_s']:.1f}s of video, {res['shots']}/{res['frames']} frames drawn, {res['timing']}")
+    return {"index": index, **res}
+
+
+@app.function(image=video_image, secrets=[secret], timeout=1800, cpu=2.0, memory=4096, max_containers=8)
+def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200, callback_url: str | None = None,
+                 parts: list | None = None, total_s: float | None = None) -> dict:
+    """Render the parts in parallel, join them, upload the MP4 and call back. `parts` are [from, to) step ranges."""
+    import sys
+    import tempfile
     import time
 
     import httpx
@@ -266,26 +284,56 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     import lesson_video as lv
 
     t0 = time.time()
-    _video_callback(callback_url, job_id, "rendering", progress=0)
+    ranges = [(int(p[0]), int(p[1])) for p in (parts or [])] or [(0, 10 ** 6)]
+    total = float(total_s or max_s / 2)
+    maxrate = lv.max_video_rate(total)
+    sep = "&" if "?" in page_url else "?"
+    args = []
+    for i, (a, b) in enumerate(ranges):
+        last = i == len(ranges) - 1
+        url = page_url + (f"{sep}from={a}&to={b}" if parts else "")
+        # Generous frame cap per part (a part normally runs ~30-60 s of video): stops a page that never finishes.
+        args.append((i, url, int(min(max_s, max(600, total * 3 / len(ranges) + 300)) * lv.FPS), 2.0 if last else 0.0, maxrate))
+    _video_callback(callback_url, job_id, "rendering", progress=0.02)
+    workdir = tempfile.mkdtemp(prefix="lesson-video-")
+    narration = lv.Narration(workdir)
+    done: dict[int, dict] = {}
+    last_report = 0.0
     try:
-        res = lv.render_lesson_video(page_url, max_s=max_s, channel="chrome",
-                                     on_progress=lambda p: _video_callback(callback_url, job_id, "rendering", progress=round(p, 3)))
-    except Exception as exc:  # noqa: BLE001
-        print(f"lesson video failed: {exc}")
-        _video_callback(callback_url, job_id, "failed", error=f"{type(exc).__name__}: {exc}"[:3000])
-        return {"ok": False, "error": str(exc)[:500]}
-    with open(res["path"], "rb") as f:
-        data = f.read()
-    try:
+        for res in lesson_video_part.starmap(args, order_outputs=False, return_exceptions=True):
+            if isinstance(res, BaseException):
+                raise RuntimeError(f"a part of the video failed: {res}")
+            done[res["index"]] = res
+            narration.want(sg[0] for sg in res["segments"])  # fetch its narration while the other parts render
+            now = time.time()
+            if now - last_report > 2 or len(done) == len(ranges):
+                last_report = now
+                _video_callback(callback_url, job_id, "rendering", progress=round(0.05 + 0.85 * len(done) / len(ranges), 3))
+        t_parts = time.time()
+        out = lv.assemble([done[i] for i in range(len(ranges))], workdir, narration)
+        t_join = time.time()
+        with open(out["path"], "rb") as f:
+            data = f.read()
         r = httpx.put(upload_url, content=data, headers={"Content-Type": "video/mp4", "x-upsert": "true", "cache-control": "max-age=31536000"}, timeout=300)
         if r.status_code >= 300:
             raise RuntimeError(f"upload failed ({r.status_code}): {r.text[:300]}")
     except Exception as exc:  # noqa: BLE001
-        _video_callback(callback_url, job_id, "failed", error=str(exc)[:3000])
+        print(f"lesson video failed: {exc}")
+        _video_callback(callback_url, job_id, "failed", error=f"{type(exc).__name__}: {exc}"[:3000])
         return {"ok": False, "error": str(exc)[:500]}
-    meta = {**res["meta"], "wall_s": round(time.time() - t0, 1)}
-    _video_callback(callback_url, job_id, "done", bytes=res["bytes"], duration_ms=res["duration_ms"], meta=meta)
-    return {"ok": True, "bytes": res["bytes"], "duration_ms": res["duration_ms"], "meta": meta}
+    parts_meta = [done[i] for i in range(len(ranges))]
+    meta = {
+        "renderer": "virtual-clock", "parts": len(ranges), "wall_s": round(time.time() - t0, 1), "parts_s": round(t_parts - t0, 1),
+        "join_s": round(t_join - t_parts, 1), "upload_s": round(time.time() - t_join, 1),
+        "slowest_part_s": max(p["timing"].get("total_s", 0) for p in parts_meta),
+        "frames": sum(p["frames"] for p in parts_meta), "frames_drawn": sum(p["shots"] for p in parts_meta),
+        "audio": out["audio"], "width": out["width"], "height": out["height"], "has_audio": out["has_audio"],
+        "unvoiced": sum((p.get("info") or {}).get("missing", 0) for p in parts_meta),
+        "errors": [e for p in parts_meta for e in p.get("errors", [])][:5],
+    }
+    print(f"lesson video {job_id}: {meta}")
+    _video_callback(callback_url, job_id, "done", bytes=out["bytes"], duration_ms=out["duration_ms"], meta=meta)
+    return {"ok": True, "bytes": out["bytes"], "duration_ms": out["duration_ms"], "meta": meta}
 
 
 def _put(url: str | None, data: bytes, ctype: str) -> bool:
@@ -465,6 +513,8 @@ def web():
         upload_url: str = Field(min_length=10, max_length=4000)
         max_s: int = Field(default=7200, ge=60, le=4 * 3600 - 900)
         callback_url: str | None = Field(default=None, max_length=500)
+        parts: list[list[int]] | None = Field(default=None, max_length=200)
+        total_s: float | None = Field(default=None, ge=0, le=6 * 3600)
 
     @api.post("/video", status_code=202)
     def video_endpoint(req: VideoRequest, x_render_token: str | None = Header(default=None)):
@@ -473,7 +523,7 @@ def web():
         for u in (req.page_url, req.upload_url, req.callback_url):
             if u and not u.startswith("https://"):
                 raise HTTPException(status_code=400, detail="urls must be https")
-        call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url)
+        call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url, req.parts, req.total_s)
         return {"accepted": True, "call_id": call.object_id}
 
     @api.post("/warm", status_code=202)

@@ -1061,9 +1061,10 @@ export function WhiteboardPlayer({
             )}
           </AnimatePresence>
 
-          {/* Recorded video: the check on the board, then its answer; and each section's title as it begins. */}
+          {/* Recorded video: the check on the board, then its answer; and each section's title as it begins (a video
+              part that starts mid-section, see render-player, does not show it again). */}
           {renderMode && check && pendingCheck !== null && <RecordedCheck key={`rc-${pendingCheck}-${playId}`} step={check} reveal={revealFor === pendingCheck} />}
-          {renderMode && multi && sectionTitle && (
+          {renderMode && multi && sectionTitle && (chapters[section]?.start ?? 0) >= initialIndex && (
             <motion.div
               key={`sec-${section}`}
               className="pointer-events-none absolute bottom-5 left-5 z-[12] max-w-[70%] rounded-[12px] border border-line bg-surface/95 px-4 py-2.5 shadow-[var(--shadow-raised)]"
