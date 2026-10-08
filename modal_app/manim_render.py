@@ -265,7 +265,8 @@ HEAVY_PARTS = 16
 HEAVY_CPU = 4.0
 
 
-@app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=3072, max_containers=90,
+# Parts are one-shot (one input per container): no 60 s idle window, which would bill ~90 idle containers per render.
+@app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=3072, max_containers=90, scaledown_window=2,
               retries=modal.Retries(max_retries=1, initial_delay=0.0, backoff_coefficient=1.0))
 def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: float, maxrate: int | None, assets: dict | None = None,
                       t_spawn: float | None = None, clip_urls: list | None = None, skip_frames: int = 0, stop_at_max: bool = False) -> dict:
@@ -285,7 +286,7 @@ def lesson_video_part(index: int, page_url: str, max_frames: int, settle_s: floa
     return {"index": index, **res}
 
 
-@app.function(image=video_image, secrets=[secret], timeout=1800, cpu=4.0, memory=4096, max_containers=8)
+@app.function(image=video_image, secrets=[secret], timeout=1800, cpu=4.0, memory=4096, max_containers=8, scaledown_window=2)
 def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200, callback_url: str | None = None,
                  parts: list | None = None, total_s: float | None = None, asset_urls: list | None = None,
                  part_assets: list | None = None, part_ms: list | None = None) -> dict:
@@ -440,27 +441,6 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
     print(f"lesson video {job_id}: {meta}")
     _video_callback(callback_url, job_id, "done", bytes=out["bytes"], duration_ms=out["duration_ms"], meta=meta)
     return {"ok": True, "bytes": out["bytes"], "duration_ms": out["duration_ms"], "meta": meta}
-
-
-@app.function(image=web_image, secrets=[secret], timeout=900)
-def video_bench_fn(page_url: str, max_frames: int, flags: str, cpu: float) -> dict:
-    import time
-    sys_flags = [f for f in flags.split(",") if f]
-    fn = lesson_video_part_bench.with_options(cpu=cpu) if cpu != PART_CPU else lesson_video_part_bench
-    res = fn.remote(page_url, max_frames, sys_flags, time.time())
-    return res
-
-
-@app.function(image=video_image, secrets=[secret], timeout=600, cpu=PART_CPU, memory=4096, max_containers=16)
-def lesson_video_part_bench(page_url: str, max_frames: int, flags: list, t_spawn: float) -> dict:
-    import sys
-    import time
-    sys.path.insert(0, "/root")
-    import lesson_video as lv
-    t = time.time()
-    res = lv.render_part(page_url, max_frames=max_frames, channel="chrome", extra_args=flags, stop_at_max=True)
-    res["timing"]["queue_s"] = round(t - t_spawn, 2)
-    return {k: v for k, v in res.items() if k not in ("video", "segments")} | {"video_bytes": len(res["video"])}
 
 
 def _put(url: str | None, data: bytes, ctype: str) -> bool:
@@ -658,19 +638,6 @@ def web():
                 raise HTTPException(status_code=400, detail="asset urls must be https")
         call = lesson_video.spawn(req.job_id, req.page_url, req.upload_url, req.max_s, req.callback_url, req.parts, req.total_s,
                                   req.asset_urls, req.part_assets, req.part_ms)
-        return {"accepted": True, "call_id": call.object_id}
-
-    class VideoBenchRequest(BaseModel):
-        page_url: str = Field(min_length=10, max_length=2000)
-        max_frames: int = Field(default=500, ge=1, le=25 * 600)
-        flags: str = Field(default="", max_length=300)
-        cpu: float = Field(default=4.0, ge=1.0, le=16.0)
-
-    @api.post("/video/bench", status_code=202)
-    def video_bench(req: VideoBenchRequest, x_render_token: str | None = Header(default=None)):
-        # One part rendered with a chosen engine; read the timing with GET /result/{call_id} (video bytes dropped).
-        _auth(x_render_token)
-        call = video_bench_fn.spawn(req.page_url, req.max_frames, req.flags, req.cpu)
         return {"accepted": True, "call_id": call.object_id}
 
     @api.post("/warm", status_code=202)
