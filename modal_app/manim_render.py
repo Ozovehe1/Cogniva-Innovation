@@ -427,6 +427,9 @@ def lesson_video(job_id: str, page_url: str, upload_url: str, max_s: int = 7200,
         "unvoiced": sum((p.get("info") or {}).get("missing", 0) for p in parts_meta),
         "storage_fetches_in_parts": sum(p.get("fetched", 0) for p in pt),
         "errors": [e for p in parts_meta for e in p.get("errors", [])][:5],
+        # Per part: [index, seconds in the function, frames, frames drawn, probe ms, compositor (s/w), heavy]
+        "per_part": [[i, p.get("fn_s"), parts_meta[i]["frames"], parts_meta[i]["shots"], p.get("probe_ms"), (p.get("compositor") or "?")[0],
+                      int(bool(p.get("heavy")))] for i, p in enumerate(pt)],
     }
     print(f"lesson video {job_id}: {meta}")
     _video_callback(callback_url, job_id, "done", bytes=out["bytes"], duration_ms=out["duration_ms"], meta=meta)
