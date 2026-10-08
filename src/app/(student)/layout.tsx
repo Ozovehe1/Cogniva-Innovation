@@ -55,6 +55,7 @@ select_error: ${selectError?.message ?? 'none'}`}
   const navItems = [
     { href: '/dashboard', icon: 'home', label: 'Home' },
     { href: '/learn', icon: 'learn', label: 'Learn' },
+    { href: '/ask', icon: 'ask', label: 'Ask' },
   ]
   // Account things (goals, delete account, sign out) live behind the avatar menu, at /settings.
 

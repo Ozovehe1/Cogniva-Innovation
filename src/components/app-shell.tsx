@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, LayoutGrid, LogOut, Settings, X } from 'lucide-react'
+import { BookOpen, LayoutGrid, LogOut, Settings, Sparkles, X } from 'lucide-react'
 import { IdleTimeout } from './idle-timeout'
 import { Avatar, Logo, cx } from './ui'
 
@@ -12,6 +12,7 @@ export interface NavItem { href: string; icon: string; label: string }
 const icons: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
   home: LayoutGrid,
   learn: BookOpen,
+  ask: Sparkles,
 }
 
 /** The nav item whose href is the longest prefix of the current path is active. */

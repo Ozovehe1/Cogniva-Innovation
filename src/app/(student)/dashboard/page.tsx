@@ -10,6 +10,8 @@ import { VoiceWarm } from '@/components/voice-warm'
 import { Card, Eyebrow, PageHeader, ProgressBar, SectionTitle, buttonClass, cx } from '@/components/ui'
 import { TopicStart } from '@/components/topic-start'
 import { HandPreload } from '@/components/whiteboard/hand-preload'
+import { TodayCard } from '@/components/agent/today-card'
+import { loadToday } from '@/lib/agent/today'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,7 +69,10 @@ export default async function Dashboard() {
   const knownNow = [...new Set([...(path.known ?? []), ...topics.filter(t => t.status === 'mastered').map(t => t.node_id)])]
   const upNext = topics.filter(t => t.status === 'ready' || t.status === 'review' || t.status === 'learning').map(t => t.title)
   // Fetch the up-next lesson's opening lines into the voice cache now, so Start speaks at once.
-  const lines = next?.lesson_id && !nextLessonDone ? await openingLines(supabase, next.lesson_id) : []
+  const [lines, today] = await Promise.all([
+    next?.lesson_id && !nextLessonDone ? openingLines(supabase, next.lesson_id) : Promise.resolve([]),
+    loadToday(profile.id).catch(() => null),
+  ])
 
   return (
     <div>
@@ -82,6 +87,9 @@ export default async function Dashboard() {
           <Link href="/start" className={buttonClass('primary', 'md')}>Continue the check<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
         </section>
       )}
+
+      {/* Today: the plan the Learning Director wrote (no model call on open) */}
+      {today && <TodayCard data={today} />}
 
       {/* Goals and plans: every goal, most recently active first */}
       <section className="mb-6 space-y-4">

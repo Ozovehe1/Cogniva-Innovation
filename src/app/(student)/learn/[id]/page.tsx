@@ -13,6 +13,7 @@ import { Eyebrow } from '@/components/ui'
 import { LessonSession } from '@/components/lesson-session'
 import { LessonPreparing } from '@/components/lesson-preparing'
 import { LessonDelete, LessonDownload } from '@/components/lesson-actions'
+import { AskSheet } from '@/components/agent/ask-sheet'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -119,6 +120,7 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
           <Link href={`/learn/${l.id}/check`} className="inline-flex h-10 items-center justify-center rounded-[10px] bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover">Mastery check</Link>
         </section>
       )}
+      {profile && steps.length > 0 && <AskSheet lessonId={l.id} minor={minor} />}
       {l.objectives && l.objectives.length > 0 && (
         <section className="mt-8 border-t border-line pt-6">
           <h2 className="text-[15px] font-semibold text-ink">In this lesson</h2>
