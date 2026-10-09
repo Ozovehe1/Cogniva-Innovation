@@ -726,6 +726,14 @@ const VISUAL: ToolSpec[] = [
       const m = a.motion as Record<string, unknown> | undefined
       const v = validateSim({ ...a, plot: p ? { ...p, xLabel: p.x_label, yLabel: p.y_label, xRange: p.x_range, yRange: p.y_range } : undefined, motion: m ? { x: m.x, y: m.y, tMax: m.t_max, anchor: m.anchor } : undefined })
       if (!v.spec) return { error: `Invalid simulation: ${v.errors.join('; ')}. Fix and call again.` }
+      // A moving object (pendulum, spring, projectile, orbit) must be seen moving: a sliders-and-readout card with no
+      // figure was shown to learners, then the model called again with the motion (three cards for one pendulum).
+      const about = `${s(a.title, 120)} ${s(a.explain, 300)}`
+      if (!v.spec.motion && !v.spec.plot && /\b(pendul|swing|spring|oscillat|projectile|thrown|orbit|planet|satellite|bob\b|bounce|roll)/i.test(about)) {
+        return { error: 'Nothing moves on screen: this is about a moving object, so add `motion` (x(t), y(t), t_max; for a pendulum anchor ["0","0"] so the rod swings) and a `plot` with the space it moves in. Call simulate once more with the full spec.' }
+      }
+      // One simulation per answer: a second call in the same turn is a revision, and two near-identical cards confuse.
+      if (ctx.blocks.some(b => b.kind === 'sim')) return { shown: false, note: 'A simulation is already shown in this answer; describe it instead of calling simulate again.' }
       ctx.emit({ kind: 'sim', id: bid(), spec: v.spec })
       return { shown: true, warnings: v.errors.length ? v.errors : undefined }
     },
