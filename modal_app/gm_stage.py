@@ -501,6 +501,19 @@ class Stage:
         tail = base + d * 0.7
         arr = Arrow(tail, tip, buff=0, color=c, stroke_width=5, tip_length=0.2, max_tip_length_to_length_ratio=0.4)
         lab = _t(GW.fmt_template(o.get("text", ""), self.vals), FS["label"], o.get("color", "highlight")).next_to(arr, d, buff=0.08)
+        # pointers on the same cell (lo = mid) stack their labels instead of printing them on top of each other
+        k = 0
+        for pid, po in self.W.objs.items():
+            if pid == o.get("id"):
+                break
+            if po.get("type") == "pointer" and po.get("side", "below") == side and (pid in self.shown or pid in getattr(self, "_making", ())):
+                try:
+                    if GW.fmt_template(po["at"], self.vals) == target:
+                        k += 1
+                except Exception:  # noqa: BLE001
+                    continue
+        if k:
+            lab.shift(d * k * (lab.height + 0.1))
         return VGroup(arr, lab)
 
     def _anchor_box(self, ref):

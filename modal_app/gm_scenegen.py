@@ -137,8 +137,14 @@ SOLVED SCENE (start and end of the animation):
 {desc}
 BEATS: {beats}
 Does this scene correctly and recognisably show the concept? Think about what the shapes/curves/boxes actually are from the numbers
-(e.g. a rearrangement proof needs congruent right triangles with legs a and b inside a square of side a+b; a balance needs equal sides;
-a tangent must touch the curve; an algorithm must step correctly). Ignore style. Return JSON only:
+and check each one against the concept like a strict teacher, e.g.:
+- a rearrangement proof needs congruent right triangles (legs a, b, hypotenuse c) tiling a square of side a+b with no partial overlaps,
+  and the inner shape must really be a square of side c;
+- a ray crossing a boundary keeps going forward: the refracted ray leaves the boundary on the FAR side of the normal from the incident ray
+  (if the incident ray travels right, the refracted ray also travels right); only a reflected ray comes back on the same side;
+- a tangent touches the curve at the point with the curve's slope; vectors add head to tail; a circuit loop is closed;
+- an algorithm's states step correctly; an equation's steps are valid and the answer is not on screen before it is derived.
+Directions are degrees from +x (0 = right, 90 = up, -90 = down). Ignore style. Return JSON only:
 {{"correct": true|false, "problems": ["what is wrong, and which objects/relations to change"]}}  (problems empty when correct)"""
 
 
