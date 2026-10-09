@@ -445,7 +445,18 @@ export function repairSubstance(library: DiagramLibrary, substance: string): str
   const types = new Set([...lib.domain.matchAll(/^type\s+(\w+)/gm)].map(m => m[1]))
   const preds = new Map([...lib.domain.matchAll(/^predicate\s+(\w+)\(([^)]*)\)/gm)].map(m => [m[1], m[2].split(',').map(x => x.trim().split(/\s+/)[0])]))
   const declared = new Map<string, string>()
-  const lines = substance.split('\n').map(l => l.trim()).filter(Boolean)
+  // Names must be identifiers: an element called 3 becomes n3, labelled "3".
+  const numeric = new Set<string>()
+  const ident = (n: string) => (/^\d[\w.]*$/.test(n) ? (numeric.add(n), `n${n.replace(/\./g, '_')}`) : n)
+  const lines = substance.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const d = l.match(/^(\w+)\s+([\w\s,.]+)$/)
+    if (d && types.has(d[1])) return `${d[1]} ${d[2].split(',').map(x => ident(x.trim())).filter(Boolean).join(', ')}`
+    const m = l.match(/^(\w+)\(([^)]*)\)$/)
+    if (m) return `${m[1]}(${m[2].split(',').map(x => ident(x.trim())).join(', ')})`
+    const lb = l.match(/^Label\s+([\w.]+)\s+(".*")$/)
+    if (lb) return `Label ${ident(lb[1])} ${lb[2]}`
+    return l
+  })
   for (const l of lines) { const m = l.match(/^(\w+)\s+([\w\s,]+)$/); if (m && types.has(m[1])) for (const n of m[2].split(',').map(x => x.trim()).filter(Boolean)) declared.set(n, m[1]) }
   const lower = new Map([...declared.keys()].map(n => [n.toLowerCase(), n]))
   const fixName = (n: string) => (declared.has(n) ? n : lower.get(n.toLowerCase()) ?? n)
@@ -462,6 +473,7 @@ export function repairSubstance(library: DiagramLibrary, substance: string): str
     if (lb) return `Label ${fixName(lb[1])} ${lb[2]}`
     return l
   })
+  for (const n of numeric) { const id = `n${n.replace(/\./g, '_')}`; if (!out.some(l => l.startsWith(`Label ${id} `))) out.push(`Label ${id} "${n}"`) }
   // Labels may come before the relation that declares their name: resolve them after.
   return [...extra, ...out].filter(l => { const lb = l.match(/^Label\s+(\w+)\s/); return !lb || declared.has(lb[1]) }).join('\n')
 }
