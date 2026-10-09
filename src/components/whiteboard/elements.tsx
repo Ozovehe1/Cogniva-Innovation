@@ -1,4 +1,5 @@
 'use client'
+import { openZoom } from '@/components/zoomable'
 import React, { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import katex from 'katex'
@@ -814,7 +815,10 @@ function ShapeBody({ el, animate, reduced, vars: boardVars = NO_VARS }: ShapePro
     case 'figure': {
       // A finished picture (sanitised SVG), shown as an image: nothing inside it can run. Wiped in left to right.
       const href = shape.src || `data:image/svg+xml;charset=utf-8,${encodeURIComponent(shape.svg)}`
-      return <image href={href} x={shape.x} y={shape.y} width={shape.w} height={shape.h} preserveAspectRatio="xMidYMid meet" data-ink={ink ? 'text' : undefined}><title>{shape.alt ?? 'diagram'}</title></image>
+      // Tap to zoom (small textbook labels on phones): opens the shared zoom view (ZoomHost in the app shell).
+      return <image href={href} x={shape.x} y={shape.y} width={shape.w} height={shape.h} preserveAspectRatio="xMidYMid meet" data-ink={ink ? 'text' : undefined}
+        role="button" tabIndex={0} aria-label={`${shape.alt ?? 'Diagram'}. Open larger`} style={{ cursor: 'zoom-in', pointerEvents: 'auto' }}
+        onClick={() => openZoom(href, shape.alt ?? 'Diagram')} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openZoom(href, shape.alt ?? 'Diagram') } }}><title>{shape.alt ?? 'diagram'}</title></image>
     }
     case 'line':
       return <Stroke {...base} d={pathFromPoints([P(shape.from), P(shape.to)])} clipId={clipId} />

@@ -331,12 +331,16 @@ export function figureGeom(spec: IxSpec): { aspect: number; bbox: [number, numbe
   return { aspect, bbox: [e.x[0], e.y[1], e.x[1], e.y[0]] }
 }
 
-export function interactiveSvg(spec0: IxSpec): string {
-  // Circles stay round in the still too (its plot area is (640-72) x (420-72)).
-  const spec = spec0.circles.length && !spec0.surface ? equalUnits(spec0, (640 - 72) / (420 - 72)) : spec0
+export function interactiveSvg(spec0: IxSpec, opts: { recap?: boolean } = {}): string {
+  // The recap still is shown about 340 px wide on a phone: a smaller canvas with larger type keeps every label
+  // readable there (≥ 12 px rendered; docs/design/lesson-ui.md §4, §13). The chat/lesson still keeps 640 × 420.
+  const R = !!opts.recap
+  const W = R ? 400 : 640, H = R ? 280 : 420, P = R ? 30 : 36
+  const FT = R ? 13 : 12, FP = R ? 18 : 15, FL = R ? 16 : 14
+  // Circles stay round in the still too (its plot area is (W-2P) x (H-2P)).
+  const spec = spec0.circles.length && !spec0.surface ? equalUnits(spec0, (W - 2 * P) / (H - 2 * P)) : spec0
   const k = compileSpec(spec)
   const { env, pos } = initialEnv(spec, k)
-  const W = 640, H = 420, P = 36
   const parts: string[] = []
   if (spec.surface) {
     // Isometric wireframe of z = f(x, y).
@@ -347,7 +351,8 @@ export function interactiveSvg(spec0: IxSpec): string {
     const fin = zs.filter(Number.isFinite)
     const zr = spec.surface.z ?? [Math.min(...fin, 0), Math.max(...fin, 1)]
     const ca = Math.cos(0.6), sa = Math.sin(0.6)
-    const proj = (u: number, v: number, z: number) => { const a = (u - 0.5) * ca - (v - 0.5) * sa, b = (u - 0.5) * sa + (v - 0.5) * ca, c = (Math.min(zr[1], Math.max(zr[0], z)) - zr[0]) / (zr[1] - zr[0] || 1) - 0.5; return [W / 2 + a * 380, H / 2 + 20 + b * 150 - c * 210] }
+    const sc = W / 640
+    const proj = (u: number, v: number, z: number) => { const a = (u - 0.5) * ca - (v - 0.5) * sa, b = (u - 0.5) * sa + (v - 0.5) * ca, c = (Math.min(zr[1], Math.max(zr[0], z)) - zr[0]) / (zr[1] - zr[0] || 1) - 0.5; return [W / 2 + a * 380 * sc, H / 2 + 20 * sc + b * 150 * sc - c * 210 * sc] }
     for (let i = 0; i <= N; i++) {
       let d1 = '', d2 = ''
       for (let j = 0; j <= N; j++) {
@@ -356,13 +361,13 @@ export function interactiveSvg(spec0: IxSpec): string {
       }
       parts.push(`<path d="${d1}" fill="none" stroke="${IX_HEX.accent}" stroke-width="1.1" opacity="0.8"/><path d="${d2}" fill="none" stroke="${IX_HEX.navy}" stroke-width="1.1" opacity="0.6"/>`)
     }
-    parts.push(`<text x="${W / 2}" y="${H - 10}" font-size="15" text-anchor="middle" fill="#3D3D47">z = ${esc(spec.surface.expr)}</text>`)
+    parts.push(`<text x="${W / 2}" y="${H - 10}" font-size="${FL}" text-anchor="middle" fill="#3D3D47">z = ${esc(spec.surface.expr)}</text>`)
   } else {
     const sx = (x: number) => P + (x - spec.x[0]) / (spec.x[1] - spec.x[0]) * (W - 2 * P)
     const sy = (y: number) => H - P - (y - spec.y[0]) / (spec.y[1] - spec.y[0]) * (H - 2 * P)
-    const stx = niceStep((spec.x[1] - spec.x[0]) / 8), sty = niceStep((spec.y[1] - spec.y[0]) / 6)
-    for (let v = Math.ceil(spec.x[0] / stx) * stx; v <= spec.x[1] + 1e-9; v += stx) parts.push(`<line x1="${f1(sx(v))}" x2="${f1(sx(v))}" y1="${P}" y2="${H - P}" stroke="#E5E1D8"/>${Math.abs(v) > 1e-9 ? `<text x="${f1(sx(v))}" y="${f1(Math.min(H - P + 16, Math.max(P + 14, sy(0) + 16)))}" font-size="12" text-anchor="middle" fill="#66666F">${Number(v.toPrecision(6))}</text>` : ''}`)
-    for (let v = Math.ceil(spec.y[0] / sty) * sty; v <= spec.y[1] + 1e-9; v += sty) parts.push(`<line x1="${P}" x2="${W - P}" y1="${f1(sy(v))}" y2="${f1(sy(v))}" stroke="#E5E1D8"/>${Math.abs(v) > 1e-9 ? `<text x="${f1(Math.max(P - 4, Math.min(W - P - 4, sx(0) - 6)))}" y="${f1(sy(v) + 4)}" font-size="12" text-anchor="end" fill="#66666F">${Number(v.toPrecision(6))}</text>` : ''}`)
+    const stx = niceStep((spec.x[1] - spec.x[0]) / (R ? 5 : 8)), sty = niceStep((spec.y[1] - spec.y[0]) / (R ? 4 : 6))
+    for (let v = Math.ceil(spec.x[0] / stx) * stx; v <= spec.x[1] + 1e-9; v += stx) parts.push(`<line x1="${f1(sx(v))}" x2="${f1(sx(v))}" y1="${P}" y2="${H - P}" stroke="#E5E1D8"/>${Math.abs(v) > 1e-9 ? `<text x="${f1(sx(v))}" y="${f1(Math.min(H - P + 16, Math.max(P + 14, sy(0) + FT + 4)))}" font-size="${FT}" text-anchor="middle" fill="#66666F">${Number(v.toPrecision(6))}</text>` : ''}`)
+    for (let v = Math.ceil(spec.y[0] / sty) * sty; v <= spec.y[1] + 1e-9; v += sty) parts.push(`<line x1="${P}" x2="${W - P}" y1="${f1(sy(v))}" y2="${f1(sy(v))}" stroke="#E5E1D8"/>${Math.abs(v) > 1e-9 ? `<text x="${f1(Math.max(P - 4, Math.min(W - P - 4, sx(0) - 6)))}" y="${f1(sy(v) + 4)}" font-size="${FT}" text-anchor="end" fill="#66666F">${Number(v.toPrecision(6))}</text>` : ''}`)
     if (spec.y[0] <= 0 && spec.y[1] >= 0) parts.push(`<line x1="${P}" x2="${W - P}" y1="${f1(sy(0))}" y2="${f1(sy(0))}" stroke="#14141A" stroke-width="1.3"/>`)
     if (spec.x[0] <= 0 && spec.x[1] >= 0) parts.push(`<line x1="${f1(sx(0))}" x2="${f1(sx(0))}" y1="${P}" y2="${H - P}" stroke="#14141A" stroke-width="1.3"/>`)
     parts.push(`<clipPath id="ixclip"><rect x="${P}" y="${P}" width="${W - 2 * P}" height="${H - 2 * P}"/></clipPath><g clip-path="url(#ixclip)">`)
@@ -402,9 +407,9 @@ export function interactiveSvg(spec0: IxSpec): string {
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue
       if ('hidden' in p && p.hidden) continue
       const drag = 'drag' in p ? p.drag : true
-      parts.push(`<circle cx="${f1(sx(x))}" cy="${f1(sy(y))}" r="${drag ? 6.5 : 4.5}" fill="${IX_HEX[p.color]}"${drag ? ' stroke="#fff" stroke-width="2"' : ''}/><text x="${f1(sx(x) + 10)}" y="${f1(sy(y) - 10)}" font-size="15" fill="${IX_HEX[p.color]}">${esc(p.label)}</text>`)
+      parts.push(`<circle cx="${f1(sx(x))}" cy="${f1(sy(y))}" r="${drag ? (R ? 7 : 6.5) : (R ? 5 : 4.5)}" fill="${IX_HEX[p.color]}"${drag ? ' stroke="#fff" stroke-width="2"' : ''}/><text x="${f1(sx(x) + 10)}" y="${f1(sy(y) - 10)}" font-size="${FP}" font-weight="${R ? 600 : 400}" fill="${IX_HEX[p.color]}">${esc(p.label)}</text>`)
     }
-    spec.functions.filter(f => f.label).forEach((f, i) => parts.push(`<text x="${W - P - 4}" y="${P + 16 + i * 18}" font-size="14" text-anchor="end" fill="${IX_HEX[f.color]}">${esc(f.label)}</text>`))
+    spec.functions.filter(f => f.label).forEach((f, i) => parts.push(`<text x="${W - P - 4}" y="${P + FL + 2 + i * (FL + 4)}" font-size="${FL}" text-anchor="end" fill="${IX_HEX[f.color]}">${esc(f.label)}</text>`))
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="DejaVu Sans, Inter, sans-serif"><rect width="${W}" height="${H}" fill="#FBFAF7"/>${parts.join('')}</svg>`
 }

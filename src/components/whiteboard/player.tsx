@@ -466,6 +466,8 @@ export function WhiteboardPlayer({
   const reducedRef = useRef(reduced)
   useEffect(() => { reducedRef.current = reduced }, [reduced])
   const boardEl = useRef<HTMLDivElement | null>(null)
+  // The stage reads the board frame's size as it opens (before the board hides), to grow out of it (§2).
+  const measureBoard = useCallback(() => boardEl.current?.getBoundingClientRect().height ?? 0, [])
   /** Call from a tap: mobile browsers only allow speech after a user gesture. */
   const unlockVoice = useCallback(() => {
     if (unlocked.current || !narratorRef.current?.supported) return
@@ -1045,6 +1047,7 @@ export function WhiteboardPlayer({
               narrating={stageNarrating}
               reduced={!!reduced}
               recording={renderMode}
+              measureFrom={measureBoard}
               onBack={() => { if (stageNarrating) narratorRef.current?.cancel(); setClipEnded(true); setClipIdx(null); setPlaying(true) }}
             />
           )}

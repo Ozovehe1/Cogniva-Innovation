@@ -6,9 +6,9 @@
  * nothing from the model runs as code. Sliders are native range inputs (big touch targets); one finger on an empty
  * part of the board scrolls the page (browserPan), on a point it drags.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import './jsxgraph.css'
-import { Hand, Pause, Play, RotateCcw } from 'lucide-react'
+import { Hand, Pause, Play, RotateCcw, Target } from 'lucide-react'
 import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
 import { IX_HEX, compileSpec, figureGeom, initialEnv, odeCurve, type IxEnv, type IxSpec } from '@/lib/agent/interactive'
@@ -35,8 +35,13 @@ const buzz = () => { try { navigator.vibrate?.(8) } catch { /* not supported */ 
 /** A tidy snapping step for a range: about 1/40 of it, rounded to 1, 2 or 5 × 10^k. */
 const niceStep = (span: number) => { const raw = span / 40, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p }
 
-export default function InteractiveFigure({ spec, alt, play, demo = false, onHandOver, onReadouts }: {
+export default function InteractiveFigure({ spec, alt, play, demo = false, onHandOver, onReadouts, task, goalReadout = -1 }: {
   spec: IxSpec; alt: string
+  /** What the learner is asked to do with the figure (an explore check's goal). Replaces the generic footer hint so the
+   * task stays in view next to the controls (spatial contiguity, goal salience). */
+  task?: React.ReactNode
+  /** Index of the readout the task is about: it gets the emphasis ring (signalling). */
+  goalReadout?: number
   /** A slider that can play itself min→max (the stage's demonstration; the learner can replay it). */
   play?: { slider: string; seconds?: number }
   /** Run the demonstration once as soon as the figure is ready. */
@@ -232,11 +237,13 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
       )}
       {spec.readouts.length > 0 && (
         <dl className="mt-3 grid grid-cols-2 gap-2">
-          {spec.readouts.map((r, i) => <div key={i} className="rounded-[10px] bg-sunken px-3 py-2"><dt className="text-[12px] text-muted"><RichText text={r.label} /></dt><dd className="tnum text-[17px] font-medium text-ink">{fmt(reads[i])}{r.unit ? <span className="text-[13px] font-normal text-muted"> {r.unit}</span> : null}</dd></div>)}
+          {spec.readouts.map((r, i) => <div key={i} className={cx('rounded-[10px] px-3 py-2', i === goalReadout ? 'bg-clay-soft ring-1 ring-clay-line' : 'bg-sunken')}><dt className={cx('text-[12px]', i === goalReadout ? 'font-medium text-clay' : 'text-muted')}><RichText text={r.label} /></dt><dd className="tnum text-[17px] font-medium text-ink">{fmt(reads[i])}{r.unit ? <span className="text-[13px] font-normal text-muted"> {r.unit}</span> : null}</dd></div>)}
         </dl>
       )}
       <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-[13px] leading-snug text-muted">{spec.surface ? 'Drag the surface to turn it.' : dragNames.length ? `Drag ${dragNames.join(', ')}.` : 'Move the sliders.'}</span>
+        {task
+          ? <span className="flex min-w-0 items-start gap-1.5 text-[13.5px] font-medium leading-snug text-ink"><Target className="mt-px h-4 w-4 flex-shrink-0 text-clay" strokeWidth={2} aria-hidden />{task}</span>
+          : <span className="text-[13px] leading-snug text-muted">{spec.surface ? 'Drag the surface to turn it.' : dragNames.length ? `Drag ${dragNames.join(', ')}.` : spec.sliders.length ? `Move ${spec.sliders.length === 1 ? 'the slider' : 'the sliders'} and watch what changes.` : 'Watch how it changes.'}</span>}
         <button type="button" aria-label="Reset the figure" onClick={() => { stopPlay(); setTouched(false); setReady(false); sliders.current = Object.fromEntries(spec.sliders.map(s => [s.name.toLowerCase(), s.value])); setVals({ ...sliders.current }); setNonce(n => n + 1) }} className={cx(buttonClass('ghost', 'md'), 'h-11 flex-shrink-0')}><RotateCcw className="h-3.5 w-3.5" />Reset</button>
       </div>
     </div>

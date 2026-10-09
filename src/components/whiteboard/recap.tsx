@@ -9,6 +9,7 @@ import { motion } from 'framer-motion'
 import { Check, RotateCcw } from 'lucide-react'
 import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
+import { ZoomableImage } from '@/components/zoomable'
 import { interactiveSvg, validateInteractive } from '@/lib/agent/interactive'
 import type { Step } from '@/lib/lesson-schema'
 
@@ -22,7 +23,7 @@ export function lessonRecap(steps: Step[]): { figure: string | null; figureTitle
     const raw = s.type === 'stage' ? s.spec : s.type === 'check' ? s.figure : undefined
     if (!raw) continue
     const v = validateInteractive(raw)
-    if (v.spec && !v.spec.surface) { try { figure = interactiveSvg(v.spec); figureTitle = v.spec.title } catch { /* skip */ } }
+    if (v.spec && !v.spec.surface) { try { figure = interactiveSvg(v.spec, { recap: true }); figureTitle = v.spec.title } catch { /* skip */ } }
   }
   const byId = new Map<string, { text: string; math: boolean }>()
   for (const s of steps) {
@@ -68,8 +69,8 @@ export function LessonRecap({ steps, title, answered, reduced, onReplay }: {
           {src && (
             <motion.figure {...item(1)} className="m-0">
               <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">The picture to remember</p>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src} alt={r.figureTitle ?? 'Key figure'} className="mt-1.5 w-full rounded-[10px] border border-line" />
+              <ZoomableImage src={src} alt={r.figureTitle ?? 'Key figure'} label="Zoom" className="mt-1.5 overflow-hidden rounded-[10px] border border-line" imgClassName="block w-full" />
+              {r.figureTitle && <figcaption className="mt-1.5 text-[13px] text-muted"><RichText text={r.figureTitle} /></figcaption>}
             </motion.figure>
           )}
           {r.keys.length > 0 && (

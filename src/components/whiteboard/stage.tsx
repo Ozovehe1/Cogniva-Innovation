@@ -20,7 +20,7 @@ const InteractiveFigure = dynamic(() => import('@/components/agent/interactive')
 
 const EASE = [0.2, 0, 0, 1] as const
 
-export function StageView({ step, stepKey, narrating, reduced, recording = false, onBack }: {
+export function StageView({ step, stepKey, narrating, reduced, recording = false, measureFrom, onBack }: {
   step: StageStep
   /** Changes each time the step is played (restarts the demonstration). */
   stepKey: string
@@ -29,12 +29,18 @@ export function StageView({ step, stepKey, narrating, reduced, recording = false
   reduced: boolean
   /** Lesson video recording: no buttons; it closes by itself after the narration. */
   recording?: boolean
+  /** The board frame's height when the stage opened: the stage starts at exactly that size and grows to its content,
+   * so the board visibly becomes the stage (spatial continuity, §2) instead of one box swapping for another. */
+  measureFrom?: () => number
   onBack: () => void
 }) {
   const v = useMemo(() => validateInteractive(step.spec), [step.spec])
   const spec = v.spec
   const [handedOver, setHandedOver] = useState(!step.play)
   const [full, setFull] = useState(false)
+  // Captured once, on open: later re-renders must not restart the morph.
+  const [startH] = useState(() => { const h = measureFrom?.() ?? 0; return h > 80 ? Math.round(h) : null })
+  const [morphing, setMorphing] = useState(!!startH && !reduced)
   const ready = handedOver && !narrating
   const backRef = useRef<HTMLButtonElement>(null)
   // A recorded lesson moves on by itself once the narration and demonstration are done.
@@ -107,7 +113,15 @@ export function StageView({ step, stepKey, narrating, reduced, recording = false
     </motion.section>
   )
   return (
-    <motion.div initial={{ opacity: 0, y: reduced ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: reduced ? 0.01 : 0.28, ease: EASE }}>
+    <motion.div
+      initial={startH && !reduced ? { opacity: 0.6, height: startH } : { opacity: 0, y: reduced ? 0 : 8 }}
+      animate={startH && !reduced ? { opacity: 1, height: 'auto' } : { opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: reduced ? 0.01 : startH ? 0.32 : 0.28, ease: EASE }}
+      onAnimationComplete={() => setMorphing(false)}
+      // Clip only while the frame morphs from the board's size (the card's shadow shows once it settles).
+      style={morphing ? { overflow: 'hidden', borderRadius: 14 } : undefined}
+    >
       {full && <div className="w-full rounded-[14px] border border-dashed border-line" style={{ height: 240 }} aria-hidden="true" />}
       {frame}
     </motion.div>

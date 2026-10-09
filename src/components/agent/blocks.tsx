@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
+import { motion } from 'framer-motion'
 import { ArrowRight, Check, ExternalLink, ImageOff, Pause, Play, RotateCcw, Volume2, X } from 'lucide-react'
 import { WhiteboardPlayer } from '@/components/whiteboard'
 import { RichText } from '@/components/rich-text'
@@ -14,6 +15,7 @@ import type { Credit } from '@/lib/illustrations/types'
 import { genie } from '@/components/genie/presence'
 import { speakerForAudio } from '@/components/genie/lipsync'
 import { ConfirmBlock } from './confirm'
+import { ZoomableImage } from '@/components/zoomable'
 
 // JSXGraph (~1 MB) loads only when an interactive figure is on screen.
 const InteractiveFigure = dynamic(() => import('./interactive'), { ssr: false, loading: () => <FigureSkeletonLite /> })
@@ -68,16 +70,25 @@ export function AgentBlock({ block }: { block: Block }) {
 }
 
 function BoardBlock({ block }: { block: Extract<Block, { kind: 'board' }> }) {
+  // An edited board (board_edit bumps rev) replays from the first changed step with the pen, and the frame gives one
+  // soft accent pulse plus an "Updated" tag, so the learner sees *that* it changed and *where* (signalling).
+  const edited = (block.rev ?? 0) > 0
   return (
-    <div className={cx(frame, 'p-0')}>
+    <motion.div key={`${block.id}:${block.rev ?? 0}`} className={cx(frame, 'p-0')}
+      initial={edited ? { boxShadow: '0 0 0 0 rgba(31,77,58,0)' } : false}
+      animate={edited ? { boxShadow: ['0 0 0 0 rgba(31,77,58,0)', '0 0 0 4px rgba(31,77,58,0.18)', '0 0 0 0 rgba(31,77,58,0)'] } : undefined}
+      transition={{ duration: 1.4, ease: 'easeInOut' }}>
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-        <span className={label}>{block.plot ? 'Graph' : block.diagram ? 'Diagram' : 'Whiteboard'}</span>
+        <span className="flex items-center gap-2">
+          <span className={label}>{block.plot ? 'Graph' : block.diagram ? 'Diagram' : 'Whiteboard'}</span>
+          {edited && <motion.span initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.25 }} className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">Updated</motion.span>}
+        </span>
         <span className="truncate pl-3 text-[13px] text-ink-2"><RichText text={block.title} /></span>
       </div>
       <div className="p-2 sm:p-3">
         <WhiteboardPlayer key={`${block.id}:${block.rev ?? 0}`} steps={block.steps} title={block.title} autoPlay={!!block.plot || !!block.diagram || !!block.start} initialIndex={block.start ?? 0} allowSkipChecks embedded />
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -115,9 +126,9 @@ export function SvgBlock({ svg, alt, credit, url, forceState }: { svg: string; a
             )}
           </div>
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img ref={img} src={src} alt={alt} loading="lazy" decoding="async" onLoad={() => { if (!forceState) setState('ready') }} onError={() => { if (!forceState) setState('error') }}
-            className={cx('mx-auto block h-auto w-full max-w-[640px] p-3 transition-opacity duration-300 ease-out', state === 'loading' ? 'aspect-[4/3] opacity-0' : 'opacity-100')} />
+          // Tap to zoom: textbook labels are small on a phone (docs/design/app-ui.md, "Illustrations").
+          <ZoomableImage imgRef={img} src={src} alt={alt} loading="lazy" onLoad={() => { if (!forceState) setState('ready') }} onError={() => { if (!forceState) setState('error') }}
+            imgClassName={cx('mx-auto block h-auto w-full max-w-[640px] p-3 transition-opacity duration-300 ease-out', state === 'loading' ? 'aspect-[4/3] opacity-0' : 'opacity-100')} />
         )}
       </div>
       {credit ? (
@@ -273,7 +284,7 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
             </div>
           )
           : <ClipSkeleton elapsed={elapsed} />}
-      {block.caption && <figcaption className="border-t border-line px-4 py-2.5 text-[13px] text-muted">{block.caption}</figcaption>}
+      {block.caption && <ClipCaption text={block.caption} />}
     </figure>
   )
 }
@@ -306,27 +317,55 @@ function ClipPlayer({ url, label }: { url: string; label: string }) {
   const [progress, setProgress] = useState(0)
   const toggle = () => { const v = ref.current; if (!v) return; if (v.paused) void v.play(); else v.pause() }
   const replay = () => { const v = ref.current; if (!v) return; v.currentTime = 0; void v.play() }
+  // The controls sit in their own strip under the picture, never on it: Manim scenes put readouts and axis numbers at
+  // the bottom edge, and a 390 px phone has no spare pixels to cover (nothing the learner must read is ever hidden).
   return (
-    <div className="relative aspect-video w-full bg-surface">
-      {!ready && <div className="absolute inset-0 animate-pulse bg-sunken motion-reduce:animate-none" aria-hidden />}
-      <video ref={ref} src={url} autoPlay muted playsInline preload="auto" aria-label={label}
-        onLoadedData={() => setReady(true)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
-        onTimeUpdate={e => { const v = e.currentTarget; setProgress(v.duration ? v.currentTime / v.duration : 0) }}
-        onClick={toggle} className="absolute inset-0 h-full w-full object-contain" />
-      <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/45 to-transparent px-2 pb-1.5 pt-6">
+    <div>
+      <div className="relative aspect-video w-full bg-surface">
+        {!ready && <div className="absolute inset-0 animate-pulse bg-sunken motion-reduce:animate-none" aria-hidden />}
+        <video ref={ref} src={url} autoPlay muted playsInline preload="auto" aria-label={label}
+          onLoadedData={() => setReady(true)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
+          onTimeUpdate={e => { const v = e.currentTarget; setProgress(v.duration ? v.currentTime / v.duration : 0) }}
+          onClick={toggle} className="absolute inset-0 h-full w-full cursor-pointer object-contain" />
+      </div>
+      <div className="flex items-center gap-2 border-t border-line bg-[#FBFAF7] px-1.5 py-0.5">
         <button type="button" onClick={toggle} aria-label={playing ? 'Pause animation' : 'Play animation'}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-ink shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
-          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
+          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-accent transition-colors hover:bg-accent-soft focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+          {playing ? <Pause className="h-4 w-4" fill="currentColor" strokeWidth={0} /> : <Play className="h-4 w-4 translate-x-[1px]" fill="currentColor" strokeWidth={0} />}
         </button>
-        <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/40" aria-hidden>
-          <div className="h-full bg-white" style={{ width: `${Math.round(progress * 1000) / 10}%` }} />
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-line" role="progressbar" aria-label="Animation progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
+          <div className="h-full rounded-full bg-accent" style={{ width: `${Math.round(progress * 1000) / 10}%` }} />
         </div>
         <button type="button" onClick={replay} aria-label="Replay animation"
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-ink shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-ink-2 transition-colors hover:bg-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
           <RotateCcw className="h-4 w-4" />
         </button>
       </div>
     </div>
+  )
+}
+
+/**
+ * A clip caption that ends cleanly: a caption cut off mid-sentence upstream ("…highlighting") is trimmed back to its
+ * last full sentence, or to a word boundary with an ellipsis. Pure; exported for tests.
+ */
+export function cleanCaption(raw: string): string {
+  const t = raw.replace(/\s+/g, ' ').trim()
+  if (!t || /[.!?…)\]"”]$/.test(t)) return t
+  const lastStop = Math.max(t.lastIndexOf('. '), t.lastIndexOf('! '), t.lastIndexOf('? '))
+  if (lastStop >= 40) return t.slice(0, lastStop + 1)
+  return t.replace(/[\s,;:–—-]+\S*$/, '').replace(/[\s,;:–—-]+$/, '') + '…'
+}
+
+function ClipCaption({ text }: { text: string }) {
+  const clean = cleanCaption(text)
+  const [open, setOpen] = useState(false)
+  const long = clean.length > 140
+  return (
+    <figcaption className="border-t border-line px-4 py-2.5 text-[13.5px] leading-relaxed text-muted">
+      <span className={cx(long && !open && 'line-clamp-2')}>{clean}</span>
+      {long && <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="-my-2 -ml-1 inline-flex min-h-11 items-center px-1 text-[13px] font-medium text-accent">{open ? 'Show less' : 'Show more'}</button>}
+    </figcaption>
   )
 }
 

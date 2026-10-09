@@ -5,7 +5,8 @@ import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { BookOpen, LayoutGrid, LogOut, Settings, Sparkles, X } from 'lucide-react'
 import { IdleTimeout } from './idle-timeout'
-import { Avatar, Logo, cx } from './ui'
+import { ZoomHost } from './zoomable'
+import { Avatar, Logo, SheetGrabber, cx } from './ui'
 
 export interface NavItem { href: string; icon: string; label: string }
 
@@ -101,6 +102,7 @@ export function AppShell({
   return (
     <div className="flex min-h-dvh bg-canvas">
       <IdleTimeout />
+      <ZoomHost />
 
       {/* ── Desktop sidebar ── */}
       <aside className="sticky top-0 hidden h-dvh w-[248px] flex-shrink-0 flex-col border-r border-line bg-[#FBFAF7] md:flex">
@@ -215,7 +217,10 @@ export function AppShell({
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 24, opacity: 0 }}
               transition={{ duration: 0.2, ease: [0.2, 0, 0, 1] }}
+              drag="y" dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0, bottom: 0.6 }}
+              onDragEnd={(_, info) => { if (info.offset.y > 80 || info.velocity.y > 500) setMenuOpen(false) }}
             >
+              <SheetGrabber />
               <div className="flex items-center gap-3 border-b border-line px-5 py-4">
                 <Avatar initials={initials} />
                 <div className="min-w-0 flex-1">

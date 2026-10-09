@@ -31,8 +31,8 @@ const praise = (tries: number, seed: number) =>
 const InteractiveFigure = dynamic(() => import('@/components/agent/interactive'), { ssr: false, loading: () => <FigureSkeleton /> })
 
 /** The live figure inside a check: the learner reads the answer off it, or moves it to the goal (kind explore). */
-function CheckFigure({ spec, onReadouts }: { spec: IxSpec; onReadouts?: (v: number[]) => void }) {
-  return <div className="mt-3"><InteractiveFigure spec={spec} alt={interactiveAlt(spec)} onReadouts={onReadouts} /></div>
+function CheckFigure({ spec, onReadouts, task, goalReadout }: { spec: IxSpec; onReadouts?: (v: number[]) => void; task?: React.ReactNode; goalReadout?: number }) {
+  return <div className="mt-3"><InteractiveFigure spec={spec} alt={interactiveAlt(spec)} onReadouts={onReadouts} task={task} goalReadout={goalReadout} /></div>
 }
 
 export function CheckCard({
@@ -119,7 +119,8 @@ export function CheckCard({
         {step.kind === 'understand' ? 'Quick check' : step.kind === 'explore' ? 'Try it' : 'Your turn'}
       </p>
       <p className="mt-1.5 font-display text-[20px] leading-snug text-ink md:text-[22px]"><RichText text={step.prompt} /></p>
-      {fig && <CheckFigure spec={fig} onReadouts={onReadouts} />}
+      {fig && <CheckFigure spec={fig} onReadouts={onReadouts} goalReadout={step.kind === 'explore' ? goalIdx : -1}
+        task={step.kind === 'explore' && step.goal && goalIdx >= 0 ? <span>Goal: <RichText text={fig.readouts[goalIdx].label} /> = <span className="tnum">{step.goal.equals}</span></span> : undefined} />}
 
       {step.kind === 'understand' && (
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
