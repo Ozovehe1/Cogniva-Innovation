@@ -1,0 +1,12 @@
+{"title":"The water cycle","vars":{},
+ "objects":[{"type":"icon","id":"sun","icon":"sun","size":1.1},{"type":"icon","id":"cloud","icon":"cloud","size":1.4},{"type":"icon","id":"rain","icon":"rain","size":1.4},
+ {"type":"icon","id":"sea","icon":"sea","size":1.6},{"type":"icon","id":"mtn","icon":"mountain","size":1.5},
+ {"type":"flow","id":"evap","from":"sea","to":"cloud","label":"evaporation","color":"water","bend":-0.4},
+ {"type":"flow","id":"prec","from":"rain","to":"mtn","label":"precipitation","color":"water"},
+ {"type":"flow","id":"run","from":"mtn","to":"sea","label":"runoff","color":"water","bend":-0.3},
+ {"type":"flow","id":"cond","from":"cloud","to":"rain","label":"condensation","color":"muted"}],
+ "constraints":[["row",["cloud","rain"],2.5],["below","sea","cloud",1.6],["below","mtn","rain",1.6],["same_x","sea","cloud"],["same_x","mtn","rain"],["left_of","sun","cloud",1.2],["aligned","h",["sun","cloud"]]],
+ "beats":[{"say":"The sun heats the sea.","do":[["show","sun","sea","mtn"]]},
+ {"say":"Water evaporates and rises as vapour.","do":[["show","cloud","evap"],["flow","evap",{"n":5,"color":"water"}]]},
+ {"say":"Vapour cools and condenses into clouds, which rain.","do":[["show","rain","cond"],["show","prec"],["flow","prec"]]},
+ {"say":"Water runs back to the sea, and the cycle repeats.","do":[["show","run"],["flow",["evap","prec","run"],{"n":4,"color":"water","loops":2}]]}]}

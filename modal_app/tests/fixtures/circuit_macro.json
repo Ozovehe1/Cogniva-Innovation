@@ -1,0 +1,5 @@
+{"title":"Macro check","vars":{"V":6,"R":2,"I":"V/R"},
+"objects":[{"type":"circuit","id":"C","width":5,"height":3,"parts":[{"type":"battery","side":"left","label":"{V} V"},{"type":"resistor","side":"top","label":"{R} Ω"},{"type":"meter","side":"right","letter":"A"}]},
+{"type":"readout","id":"ro","text":"I = V / R = {I:.1f} A"}],
+"checks":[["eq","I*R","V"]],
+"beats":[{"say":"A battery drives current round the loop.","do":[["show","C","ro"],["flow","C.loop",{"n":8,"loops":1}]]},{"say":"Double the voltage and the current doubles.","do":[["animate","V",12],["flow","C.loop",{"n":8,"loops":2}]]}]}

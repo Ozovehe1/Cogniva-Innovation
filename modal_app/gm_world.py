@@ -38,7 +38,7 @@ TWO_TERMINAL = {"battery", "resistor", "bulb", "switch", "meter", "capacitor", "
 ICONS = {"sun", "cloud", "rain", "drop", "mountain", "sea", "lake", "leaf", "tree", "plant", "cell", "ball", "house", "factory",
          "person", "earth", "flask", "magnet", "bolt", "fire", "snowflake", "gear", "eye", "lamp", "atom", "molecule", "arrow"}
 
-HARD = {"fix", "distance", "equal_length", "perpendicular", "parallel", "angle", "direction", "polar", "on", "midpoint", "collinear",
+HARD = {"fix", "offset", "distance", "equal_length", "perpendicular", "parallel", "angle", "direction", "polar", "on", "midpoint", "collinear",
         "horizontal", "vertical", "same_x", "same_y", "tangent", "intersection", "ccw", "cw", "area", "length_ratio", "equal_angle",
         "opposite_sides", "same_side"}
 SOFT = {"left_of", "right_of", "above", "below", "aligned", "row", "column", "ring", "near", "apart", "inside", "gap"}
@@ -354,7 +354,80 @@ def _mac_balance(o):
     return objs, cons
 
 
-MACROS = {"right_triangle": _mac_right_triangle, "square_on": _mac_square_on, "regular_polygon": _mac_regular_polygon, "balance": _mac_balance}
+def _mac_circuit(o):
+    # circuit {id, width?, height?, parts: [{type: battery|resistor|bulb|switch|meter|capacitor, side: left|top|right|bottom, id?, label?}]}
+    # -> a rectangular loop: corners id.c0..c3 (bottom-left, counter-clockwise), each part centred on its side with wires to the
+    # corners, and an invisible closed path id.loop for current-flow dots (["flow", "id.loop"]).
+    i = o["id"]
+    W, H = o.get("width", 6), o.get("height", 3.6)
+    sides = {"bottom": (0, 1), "right": (1, 2), "top": (2, 3), "left": (3, 0)}
+    objs = [{"type": "point", "id": f"{i}.c{k}"} for k in range(4)]
+    cons = [["horizontal", f"{i}.c0", f"{i}.c1"], ["distance", f"{i}.c0", f"{i}.c1", W], ["vertical", f"{i}.c1", f"{i}.c2"],
+            ["distance", f"{i}.c1", f"{i}.c2", H], ["horizontal", f"{i}.c2", f"{i}.c3"], ["vertical", f"{i}.c3", f"{i}.c0"],
+            ["right_of", f"{i}.c1", f"{i}.c0", 0], ["above", f"{i}.c2", f"{i}.c1", 0]]
+    used = {}
+    for n, part in enumerate(o.get("parts") or []):
+        side = part.get("side", ["left", "top", "right", "bottom"][n % 4])
+        if side not in sides:
+            side = "top"
+        used.setdefault(side, []).append(part)
+    for side, (a, b) in sides.items():
+        parts = used.get(side, [])
+        A, B = f"{i}.c{a}", f"{i}.c{b}"
+        prev = A
+        for k, part in enumerate(parts):
+            pid = part.get("id") or f"{i}.{side}{k}"
+            f0, f1 = (k + 0.5) / len(parts) - 0.12, (k + 0.5) / len(parts) + 0.12
+            p0, p1 = f"{pid}.a", f"{pid}.b"
+            objs += [{"type": "point", "id": p0}, {"type": "point", "id": p1}]
+            cons += [["on", p0, f"{A}-{B}"], ["on", p1, f"{A}-{B}"], ["length_ratio", f"{A}-{p0}", f"{A}-{B}", f0], ["length_ratio", f"{A}-{p1}", f"{A}-{B}", f1]]
+            comp = {"type": part.get("type", "resistor"), "id": pid, "from": p0, "to": p1}
+            for key in ("label", "tex_label", "color", "glow", "letter", "closed", "label_side"):
+                if key in part:
+                    comp[key] = part[key]
+            objs.append(comp)
+            objs.append({"type": "wire", "id": f"{pid}.w", "points": [prev, p0]})
+            prev = p1
+        objs.append({"type": "wire", "id": f"{i}.{side}.w", "points": [prev, B]})
+    objs.append({"type": "wire", "id": f"{i}.loop", "points": [f"{i}.c{k}" for k in range(4)], "closed": True, "width": 0})
+    objs.append({"type": "group", "id": i, "members": [x["id"] for x in objs if x["type"] != "point" and x["id"] != f"{i}.loop"]})
+    return objs, cons
+
+
+def _mac_cycle(o):
+    # cycle {id, items: [texts], radius?} -> boxes id.0.. on a ring with flows id.f0.. between consecutive items (closing the loop)
+    i, items = o["id"], list(o.get("items") or [])
+    objs = [{"type": "box", "id": f"{i}.{k}", "text": t, "color": o.get("color", "a")} for k, t in enumerate(items)]
+    objs += [{"type": "flow", "id": f"{i}.f{k}", "from": f"{i}.{k}", "to": f"{i}.{(k + 1) % len(items)}", "bend": -0.35, "color": o.get("flow_color", "muted")}
+             for k in range(len(items))]
+    return objs, [["ring", [f"{i}.{k}" for k in range(len(items))], o.get("radius", 2.2)]]
+
+
+def _mac_process(o):
+    # process {id, items: [texts], direction?: row|column} -> boxes id.0.. in a row/column with flows id.f0.. between them
+    i, items = o["id"], list(o.get("items") or [])
+    objs = [{"type": "box", "id": f"{i}.{k}", "text": t, "color": o.get("color", "a")} for k, t in enumerate(items)]
+    objs += [{"type": "flow", "id": f"{i}.f{k}", "from": f"{i}.{k}", "to": f"{i}.{k + 1}", "color": o.get("flow_color", "muted")} for k in range(len(items) - 1)]
+    return objs, [[o.get("direction", "row") if o.get("direction") in ("row", "column") else "row", [f"{i}.{k}" for k in range(len(items))], o.get("gap", 1.0)]]
+
+
+def _mac_vector_sum(o):
+    # vector_sum {id, u: [x, y], v: [x, y], at?: [x, y]} -> points id.O id.U id.S id.V, vectors id.u (O->U), id.v (U->S), id.sum (O->S),
+    # dashed parallelogram sides id.v2 (O->V) and id.u2 (V->S); all from offsets, so the sum is exact.
+    i = o["id"]
+    u, v = o.get("u", [3, 1]), o.get("v", [1, 2])
+    objs = [{"type": "point", "id": f"{i}.O", "at": o.get("at", [0, 0])}, {"type": "point", "id": f"{i}.U"}, {"type": "point", "id": f"{i}.S"}, {"type": "point", "id": f"{i}.V"},
+            {"type": "vector", "id": f"{i}.u", "from": f"{i}.O", "to": f"{i}.U", "color": "a", "tex_label": o.get("u_label", "\\vec{a}")},
+            {"type": "vector", "id": f"{i}.v", "from": f"{i}.U", "to": f"{i}.S", "color": "b", "tex_label": o.get("v_label", "\\vec{b}")},
+            {"type": "vector", "id": f"{i}.sum", "from": f"{i}.O", "to": f"{i}.S", "color": "c", "tex_label": o.get("sum_label", "\\vec{a}+\\vec{b}")},
+            {"type": "segment", "id": f"{i}.v2", "from": f"{i}.O", "to": f"{i}.V", "color": "b", "dashed": True},
+            {"type": "segment", "id": f"{i}.u2", "from": f"{i}.V", "to": f"{i}.S", "color": "a", "dashed": True}]
+    cons = [["offset", f"{i}.U", f"{i}.O", u[0], u[1]], ["offset", f"{i}.S", f"{i}.U", v[0], v[1]], ["offset", f"{i}.V", f"{i}.O", v[0], v[1]]]
+    return objs, cons
+
+
+MACROS = {"circuit": _mac_circuit, "cycle": _mac_cycle, "process": _mac_process, "vector_sum": _mac_vector_sum,
+          "right_triangle": _mac_right_triangle, "square_on": _mac_square_on, "regular_polygon": _mac_regular_polygon, "balance": _mac_balance}
 
 
 # ───────────────────────── text size estimates (frame units, Manim Text/MathTex) ─────────────────────────
@@ -602,7 +675,7 @@ class World:
                         if a in self.objs and b in self.objs:
                             continue
                     if isinstance(x, str) and re.match(r"^[A-Za-z_][\w.]*$", x) and x not in self.objs and x not in self.vars.decl and x not in ("pi", "deg", "e", "h", "v"):
-                        if k in ("distance", "angle", "direction", "polar", "area", "near", "apart", "ring", "row", "column", "gap", "length_ratio", "tangent") and c.index(r) >= 3:
+                        if k in ("distance", "angle", "direction", "polar", "area", "near", "apart", "ring", "row", "column", "gap", "length_ratio", "tangent", "offset") and c.index(r) >= 3:
                             continue
                         P.append(f"constraint {c!r}: {x!r} is not an object id or var")
         for bi, b in enumerate(self.ir.get("beats") or []):
@@ -795,6 +868,8 @@ class World:
             return list(p(a[0]) - np.array([self._num(a[1][0], vals), self._num(a[1][1], vals)]))
         if k == "distance":
             return [np.linalg.norm(p(a[0]) - p(a[1])) - self._num(a[2], vals)]
+        if k == "offset":  # P = Q + (dx, dy)
+            return list(p(a[0]) - p(a[1]) - np.array([self._num(a[2], vals), self._num(a[3], vals)]))
         if k == "equal_length":
             (a0, a1), (b0, b1) = self._seg(a[0], X, vals), self._seg(a[1], X, vals)
             return [np.linalg.norm(a1 - a0) - np.linalg.norm(b1 - b0)]

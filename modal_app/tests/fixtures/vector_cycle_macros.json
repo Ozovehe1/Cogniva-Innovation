@@ -1,0 +1,4 @@
+{"title":"Vector and cycle check","vars":{},
+"objects":[{"type":"vector_sum","id":"S","u":[3,1],"v":[1,2]},{"type":"cycle","id":"cy","items":["G1","S phase","G2","Mitosis"],"radius":1.8}],
+"constraints":[["left_of","S.S","cy.3",1.0]],
+"beats":[{"say":"Add head to tail.","do":[["show","S.u","S.v"],["show","S.sum","S.v2","S.u2"]]},{"say":"Cycle.","do":[["show","cy.0","cy.1","cy.2","cy.3","cy.f0","cy.f1","cy.f2","cy.f3"]]}]}

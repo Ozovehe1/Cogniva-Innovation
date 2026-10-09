@@ -1,0 +1,13 @@
+{"title":"Sine from a rotating point","vars":{"t":0,"R":1.4},
+ "objects":[{"type":"point","id":"O","at":[0,0]},{"type":"circle","id":"uc","center":"O","radius":"R","color":"muted"},
+ {"type":"point","id":"P","color":"b","label":"P"},{"type":"segment","id":"OP","from":"O","to":"P","color":"b"},
+ {"type":"axes","id":"ax","x":[0,6.3],"y":[-1.2,1.2],"unit":[0.8,"R"],"origin":"A0","x_pi":true,"x_label":"\\theta","y_label":"\\sin\\theta"},
+ {"type":"point","id":"A0"},{"type":"point","id":"Q","on":"ax","at":["t","sin(t)"],"color":"b"},
+ {"type":"segment","id":"PQ","from":"P","to":"Q","dashed":true,"color":"muted","width":2},
+ {"type":"function","id":"sinf","on":"ax","expr":"sin(x)","domain":[0,"t"],"color":"b"},
+ {"type":"readout","id":"ro","text":"θ = {t/deg:.0f}°   sin θ = {sin(t):.2f}"}],
+ "constraints":[["polar","P","O","R","t"],["same_y","A0","O"],["right_of","A0","O",2.0]],
+ "checks":[["eq","y(P)-y(O)","R*sin(t)"],["eq","y(Q)","y(P)"]],
+ "beats":[{"say":"A point moves round a circle of radius one.","do":[["show","uc","O","OP","P","ax"]]},
+ {"say":"Track its height as the angle grows.","do":[["show","Q","PQ","ro"],["trace","Q"],["animate","t","2*pi",{"run":6,"rate":"linear"}]]},
+ {"say":"The height traces the sine wave.","do":[["show","sinf"]]}]}

@@ -32,7 +32,7 @@ import gm_world as GW
 
 BG = "#FDFCF9"
 COLORS = {"ink": "#14141A", "muted": "#8A8A93", "a": "#23406A", "b": "#A4502A", "c": "#1F4D3A", "d": "#7A3B78", "accent": "#C98A1B",
-          "highlight": "#D1495B", "good": "#2E7D4F", "bad": "#C0392B", "water": "#2B7BB9", "light": "#E8E4DA", "warm": "#E07A2E",
+          "highlight": "#D1495B", "good": "#2E7D4F", "bad": "#C0392B", "water": "#2B7BB9", "light": "#E8E4DA", "warm": "#D1495B",
           "cool": "#3C8DBC", "teal": "#17808A", "navy": "#23406A", "clay": "#A4502A", "green": "#1F4D3A", "plum": "#7A3B78",
           "amber": "#B7862C", "red": "#C0392B", "blue": "#2B7BB9", "orange": "#E07A2E", "yellow": "#E8B923", "gray": "#8A8A93",
           "grey": "#8A8A93", "black": "#14141A", "white": "#FFFFFF", "brown": "#7B5232", "purple": "#7A3B78", "pink": "#D1495B"}
@@ -132,6 +132,23 @@ class Stage:
             raise RuntimeError("scene does not verify: " + " | ".join(res["problems"][:6]))
         self.mobs: dict = {}
         self.shown: list[str] = []
+        # labels that no beat mentions: shown together with what they label
+        mentioned = set()
+        for b in ir.get("beats") or []:
+            for a in b.get("do") or []:
+                for x in _as(a)[1:]:
+                    for y in (x if isinstance(x, list) else [x]):
+                        if isinstance(y, str):
+                            mentioned.add(y)
+        self._orphans: dict = {}
+        for oid, o in self.W.objs.items():
+            if o["type"] == "label" and o.get("for") and oid not in mentioned and not o.get("_auto"):
+                self._orphans.setdefault(str(o["for"]), []).append(oid)
+        # a function named with a word (supply, demand, velocity) is labelled with it unless it has a label
+        for oid, o in list(self.W.objs.items()):
+            if o["type"] == "function" and not o.get("label") and not o.get("tex_label") and f"{oid}.lbl" not in self.W.objs \
+                    and re.fullmatch(r"[A-Za-z]{3,14}", oid) and not any(x.get("for") == oid for x in self.W.objs.values() if x["type"] == "label"):
+                self.W.objs[f"{oid}.lbl"] = {"type": "label", "id": f"{oid}.lbl", "for": oid, "text": oid.capitalize(), "color": o.get("color"), "_auto": True}
         self.labels: dict = {}  # label id -> (mobject, anchor ref, offset)
         self.vals = self.W.state_vals
         self.X = self.W.X
@@ -1019,7 +1036,23 @@ class Stage:
         rt = float(opts.get("run", rt)) if isinstance(opts, dict) else rt
         sc = self.scene
         if kind == "show":
-            ids = [y for x in args for y in _as(x)]
+            ids = []
+            todo = [y for x in args for y in _as(x)]
+            while todo:
+                y = todo.pop(0)
+                g = self.W.objs.get(y, {})
+                if g.get("type") == "group":
+                    todo = list(g.get("members") or []) + todo
+                    if y not in self.shown:
+                        self.shown.append(y)
+                        self.mobs[y] = VGroup()
+                    continue
+                # an arrow between two things never appears before them
+                if g.get("type") == "flow":
+                    for end in (g.get("from"), g.get("to")):
+                        if isinstance(end, str) and end in self.W.objs and end not in self.shown and end not in ids and "[" not in end:
+                            ids.append(end)
+                ids.append(y)
             anims = []
             for x in ids:
                 an = self.show_anim(x)
@@ -1028,6 +1061,13 @@ class Stage:
                 o = self.W.objs.get(x, {})
                 if o.get("type") == "label" and x in self.mobs:
                     self.mobs[x]._anchor = self._anchor_now(o) if o.get("for") else None
+                # labels for this object that no beat shows explicitly appear with it
+                for lid2 in self._orphans.get(x, []):
+                    if lid2 not in self.shown:
+                        an3 = self.show_anim(lid2)
+                        if an3 is not None:
+                            anims.append(an3)
+                            self.mobs[lid2]._anchor = self._anchor_now(self.W.objs[lid2])
                 # auto labels created from "label" shorthand show with their object
                 lid = f"{x}.lbl"
                 if lid in self.W.objs and lid not in self.shown and self.W.objs[lid].get("_auto"):
@@ -1091,6 +1131,11 @@ class Stage:
                         anims.append(cellm[0].animate.set_fill(col(role), opacity=0.35 if role not in ("muted", "light") else 0.5).set_stroke(col(role) if role not in ("light",) else col("muted")))
                         if role == "muted":
                             anims.append(cellm[1].animate.set_opacity(0.35))
+                elif self.W.objs.get(y, {}).get("type") == "box" and isinstance(m, VGroup) and len(m) == 2:
+                    anims.append(m[0].animate.set_stroke(col(role)).set_fill(col(role), opacity=0.22))
+                    o = self.W.objs.get(y)
+                    if o is not None:
+                        o["color"] = role
                 else:
                     anims.append(m.animate.set_color(col(role)))
                     o = self.W.objs.get(y)

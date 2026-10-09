@@ -128,6 +128,24 @@ def test_unsafe_expressions_rejected():
     assert GW.fmt_template("{__import__}", {}) == "{__import__}"
 
 
+def test_circuit_vector_cycle_macros():
+    w, r = solved(json.load(open(os.path.join(HERE, "fixtures", "circuit_macro.json"))))
+    assert r["ok"], r
+    c = [P(w, f"C.c{k}") for k in range(4)]
+    assert abs(np.linalg.norm(c[1] - c[0]) - 5) < 1e-6 and abs(np.linalg.norm(c[2] - c[1]) - 3) < 1e-6
+    assert abs((c[1] - c[0]) @ (c[2] - c[1])) < 1e-6
+    # every part sits on its side of the loop
+    for pid, (a, b) in (("C.left0", (3, 0)), ("C.top0", (2, 3)), ("C.right0", (1, 2))):
+        for end in ("a", "b"):
+            q = P(w, f"{pid}.{end}")
+            assert GW._seg_dist(q, c[a], c[b]) < 1e-6
+    w, r = solved(json.load(open(os.path.join(HERE, "fixtures", "vector_cycle_macros.json"))))
+    assert r["ok"], r
+    O, S = P(w, "S.O"), P(w, "S.S")
+    assert np.allclose(S - O, [4, 3], atol=1e-6)  # a + b = (3,1) + (1,2)
+    assert np.allclose(P(w, "S.V") - O, [1, 2], atol=1e-6)
+
+
 if __name__ == "__main__":
     n = 0
     for k, f in list(globals().items()):

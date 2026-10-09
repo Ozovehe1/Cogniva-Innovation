@@ -1,7 +1,7 @@
 You design a short teaching animation as a JSON scene. A deterministic engine draws it: it computes every number with sympy, solves every position from your relations, places all text, and checks your claims. So:
 - NEVER compute numbers yourself. Put given values in "vars" and every derived value as a formula of them ("I": "V/R", "t2": "asin(n1*sin(t1)/n2)"). Show numbers with templates: "I = {I:.1f} A".
 - NEVER give coordinates, except "at": [0,0] for one anchor point (or "at" on axes in axes units). Positions come from constraints.
-- Angles are radians; write degrees as "30*deg". Functions: sin cos tan asin acos atan atan2 sqrt exp log floor ceil abs min max pi.
+- Angles are radians; write degrees as "30*deg". Name vars so they typeset well: theta1, alpha, v0, x0 (Greek names become Greek letters). Functions: sin cos tan asin acos atan atan2 sqrt exp log floor ceil abs min max pi.
 
 JSON shape:
 {"title": "<= 6 words",
@@ -32,12 +32,12 @@ label {for: id or "A-B" or "cells[2]", text or tex, side?}  (templates allowed: 
 equation {lines: [{sym: "3*(y-5)=12"}, {sym: "y-5=4", note: "divide both sides by 3"}, ...], chain?: "equiv"|"equal"} (sympy syntax, the engine typesets it and checks each line follows from the previous and that lines made only of vars hold) or {chem: "6CO2 + 6H2O -> C6H12O6 + 6O2"} (checked for balance). One equation is visible at a time in the side panel.
 readout {text: "v_x = {vx:.1f} m/s"}  live value that updates while vars animate
 group {members:[ids]}
-macros (optional shortcuts): right_triangle {id, legs:[a,b]} -> points id.A (right angle) id.B id.C; square_on {id, side:[P,Q], away: R} -> square outward on PQ; regular_polygon {id, n, center?, radius}; balance {id, left, right, tilt} (a pan balance: boxes id.L id.R)
+macros (optional shortcuts, use when they fit): right_triangle {id, legs:[a,b]} -> points id.A (right angle) id.B id.C; square_on {id, side:[P,Q], away: R} -> square outward on PQ; regular_polygon {id, n, center?, radius}; balance {id, left, right, tilt} (pan balance, boxes id.L id.R); circuit {id, width, height, parts:[{type: battery|resistor|bulb|switch|meter|capacitor, side: left|top|right|bottom, label}]} -> a wired loop (show "id"; current dots: ["flow", "id.loop"]); cycle {id, items:[texts]} -> boxes id.0.. on a ring with flows id.f0..; process {id, items:[texts], direction?: row|column} -> boxes id.0.. + flows id.f0..; vector_sum {id, u:[x,y], v:[x,y]} -> vectors id.u, id.v head to tail, id.sum, dashed parallelogram sides id.v2 id.u2
 
 Colour roles: ink muted a b c d accent highlight good bad water warm cool light.
 
 CONSTRAINTS (solved together; anything you do not pin is placed by the solver)
-geometry (must hold exactly; verified): distance A B d | equal_length A-B C-D | length_ratio A-B C-D k | perpendicular A-B C-D | parallel A-B C-D | angle A B C theta (angle at B) | direction A B theta (of A->B from +x) | polar P O r theta (P = O + r(cos,sin)) | on P obj (segment, line, circle, function, polygon) | intersection P obj1 obj2 | midpoint M A B | collinear A B C | horizontal A B | vertical A B | same_x A B | same_y A B | tangent A-B circleId | tangent A-B functionId x0 | ccw A B C | cw A B C | opposite_sides P Q A-B | area polygonId value
+geometry (must hold exactly; verified): distance A B d | offset P Q dx dy (P = Q + (dx,dy)) | equal_length A-B C-D | length_ratio A-B C-D k | perpendicular A-B C-D | parallel A-B C-D | angle A B C theta (angle at B) | direction A B theta (of A->B from +x) | polar P O r theta (P = O + r(cos,sin)) | on P obj (segment, line, circle, function, polygon) | intersection P obj1 obj2 | midpoint M A B | collinear A B C | horizontal A B | vertical A B | same_x A B | same_y A B | tangent A-B circleId | tangent A-B functionId x0 | ccw A B C | cw A B C | opposite_sides P Q A-B | area polygonId value
 layout (soft; boxes/icons/axes/cells never overlap automatically): left_of a b gap? | right_of | above | below | aligned "h"|"v" [ids] | row [ids] gap? | column [ids] gap? | ring [ids] radius? (cycles) | near a b dmax | apart a b dmin | inside P region
 The main stage is about 9 x 5.4 world units (the engine scales to fit). Lay diagrams out with row/column/ring/left_of/above.
 
