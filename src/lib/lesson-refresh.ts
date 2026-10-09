@@ -45,6 +45,8 @@ export async function refreshLessonVisuals(db: SupabaseClient, lessonId: string,
   // The drafting worker owns the sections while it runs (it places clips itself); paused / ready / partial only.
   if (['outlining', 'drafting'].includes(lesson.draft_status)) return { changed: false, trace }
   const all = await loadSections(db, lessonId)
+  // Still being written (incl. a quota pause): the drafting worker places clips as it releases sections.
+  if (all.some(s => s.status === 'pending' || s.status === 'drafting')) return { changed: false, trace }
   const sections = all.filter(s => s.status === 'ready' && Array.isArray(s.steps))
   if (!sections.length) return { changed: false, trace }
   const dirty = new Set<string>()
@@ -67,6 +69,12 @@ export async function refreshLessonVisuals(db: SupabaseClient, lessonId: string,
     const own = sections.findIndex(s => s.title === forTitle)
     let k = own >= 0 && own >= at ? own : sections.findIndex((_, i) => i > at && i > 0)
     if (k < 0) k = Math.min(sections.length - 1, Math.max(own, at))
+    // One clip per section: the next section without one instead.
+    if (sections[k].steps.some(st => st.type === 'manim_clip')) {
+      const free = sections.findIndex((x, i) => i >= k && !x.steps.some(st => st.type === 'manim_clip'))
+      if (free < 0) continue
+      k = free
+    }
     const s = sections[k]
     const pos = afterTitle(s.steps)
     const clip = { type: 'manim_clip', url: publicClipUrl(j.video_path), caption: (s.goal || s.title).slice(0, 280), jobId: j.id } as Step
