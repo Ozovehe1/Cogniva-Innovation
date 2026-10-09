@@ -8,7 +8,8 @@ import { ArrowRight, Check, Lightbulb } from 'lucide-react'
 import { RichText } from './rich-text'
 import { ItemFigure } from './item-figure'
 import type { PublicFigure } from '@/lib/assessment/spec'
-import { Alert, Skeleton, Spinner, buttonClass, cx } from './ui'
+import { Alert, Pending, Skeleton, buttonClass, cx } from './ui'
+import { WaitNote } from './system/wait'
 
 interface Q { i: number; q: string; options: string[]; topic?: string; figure?: PublicFigure }
 interface Quiz { items: Q[]; recheck: Q[]; attempts: number; wrongStreak: number; status: string }
@@ -62,7 +63,7 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
   // Skeleton shaped like the questions that are coming (no spinner): the learner sees four short items, not a wait.
   if (mode === 'loading') return (
     <div className="mt-6" role="status" aria-live="polite">
-      <p className="text-[15px] text-muted">{startRecheck ? 'Picking a few questions on the basics…' : 'Writing four fresh questions, just for you…'}</p>
+      <WaitNote sub="Each one is checked before you see it. No timer.">{startRecheck ? 'Picking a few questions on the basics' : 'Writing four fresh questions for you'}</WaitNote>
       <ol className="mt-6 space-y-7" aria-hidden>
         {[0, 1, 2, 3].map(i => (
           <li key={i}>
@@ -106,7 +107,7 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
         </ol>
         {error && <Alert tone="danger" className="mt-4">{error}</Alert>}
         <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-          <button type="button" disabled={busy || answers.some(a => a === null)} onClick={submit} className={buttonClass('primary', 'lg', 'w-full sm:w-auto')}>{busy ? <><Spinner />Checking…</> : 'Check my answers'}</button>
+          <button type="button" disabled={busy || answers.some(a => a === null)} onClick={submit} className={buttonClass('primary', 'lg', 'w-full sm:w-auto')}><Pending busy={busy} label="Checking">Check my answers</Pending></button>
           {/* Progress visibility: how many are answered, so the disabled button never feels arbitrary. */}
           <p className="tnum text-center text-[13px] text-muted sm:text-left" aria-live="polite">{answers.filter(a => a !== null).length} of {list.length} answered</p>
         </div>

@@ -25,7 +25,7 @@ export function FigureSkeleton({ aspect = '3 / 2' }: { aspect?: string }) {
     <div className="relative mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: aspect, maxWidth: Math.round(440 * (Number(aspect) || 1.5)), marginInline: 'auto' }} aria-hidden="true">
       <div className="absolute inset-x-4 top-1/2 h-px bg-line-strong/70" />
       <div className="absolute inset-y-4 left-1/2 w-px bg-line-strong/70" />
-      <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/60 to-transparent" />
+      <div className="skeleton absolute inset-0 rounded-none opacity-60" />
     </div>
   )
 }

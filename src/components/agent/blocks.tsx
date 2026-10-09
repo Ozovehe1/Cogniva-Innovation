@@ -7,7 +7,7 @@ import { ArrowRight, Check, ExternalLink, ImageOff, Pause, Play, RotateCcw, Volu
 import { WhiteboardPlayer } from '@/components/whiteboard'
 import { RichText } from '@/components/rich-text'
 import { ItemFigure } from '../item-figure'
-import { buttonClass, cx, Skeleton, Spinner } from '@/components/ui'
+import { buttonClass, cx, Skeleton } from '@/components/ui'
 import { compileExpr } from '@/lib/lesson-schema'
 import type { Block } from '@/lib/agent/types'
 import type { SimSpec } from '@/lib/agent/visual'
@@ -16,12 +16,13 @@ import { genie } from '@/components/genie/presence'
 import { speakerForAudio } from '@/components/genie/lipsync'
 import { ConfirmBlock } from './confirm'
 import { ZoomableImage } from '@/components/zoomable'
+import { PaperSketch, Pending, StageList, WaitNote, WhileYouWait, useElapsed } from '@/components/system/wait'
 
 // JSXGraph (~1 MB) loads only when an interactive figure is on screen.
 const InteractiveFigure = dynamic(() => import('./interactive'), { ssr: false, loading: () => <FigureSkeletonLite /> })
 /** Same shape as the figure that is coming (no spinner). */
 function FigureSkeletonLite() {
-  return <div className="relative mt-3 aspect-[3/2] w-full overflow-hidden rounded-[10px] border border-line bg-[#FBFAF7]" aria-hidden="true"><div className="absolute inset-x-4 top-1/2 h-px bg-line-strong/70" /><div className="absolute inset-y-4 left-1/2 w-px bg-line-strong/70" /><div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/60 to-transparent" /></div>
+  return <div className="relative mt-3 aspect-[3/2] w-full overflow-hidden rounded-[10px] border border-line bg-[#FBFAF7]" aria-hidden="true"><div className="absolute inset-x-4 top-1/2 h-px bg-line-strong/70" /><div className="absolute inset-y-4 left-1/2 w-px bg-line-strong/70" /><div className="skeleton absolute inset-0 rounded-none opacity-60" /></div>
 }
 
 const frame = 'overflow-hidden rounded-[14px] border border-line bg-surface shadow-[var(--shadow-card)]'
@@ -256,8 +257,7 @@ function niceStep(raw: number) {
 /* ───────────── Rendered animation (async) ───────────── */
 
 function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
-  const [state, setState] = useState<{ status: string; url: string | null; verified?: boolean }>({ status: block.status, url: block.url ?? null })
-  const [elapsed, setElapsed] = useState(0)
+  const [state, setState] = useState<{ status: string; url: string | null; verified?: boolean; phase?: string; attempts?: number }>({ status: block.status, url: block.url ?? null })
   useEffect(() => {
     // A finished clip from history is asked once whether the scene verifier checked it.
     if (state.status === 'done' && state.verified === undefined) {
@@ -265,20 +265,24 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
     }
     if (state.status !== 'rendering') return
     let stop = false
+    let id: ReturnType<typeof setTimeout> | undefined
     const started = Date.now()
-    const tick = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000)
     const poll = async () => {
       if (stop) return
       try {
         const r = await fetch(`/api/agent/clip/${block.jobId}`, { cache: 'no-store' })
-        if (r.ok) { const j = await r.json(); if (j.status !== 'rendering') { setState({ status: j.status, url: j.url, verified: !!j.verified }); return } }
+        if (r.ok) {
+          const j = await r.json()
+          if (j.status !== 'rendering') { setState({ status: j.status, url: j.url, verified: !!j.verified }); return }
+          setState(s => (s.phase === j.phase && s.attempts === j.attempts ? s : { ...s, phase: j.phase, attempts: j.attempts }))
+        }
       } catch { /* retry */ }
-      if (Date.now() - started < 12 * 60_000) setTimeout(poll, 6000)
+      if (Date.now() - started < 12 * 60_000) id = setTimeout(poll, 6000)
       else setState(s => ({ ...s, status: 'failed' }))
     }
-    const id = setTimeout(poll, 4000)
-    return () => { stop = true; clearTimeout(id); clearInterval(tick) }
-  }, [block.jobId, state.status])
+    id = setTimeout(poll, 2500)
+    return () => { stop = true; if (id) clearTimeout(id) }
+  }, [block.jobId, state.status, state.verified])
   return (
     <figure className={frame} role="region" aria-label={block.caption ? `Animation: ${block.caption}` : 'Animation'}>
       {state.status === 'done' && state.url
@@ -290,7 +294,7 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
               <p className="text-[14px] text-ink-2">This animation couldn’t be drawn. The explanation above still holds.</p>
             </div>
           )
-          : <ClipSkeleton elapsed={elapsed} />}
+          : <ClipWait phase={state.phase} attempts={state.attempts ?? 0} />}
       {block.caption && <ClipCaption text={block.caption} />}
       {/* Honest status (correctness guard): only a scene the deterministic verifier passed counts as checked. */}
       {state.status === 'done' && state.verified === false && <p className="border-t border-line px-4 py-2 text-[12.5px] text-muted">Not machine-checked. If something looks off, tap Report a mistake.</p>}
@@ -298,21 +302,30 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
   )
 }
 
-/** A skeleton shaped like the clip (16:9, a faint title bar and stage), with honest progress: time so far and the usual range. */
-function ClipSkeleton({ elapsed }: { elapsed: number }) {
-  const mm = Math.floor(elapsed / 60), ss = String(elapsed % 60).padStart(2, '0')
+/**
+ * While a clip renders: the 16:9 frame it will play in, a pen sketching the kind of scene that is coming, and the
+ * real stages from the render service (queued = planning and checking; rendering = drawing frames; a second attempt
+ * is said plainly). No clock: a ticking timer adds pressure and nothing to do with it (low threat). After a real
+ * threshold the line says it is slower than usual, so the learner knows it has not stalled. A prediction prompt (there from the start, so nothing shifts) makes
+ * the wait useful (generation effect; pretesting primes what to notice when it plays).
+ */
+export function ClipWait({ phase, attempts }: { phase?: string; attempts: number }) {
+  const elapsed = useElapsed(true, 5000)
+  const rendering = phase === 'rendering'
   return (
-    <div className="relative aspect-video w-full overflow-hidden bg-sunken" aria-busy="true" aria-live="polite">
-      <div className="absolute inset-0 animate-pulse motion-reduce:animate-none">
-        <div className="absolute left-[5%] top-[7%] h-[7%] w-[38%] rounded-[6px] bg-line" />
-        <div className="absolute left-[5%] top-[18%] h-px w-[90%] bg-line" />
-        <div className="absolute left-[14%] top-[30%] h-[42%] w-[46%] rounded-[10px] border-2 border-line" />
-        <div className="absolute right-[8%] top-[34%] h-[6%] w-[22%] rounded-[6px] bg-line" />
-        <div className="absolute right-[8%] top-[46%] h-[6%] w-[16%] rounded-[6px] bg-line" />
-      </div>
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 bg-gradient-to-t from-sunken via-sunken/90 to-transparent px-4 pb-3 pt-6">
-        <p className="text-[13.5px] text-ink-2">Drawing your animation · checking the maths first</p>
-        <span className="tnum shrink-0 text-[13px] text-muted">{mm}:{ss} · usually 1–3 min</span>
+    <div data-wait="clip">
+      <PaperSketch bare kind="clip" aspect="16 / 9" progress="none" live={false} />
+      <div className="border-t border-line px-4 pb-3.5 pt-3" role="status" aria-live="polite">
+        {/* Stages are shown only when the status route reports the render phase; otherwise one honest line. */}
+        {phase
+          ? <StageList stages={[
+              { label: attempts > 1 ? 'Re-planning the scene after a check failed' : 'Planning the scene and checking every number', state: rendering ? 'done' : 'now' },
+              { label: 'Drawing the frames', state: rendering ? 'now' : 'next' },
+              { label: 'Ready to play here', state: 'next' },
+            ]} />
+          : <WaitNote live={false}>Planning the scene, checking every number, then drawing it</WaitNote>}
+        <p className="mt-2.5 text-[12.5px] leading-snug text-muted">{elapsed > 200 ? 'Taking longer than usual, still working. You can keep going; it appears here by itself.' : 'Usually 1 to 3 minutes. Keep reading; it appears here by itself.'}</p>
+        <WhileYouWait className="mt-3">Before it plays: what do you expect to change first, and why?</WhileYouWait>
       </div>
     </div>
   )
@@ -331,7 +344,7 @@ function ClipPlayer({ url, label }: { url: string; label: string }) {
   return (
     <div>
       <div className="relative aspect-video w-full bg-surface">
-        {!ready && <div className="absolute inset-0 animate-pulse bg-sunken motion-reduce:animate-none" aria-hidden />}
+        {!ready && <div className="skeleton absolute inset-0 rounded-none" aria-hidden />}
         <video ref={ref} src={url} autoPlay muted playsInline preload="auto" aria-label={label}
           onLoadedData={() => setReady(true)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
           onTimeUpdate={e => { const v = e.currentTarget; setProgress(v.duration ? v.currentTime / v.duration : 0) }}
@@ -476,9 +489,11 @@ function AudioBlock({ text }: { text: string }) {
     try { await audio.current.play(); setState('playing') } catch { setState('idle') }
   }
   return (
-    <button type="button" onClick={play} className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3.5 py-2 text-[13px] font-medium text-ink shadow-[var(--shadow-card)] hover:border-line-strong">
-      {state === 'loading' ? <Spinner /> : state === 'playing' ? <Pause className="h-3.5 w-3.5 text-accent" /> : <Volume2 className="h-3.5 w-3.5 text-accent" />}
-      {state === 'playing' ? 'Pause' : 'Listen'}
+    <button type="button" onClick={play} disabled={state === 'loading'} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line bg-surface px-3.5 py-2 text-[13px] font-medium text-ink shadow-[var(--shadow-card)] hover:border-line-strong">
+      <Pending busy={state === 'loading'} label="Preparing voice">
+        {state === 'playing' ? <Pause className="h-3.5 w-3.5 text-accent" /> : <Volume2 className="h-3.5 w-3.5 text-accent" />}
+        {state === 'playing' ? 'Pause' : 'Listen'}
+      </Pending>
     </button>
   )
 }

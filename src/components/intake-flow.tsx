@@ -17,7 +17,8 @@ import { RichText } from './rich-text'
 import { ItemFigure } from './item-figure'
 import type { PublicFigure } from '@/lib/assessment/spec'
 import { SafetyPause } from './safety-pause'
-import { Alert, Spinner, buttonClass, cx, inputClass } from './ui'
+import { Alert, Pending, buttonClass, cx, inputClass } from './ui'
+import { InkMark, StageList } from './system/wait'
 
 type Phase = 'intake' | 'ready' | 'building' | 'diag' | 'finishing' | 'result'
 
@@ -283,10 +284,19 @@ export function IntakeFlow({
 
           {(phase === 'ready' || phase === 'building' || phase === 'finishing') && (
             <motion.section key="building" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-1 flex-col pt-6">
-              <TutorLine>{phase === 'finishing' ? 'Picking where you start and writing your first lesson…' : fresh ? 'Laying out the ideas from the very first one up to your goal.' : 'Mapping the skills between where you are and your goal.'}</TutorLine>
+              <TutorLine>{phase === 'finishing' ? 'Picking where you start and writing your first lesson.' : fresh ? 'Laying out the ideas from the very first one up to your goal.' : 'Mapping the skills between where you are and your goal.'}</TutorLine>
               <Title>{phase === 'finishing' ? 'Your path is taking shape' : 'Your map is taking shape'}</Title>
               <MapSkeleton reduce={!!reduce} />
-              <p className="mt-6 text-[14px] leading-relaxed text-muted" aria-live="polite">{error ? '' : 'Usually well under a minute. In a moment you’ll see what you already know.'}</p>
+              {/* The real stages of the build (each tied to a server step), not a timer or a percentage. */}
+              {!error && (
+                <div className="mt-6" role="status" aria-live="polite">
+                  <StageList stages={[
+                    { label: fresh ? 'Laying out the ideas up to your goal' : 'Mapping the skills to your goal', state: phase === 'finishing' ? 'done' : 'now' },
+                    { label: fresh ? 'Choosing your first idea and writing its lesson' : 'Picking where you start and writing your first lesson', state: phase === 'finishing' ? 'now' : 'next' },
+                  ]} />
+                  <p className="mt-3 text-[13px] leading-relaxed text-muted">Usually well under a minute. It moves on by itself.</p>
+                </div>
+              )}
               {error && (
                 <div className="mt-4">
                   <Alert tone="danger">{error}</Alert>
@@ -376,7 +386,7 @@ function GoalScreen({ firstName, answers, busy, isNewGoal, onSubmit }: { firstNa
         {STARTERS.map(s => <Chip key={s} on={text === s} onClick={() => { setText(s); ref.current?.focus() }} className="px-3.5 text-[14px]">{s}</Chip>)}
       </div>
       <ActionBar note={<span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" strokeWidth={2} />Private to you. About a minute to set up.</span>}>
-        <button type="button" disabled={!ok || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+        <button type="button" disabled={!ok || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}><Pending busy={busy} label="Saving">Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
       </ActionBar>
     </>
   )
@@ -422,7 +432,7 @@ function AboutScreen({ answers, busy, onSubmit }: { answers: Answers; busy: bool
         </AnimatePresence>
       </fieldset>
       <ActionBar note="Only used to pitch your lessons. Never shown to anyone.">
-        <button type="button" disabled={!age || !level || busy} onClick={() => onSubmit({ age: { v: age }, level: { v: level } })} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+        <button type="button" disabled={!age || !level || busy} onClick={() => onSubmit({ age: { v: age }, level: { v: level } })} className={buttonClass('primary', 'lg', 'w-full')}><Pending busy={busy} label="Saving">Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
       </ActionBar>
     </>
   )
@@ -453,7 +463,7 @@ function ConsentScreen({ busy, onSubmit }: { busy: boolean; onSubmit: (email: st
       </div>
       <p className="mt-4 text-[13px] text-muted">Not now? <Link href="/dashboard" className="font-medium text-accent underline-offset-4 hover:underline">Come back later</Link>. Nothing beyond your age is saved until they agree.</p>
       <ActionBar>
-        <button type="button" disabled={busy || !agree || !valid} onClick={() => onSubmit(email.trim())} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>We agree, continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+        <button type="button" disabled={busy || !agree || !valid} onClick={() => onSubmit(email.trim())} className={buttonClass('primary', 'lg', 'w-full')}><Pending busy={busy} label="Sending to your parent">We agree, continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
       </ActionBar>
     </>
   )
@@ -481,7 +491,7 @@ function GoalPickScreen({ answers, sugg, busy, onRetry, onSubmit }: { answers: A
       <Title>Which is closest?</Title>
       <div className="mt-5 grid gap-2" role="radiogroup" aria-label="Goal">
         {loading && [0, 1, 2].map(i => (
-          <div key={i} className="h-[68px] animate-pulse rounded-[14px] border border-line bg-surface p-4 motion-reduce:animate-none"><div className="h-3.5 w-4/5 rounded bg-sunken" /><div className="mt-2.5 h-2.5 w-1/4 rounded bg-sunken" /></div>
+          <div key={i} className="flex h-[68px] items-center gap-3 rounded-[14px] border border-line bg-surface px-4" aria-hidden><span className="h-5 w-5 shrink-0 rounded-full border border-line-strong" /><span className="min-w-0 flex-1"><span className="skeleton block h-3.5 w-4/5" /><span className="skeleton mt-2.5 block h-2.5 w-1/4" /></span></div>
         ))}
         {goals.map((g, i) => (
           <motion.button key={g.goal} type="button" role="radio" aria-checked={pick === g.goal} disabled={busy} onClick={() => setPick(g.goal)}
@@ -514,7 +524,7 @@ function GoalPickScreen({ answers, sugg, busy, onRetry, onSubmit }: { answers: A
         {fam === 'never' && <p className="mt-2 text-[13px] text-muted">Then there’s no check: we start from the very first idea.</p>}
       </fieldset>
       <ActionBar>
-        <button type="button" disabled={!pick || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>Build my path<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+        <button type="button" disabled={!pick || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}><Pending busy={busy} label="Starting your map">Build my path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
       </ActionBar>
     </>
   )
@@ -534,8 +544,8 @@ function PurposeScreen({ answers, guess, mapState, fresh, busy, onSubmit }: {
   return (
     <>
       <div className="flex items-center gap-2 self-start rounded-full border border-line bg-surface px-3 py-1.5 text-[13px] text-ink-2 shadow-[var(--shadow-card)]" role="status" aria-live="polite">
-        {ready ? <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2.5} /> : <Spinner className="h-3.5 w-3.5 text-accent" />}
-        {ready ? (fresh ? 'Your path is ready' : 'Your check is ready') : fresh ? 'Laying out your path…' : 'Mapping the skills to your goal…'}
+        {ready ? <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2.5} /> : <InkMark className="text-accent" width={16} />}
+        {ready ? (fresh ? 'Your path is ready' : 'Your check is ready') : fresh ? 'Laying out your path' : 'Mapping the skills to your goal'}
       </div>
       <Title sub="Optional, but it shapes the examples and the pace.">While I map it out: what’s it for?</Title>
       <div className="mt-5 flex flex-wrap gap-2" role="radiogroup" aria-label="What it’s for">
@@ -559,7 +569,7 @@ function PurposeScreen({ answers, guess, mapState, fresh, busy, onSubmit }: {
         <button type="button" disabled={busy || (dated && !date)} onClick={() => {
           const d = dated && date ? date : ''
           onSubmit({ purpose: purpose ? { v: purpose } : { skipped: true }, deadline: { v: d } }, { ...(purpose ? { purpose } : {}), deadline: d || null })
-        }} className={buttonClass('primary', 'lg', 'flex-1')}>{busy ? <Spinner /> : <>{ready ? (fresh ? 'See my path' : 'Start the check') : 'Continue'}<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+        }} className={buttonClass('primary', 'lg', 'flex-1')}><Pending busy={busy} label="Saving">{ready ? (fresh ? 'See my path' : 'Start the check') : 'Continue'}<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
       </ActionBar>
     </>
   )
@@ -590,6 +600,7 @@ function MapSkeleton({ reduce }: { reduce: boolean }) {
 function DiagQuestion({ view, busy, error, reduce, onAnswer, onSkipRest }: { view: DiagView; busy: boolean; error: string | null; reduce: boolean; onAnswer: (choice: number | null, confidence: string | null, ms: number) => void; onSkipRest: () => void }) {
   const it = view.item!
   const [choice, setChoice] = useState<number | null>(null)
+  const [pressed, setPressed] = useState<string | null>(null)
   const shownAt = useRef(0)
   useEffect(() => { shownAt.current = clock() }, [])
   // Read in event handlers only (time on the question, for the hesitation signal).
@@ -624,14 +635,14 @@ function DiagQuestion({ view, busy, error, reduce, onAnswer, onSkipRest }: { vie
         <AnimatePresence mode="wait" initial={false}>
           {choice === null ? (
             <motion.div key="idk" className="flex w-full items-center gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <button type="button" disabled={busy} onClick={() => onAnswer(null, null, ms())} className={buttonClass('secondary', 'lg', 'w-full')}>{busy ? <Spinner /> : 'I don’t know yet'}</button>
+              <button type="button" disabled={busy} onClick={() => onAnswer(null, null, ms())} className={buttonClass('secondary', 'lg', 'w-full')}><Pending busy={busy} label="Next question">I don’t know yet</Pending></button>
             </motion.div>
           ) : (
             <motion.div key="conf" className="w-full" initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, ease }}>
               <p className="mb-2 text-center text-[13px] font-medium text-ink-2">How sure are you?</p>
               <div className="grid grid-cols-3 gap-2">
                 {[['guess', 'Guessing'], ['fairly', 'Fairly sure'], ['sure', 'Sure']].map(([v, l]) => (
-                  <button key={v} type="button" disabled={busy} onClick={() => onAnswer(choice, v, ms())} className={buttonClass(v === 'sure' ? 'primary' : 'secondary', 'lg', 'px-2')}>{busy ? <Spinner /> : l}</button>
+                  <button key={v} type="button" disabled={busy} onClick={() => { setPressed(v); onAnswer(choice, v, ms()) }} className={buttonClass(v === 'sure' ? 'primary' : 'secondary', 'lg', 'px-2')}><Pending busy={busy && pressed === v} label="">{l}</Pending></button>
                 ))}
               </div>
             </motion.div>
@@ -687,7 +698,7 @@ function ResultScreen({ diag, firstLessonId, finishing, signals, reduce, onRetak
         {firstLessonId
           ? <Link href={`/learn/${firstLessonId}`} prefetch className={buttonClass('primary', 'lg', 'w-full')}>Start your first lesson<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
           : finishing
-            ? <span aria-live="polite" className={buttonClass('primary', 'lg', 'pointer-events-none w-full opacity-80')}><Spinner className="h-4 w-4" />Setting up your first lesson…</span>
+            ? <span aria-live="polite" aria-busy="true" className={buttonClass('primary', 'lg', 'pointer-events-none w-full cursor-progress')}><Pending busy label="Writing your first lesson">Start your first lesson<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></span>
             : <Link href="/learn" className={buttonClass('primary', 'lg', 'w-full')}>See your path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
       </ActionBar>
     </motion.section>

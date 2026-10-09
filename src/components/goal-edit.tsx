@@ -2,7 +2,7 @@
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Pencil } from 'lucide-react'
-import { Spinner, buttonClass, inputClass, labelClass } from './ui'
+import { Pending, buttonClass, inputClass, labelClass } from './ui'
 
 /** Edit a goal's own answers (deadline, what it's for, weekly time); the plan and due dates follow. */
 export function GoalEdit({ pathId, deadline, purpose, hours, purposes, hoursChoices }: {
@@ -68,7 +68,7 @@ export function GoalEdit({ pathId, deadline, purpose, hours, purposes, hoursChoi
       <p className="text-[13px] leading-relaxed text-muted">Your pace, lesson length and target dates are worked out again from these. Topics and lessons stay as they are.</p>
       {error && <p className="text-[14px] text-danger" role="alert">{error}</p>}
       <div className="flex flex-wrap gap-2">
-        <button type="submit" disabled={saving} className={buttonClass('primary', 'md')}>{saving ? <><Spinner />Saving…</> : 'Save answers'}</button>
+        <button type="submit" disabled={saving} className={buttonClass('primary', 'md')}><Pending busy={saving} label="Saving">Save answers</Pending></button>
         <button type="button" onClick={() => { setOpen(false); setError(null) }} disabled={saving} className={buttonClass('secondary', 'md')}>Cancel</button>
       </div>
     </form>

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { Eye, EyeOff, Mail } from 'lucide-react'
-import { Alert, Spinner, buttonClass, inputClass, labelClass } from '@/components/ui'
+import { Alert, Pending, buttonClass, inputClass, labelClass } from '@/components/ui'
 
 
 export default function SignupPage() {
@@ -112,7 +112,7 @@ export default function SignupPage() {
         {error && <Alert tone="danger">{error}</Alert>}
         <p className="text-[13px] leading-relaxed text-muted">If you’re under 18, we’ll ask for a parent or guardian’s okay before saving your answers.</p>
         <button type="submit" disabled={pending} className={buttonClass('primary', 'lg', 'w-full')}>
-          {pending ? (<><Spinner /> Creating account…</>) : 'Create account'}
+          <Pending busy={pending} label="Creating your account">Create account</Pending>
         </button>
       </form>
       <p className="mt-8 border-t border-line pt-6 text-center text-sm text-muted">

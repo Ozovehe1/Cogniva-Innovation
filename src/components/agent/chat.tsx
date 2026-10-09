@@ -1,13 +1,15 @@
 'use client'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Loader2, Plus } from 'lucide-react'
+import { ArrowUp, Plus } from 'lucide-react'
 import { SafetyPause } from '@/components/safety-pause'
 import { cx } from '@/components/ui'
 import { AgentBlock } from './blocks'
 import { BusyRetry } from './busy-retry'
 import { AgentText } from './agent-text'
 import { AskEmpty } from './ask-empty'
-import { ToolChips } from './tool-chips'
+import { ToolChips, dedupeTools } from './tool-chips'
+import { TurnStatus, VisualPlaceholder, VISUAL_TOOL } from './turn-status'
+import { InkMark } from '@/components/system/wait'
 import { genie } from '@/components/genie/presence'
 import { syntheticMouth } from '@/components/genie/lipsync'
 import type { Block, ChatEvent } from '@/lib/agent/types'
@@ -165,9 +167,10 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
               <div key={i} className="flex justify-end"><div className="max-w-[85%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-accent px-4 py-2.5 text-[15px] leading-relaxed text-white">{m.content}</div></div>
             ) : (
               <div key={i} className="space-y-3">
-                <ToolChips tools={m.tools ?? []} />
+                <ToolChips tools={m.tools ?? []} hideRunning={busy && i === messages.length - 1} />
                 {m.content && m.flagged && !revealed.has(i) ? <FlaggedNotice what="this answer" onRetry={() => void send(retryFor('answer', m.flagged?.category))} onShow={() => setRevealed(r => new Set(r).add(i))} />
-                  : m.content ? <AgentText text={m.content} /> : busy && i === messages.length - 1 && !(m.blocks ?? []).length ? <p className="flex items-center gap-2 text-[14px] text-muted" role="status"><span className="flex gap-1" aria-hidden>{[0, 1, 2].map(d => <span key={d} className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent/70" style={{ animationDelay: `${d * 180}ms` }} />)}</span>Thinking…</p> : null}
+                  : m.content ? <AgentText text={m.content} /> : null}
+                {busy && i === messages.length - 1 && !m.error && !m.retry && <TurnStatus tools={m.tools ?? []} hasText={!!m.content} hasBlocks={!!(m.blocks ?? []).length} />}
                 {m.content && !m.flagged && sessionId && !(busy && i === messages.length - 1) && (
                   <div className="-my-2 -ml-2.5">
                     <ReportButton what="this answer" payload={() => ({ surface: 'ask', sessionId, text: m.content })}
@@ -176,6 +179,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
                   </div>
                 )}
                 {(m.blocks ?? []).map(b => <ReportableBlock key={b.id + b.kind} block={b} sessionId={sessionId} done={!(busy && i === messages.length - 1)} onRetry={p => void send(p)} />)}
+                {busy && i === messages.length - 1 && dedupeTools(m.tools ?? []).filter(t => t.state === 'start' && VISUAL_TOOL[t.name]).map(t => <VisualPlaceholder key={`ph-${t.label}`} tool={t} />)}
                 {m.retry && !m.error && <BusyRetry compact={compact} retryAt={m.retry.at} totalMs={m.retry.ms} onRetry={() => { if (!busy) { setMessages(ms => ms.filter((_, j) => j !== i && j !== i - 1)); void send(m.retry!.text) } }} />}
                 {m.error && <p className="rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 text-[14px] text-danger">{m.error}</p>}
               </div>
@@ -194,8 +198,11 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); void send(input) } }}
               placeholder={lessonId ? 'Ask about this lesson…' : 'Ask GeniusMap…'} aria-label="Message"
               className="max-h-36 min-h-11 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug text-ink placeholder:text-faint focus:outline-none focus-visible:outline-none" />
-            <button type="submit" disabled={busy || !input.trim()} aria-label="Send" className="-mr-1 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-accent">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-white">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.25} />}</span>
+            {/* While the tutor answers, Send stays where it is at full colour with the ink mark (the same size, no jump),
+                and is disabled so a second tap cannot send twice; what is happening is said in the turn itself. */}
+            <button type="submit" disabled={busy || !input.trim()} aria-label={busy ? 'Sending (your tutor is answering)' : 'Send'} aria-busy={busy}
+              className={cx('-mr-1 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full transition-opacity focus-visible:outline-2 focus-visible:outline-accent', busy ? 'cursor-progress' : 'disabled:opacity-35')}>
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-white">{busy ? <InkMark width={16} /> : <ArrowUp className="h-4 w-4" strokeWidth={2.25} />}</span>
             </button>
           </div>
         </div>

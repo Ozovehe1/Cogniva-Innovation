@@ -7,7 +7,7 @@
 import React, { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check } from 'lucide-react'
-import { Spinner, buttonClass, cx, textareaClass } from './ui'
+import { Pending, buttonClass, cx, textareaClass } from './ui'
 
 interface Q { id: string; kind: string; ask: string; sub?: string; choices?: { value: string; label: string; hint?: string }[]; anchors?: string[]; placeholder?: string }
 
@@ -75,7 +75,7 @@ export function MicroQuestion({ className }: { className?: string }) {
                     )
                   })}
                 </div>
-                <button type="button" disabled={busy || !multi.length} onClick={() => send({ v: multi })} className={buttonClass('primary', 'lg', 'mt-4 w-full sm:w-auto')}>{busy ? <Spinner /> : 'Save'}</button>
+                <button type="button" disabled={busy || !multi.length} onClick={() => send({ v: multi })} className={buttonClass('primary', 'lg', 'mt-4 w-full sm:w-auto')}><Pending busy={busy} label="Saving">Save</Pending></button>
               </>
             )}
             {q.kind === 'scale' && (
@@ -92,7 +92,7 @@ export function MicroQuestion({ className }: { className?: string }) {
             {q.kind === 'text' && (
               <>
                 <textarea className={cx(textareaClass, 'min-h-[88px] text-[16px]')} value={text} maxLength={600} placeholder={q.placeholder} onChange={e => setText(e.target.value)} />
-                <button type="button" disabled={busy || text.trim().length < 2} onClick={() => send({ v: text.trim() })} className={buttonClass('primary', 'lg', 'mt-3 w-full sm:w-auto')}>{busy ? <Spinner /> : 'Save'}</button>
+                <button type="button" disabled={busy || text.trim().length < 2} onClick={() => send({ v: text.trim() })} className={buttonClass('primary', 'lg', 'mt-3 w-full sm:w-auto')}><Pending busy={busy} label="Saving">Save</Pending></button>
               </>
             )}
           </div>

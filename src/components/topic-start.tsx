@@ -2,7 +2,7 @@
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight } from 'lucide-react'
-import { Spinner, buttonClass } from './ui'
+import { Pending, buttonClass } from './ui'
 
 /** Creates the AI lesson for a ready topic (drafting starts on the server), then opens it. */
 export function TopicStart({ topicId, label = 'Start lesson', variant = 'primary', size = 'md' }: { topicId: string; label?: string; variant?: 'primary' | 'secondary'; size?: 'md' | 'lg' }) {
@@ -19,9 +19,9 @@ export function TopicStart({ topicId, label = 'Start lesson', variant = 'primary
   return (
     <span className="inline-flex flex-col items-start gap-1">
       <button type="button" onClick={go} disabled={busy} className={buttonClass(variant, size)}>
-        {busy ? <><Spinner />Preparing…</> : <>{label}<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}
+        <Pending state={busy ? 'busy' : error ? 'failed' : 'idle'} label="Opening" failedLabel={label}>{label}<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending>
       </button>
-      {error && <span className="text-[13px] text-danger">{error}</span>}
+      {error && <span role="status" className="text-[13px] text-ink-2">{error}</span>}
     </span>
   )
 }

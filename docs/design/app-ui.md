@@ -55,7 +55,7 @@ Grades: **A** at the bar · **B** good, small gaps · **C** works but below the 
 - **System pages** (`SystemMessage` in `ui.tsx`): eyebrow, serif title in plain words, one reassuring sentence about
   progress, one primary + one secondary action. Never a status code alone.
 - **Skeletons over spinners**: route loading, lesson preparing and mastery check all show the shape of what is coming.
-  Spinners remain only *inside a pressed button* (the learner's own action is in flight).
+  No spinners anywhere: a pressed button shows the ink mark and its verb (§2a).
 - **Tap to zoom** (`zoomable.tsx`): any raster/SVG picture whose labels can fall below 12 px on a phone is zoomable —
   library illustrations in Ask, board `figure`s (via `openZoom` + the shell's `ZoomHost`) and the recap still.
 - **Nothing covers what the learner must read**: video controls live under the video; sticky composers reserve scroll
@@ -68,6 +68,34 @@ Grades: **A** at the bar · **B** good, small gaps · **C** works but below the 
 - **Stage morph**: the stage starts at the board frame's measured height and grows to its content (320 ms, ease
   `[0.2,0,0,1]`), then the frame's own `layoutId` handles full screen (§2 of lesson-ui.md). A true per-object shared
   element (one board shape flying into the stage figure) is not built — see gaps.
+
+## 2a. Waiting states (Oct 2026, branch `loading-ui`)
+
+Every place a learner waits uses one small vocabulary from `src/components/system/wait.tsx`, so every wait reads as the
+same calm tutor at work. The bar: shaped like what is coming, honest about what is happening now, no clocks, no fake
+percentages, reduced motion respected, ≥ 44 px targets, nothing moves when the content lands.
+
+| Primitive / rule | Where | Principle |
+|---|---|---|
+| **InkMark**: a short pen stroke that writes itself, rests, lifts (1.7 s). Replaces every spinner, ping and pulsing dot | buttons, status lines, tool chips, Send | Low threat (motion reads as "someone is writing for you", not "stuck"); consistency lowers extraneous load |
+| **Pending** (`state: idle·busy·done·failed`): every label shares one grid cell, so the button keeps the width of its widest label; busy = ink mark + the verb now happening ("Checking", "Saving"); done = tick + past tense for a moment; failed = calm "Try again" in place, never red. A busy disabled button stays at full contrast (`globals.css`); still disabled, so it cannot fire twice | Send, Start lesson (lesson cards), Confirm / Not now / Undo, Check my answers, Continue (check-in, onboarding, diag confidence: only the tapped one), Save (micro-question, goal edit), Send report, Show a corrected version, Listen, Retry, Check again, Delete, Sign in / Create account | No layout shift (CLS); feedback for every action (Norman: visibility of system status); closure / effort acknowledged; reduced threat on failure |
+| `useAction()` hook: busy → done/failed → idle | new buttons | Same |
+| Small (`sm`, 32 px) buttons get a 44 px touch area via an invisible `::before` | all `buttonClass('…','sm')`, Undo | Fitts's law, WCAG 2.5.5 |
+| **WaitNote**: one honest status line tied to a real event, polite live region | tutor writing the next part, check questions, Ask turn | Uncertainty reduction (Norman); screen-reader parity |
+| **TurnStatus** (Ask + tutor sheet): "Reading your question" until the first stream event → the label of the tool running *now* → "Writing the answer"; after 8 s with no event a second line says what that means (a real threshold, never a counter). Running steps are said once (status line); finished steps settle into tick chips above | `agent/turn-status.tsx`, `chat.tsx`, `tool-chips.tsx` | Uncertainty reduction; redundancy avoided (Mayer) |
+| **VisualPlaceholder**: while a visual tool runs, its frame (header strip + paper at the final aspect: board/graph/diagram 16:10, picture 4:3, sim/interactive 3:2) is already in the answer with a pen sketching its rough shape and one line on what the tool is doing | Ask + sheet | Signalling (eye knows where to look), perceived performance, no layout shift, curiosity gap |
+| **PaperSketch**: warm ruled paper, a few strokes drawn in order then lifted; reduced motion = drawn once and still | clip wait, lesson preparing, lesson route loading, visual placeholders | Shaped skeleton (perceived performance); dual coding (the shape previews the figure) |
+| **StageList**: the real stages of a long job, done / now / next; only stages the server reports are marked done | path build (map → first idea → first lesson), lesson preparing (planning → part 1 → opens), clip render (when the status route reports the phase) | Goal-gradient without a number; Zeigarnik (visible, closable steps); honest progress |
+| **QuietLine**: hairline progress, determinate only with real progress (video recorder), otherwise a slow drift | video download toast | Honest progress; low threat |
+| **WhileYouWait**: one optional prediction prompt in long waits, there from the start (no shift), never graded | clip render ("what do you expect to change first, and why?") | Generation effect / pretesting; curiosity |
+| No countdowns or seconds-left: the clip timer ("0:42 · usually 1–3 min") and the video "about N s left" were removed; the usual range is said once in words, and a "taking longer than usual, still working" line appears only past a real threshold | clip, video | Low threat / no timers (time pressure costs working memory); honesty |
+| Skeleton shimmer is a slow light passing over warm paper (2.2 s), not a blink; off under reduced motion | `.skeleton` | Calm motion; vestibular safety |
+| Route skeletons mirror their page: `/ask` (header, tutor bar, starter rows), `/learn/[id]` (back link, title, meta row at the page's sizes, board frame at 4:3 / 16:9, transport) | `loading.tsx` files | No layout shift; perceived performance |
+
+Not changed in this pass (held back while the visuals work owns these files): the lesson player's "Start lesson /
+Preparing voice" overlay and its "Next part on its way" card (`whiteboard/player.tsx`, still a spinner / ping), and the
+clip status route's `phase` field (`api/agent/clip/[id]`) that lets the clip wait mark real stages; until it ships the
+clip wait shows one honest line instead of stages.
 
 ## 3. Known gaps (tracked)
 

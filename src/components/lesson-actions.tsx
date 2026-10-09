@@ -1,7 +1,8 @@
 'use client'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, Download, FileText, Film, Globe, X } from 'lucide-react'
-import { Spinner, buttonClass, cx } from './ui'
+import { Pending, buttonClass, cx } from './ui'
+import { InkMark, QuietLine } from './system/wait'
 
 export { LessonDelete } from './delete-dialog'
 
@@ -11,11 +12,11 @@ interface VideoState { status: VideoStatus; progress: number; etaSec: number | n
 const POLL_MS = 2000
 const active = (s: VideoStatus | undefined) => s === 'queued' || s === 'preparing' || s === 'rendering'
 
-function etaLabel(v: VideoState) {
-  if (v.status === 'queued' || v.status === 'preparing') return 'Getting the video ready…'
-  const pct = Math.round(v.progress * 100)
-  const left = v.etaSec ? (v.etaSec < 60 ? `about ${Math.max(5, Math.round(v.etaSec / 5) * 5)} s left` : `about ${Math.round(v.etaSec / 60)} min left`) : null
-  return `Making your video… ${pct > 2 ? `${pct}%` : ''}${pct > 2 && left ? ' · ' : ''}${left ?? ''}`.trim()
+/** What the recording is doing now, in words (no seconds-left countdown: a ticking estimate adds pressure). */
+function stageLabel(v: VideoState) {
+  if (v.status === 'queued') return 'Waiting for the recorder'
+  if (v.status === 'preparing') return 'Setting up the recording'
+  return 'Recording the lesson with its voice'
 }
 
 /**
@@ -104,11 +105,11 @@ export function LessonDownload({ lessonId }: { lessonId: string }) {
             <span><span className="block text-sm font-medium text-ink">Transcript (.txt)</span><span className="block text-[12px] leading-snug text-muted">Just the words, with the in-lesson checks.</span></span>
           </a>
           <button type="button" role="menuitem" onClick={startVideo} disabled={busy} className={item} data-video-status={video?.status ?? 'none'}>
-            {rendering || busy ? <Spinner className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" /> : <Film className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={1.75} />}
+            {rendering || busy ? <InkMark className="mt-1 flex-shrink-0 text-accent" width={16} /> : <Film className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={1.75} />}
             <span>
               <span className="block text-sm font-medium text-ink">Video (.mp4)</span>
               <span className="block text-[12px] leading-snug text-muted">
-                {rendering && video ? etaLabel(video) : video?.status === 'done' ? 'Ready. Tap to download again.' : 'The lesson as it plays, with the voice. Ready in about 2 minutes.'}
+                {rendering && video ? `${stageLabel(video)}. Tap to see progress.` : video?.status === 'done' ? 'Ready. Tap to download again.' : 'The lesson as it plays, with the voice. Ready in about 2 minutes.'}
               </span>
             </span>
           </button>
@@ -120,26 +121,23 @@ export function LessonDownload({ lessonId }: { lessonId: string }) {
           <div className="flex items-start gap-3">
             {error || video?.status === 'failed'
               ? <Film className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted" strokeWidth={1.75} />
-              : video?.status === 'done' ? <Download className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={1.75} /> : <Spinner className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" />}
+              : video?.status === 'done' ? <Download className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={1.75} /> : <InkMark className="mt-1 flex-shrink-0 text-accent" width={16} />}
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-ink">
-                {error ? 'Video not started' : video?.status === 'failed' ? 'The video couldn’t be made' : video?.status === 'done' ? (video.cached ? 'Downloading your video' : 'Your video is ready') : video ? etaLabel(video) : 'Starting the video…'}
+                {error ? 'Video not started' : video?.status === 'failed' ? 'The video couldn’t be made' : video?.status === 'done' ? (video.cached ? 'Downloading your video' : 'Your video is ready') : video ? stageLabel(video) : 'Starting the video'}
               </p>
               <p className="mt-0.5 text-[12px] leading-snug text-muted">
                 {error ?? (video?.status === 'failed' ? (video.error ?? 'Something went wrong while recording.') : video?.status === 'done'
-                  ? <>It should download now. <button type="button" onClick={download} className="font-medium text-accent underline-offset-2 hover:underline">Download again</button></>
-                  : 'It takes about a minute and a half. Keep learning meanwhile; if you leave, tap Video again later and it downloads straight away.')}
+                  ? <>It should download now. <button type="button" onClick={download} className="inline-flex min-h-11 items-center font-medium text-accent underline-offset-2 hover:underline">Download again</button></>
+                  : 'Usually about two minutes. Keep learning meanwhile; it downloads by itself when it’s ready. If you leave, tap Video again later.')}
               </p>
-              {rendering && video && (
-                <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-label="Video progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(video.progress * 100)}>
-                  <div className="h-full rounded-full bg-accent transition-[width] duration-700" style={{ width: `${Math.max(3, Math.round(video.progress * 100))}%` }} />
-                </div>
-              )}
+              {/* Real progress from the recorder once it is recording; before that an honest "working" line. */}
+              {(rendering || (busy && !video)) && <QuietLine className="mt-2.5" label="Video progress" value={video?.status === 'rendering' && video.progress > 0.02 ? video.progress : null} />}
               {(error || video?.status === 'failed') && !error?.includes('a day') && (
-                <button type="button" onClick={startVideo} className={cx(buttonClass('secondary', 'sm'), 'mt-2.5')}>Try again</button>
+                <button type="button" onClick={startVideo} disabled={busy} className={cx(buttonClass('secondary', 'md'), 'mt-2.5 h-11')}><Pending busy={busy} label="Starting">Try again</Pending></button>
               )}
             </div>
-            <button type="button" onClick={() => setToast(false)} aria-label="Hide" className="-m-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-muted hover:bg-sunken hover:text-ink">
+            <button type="button" onClick={() => setToast(false)} aria-label="Hide" className="-m-2 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-muted hover:bg-sunken hover:text-ink">
               <X className="h-4 w-4" strokeWidth={1.75} />
             </button>
           </div>

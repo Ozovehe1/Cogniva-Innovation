@@ -9,7 +9,7 @@ import { detectDistress } from '@/lib/safety'
 import { SafetyPause } from './safety-pause'
 import { UpNextCard } from './up-next'
 import { MicroQuestion } from './micro-question'
-import { Spinner, buttonClass, cx } from './ui'
+import { Pending, buttonClass, cx } from './ui'
 import type { TranscriptAside } from '@/components/whiteboard/player'
 import type { Step } from '@/lib/lesson-schema'
 import type { Chapter } from '@/lib/lesson-sections'
@@ -387,7 +387,7 @@ function CheckIn({ open, reason, lessonId, onClose }: { open: boolean; reason: '
                 </div>
                 <div className="mt-2 flex justify-between text-[11px] text-faint"><span>Lost</span><span>I’ve got it</span></div>
                 <div className="mt-5 flex gap-2">
-                  <button type="button" disabled={busy || (mood === null && conf === null)} onClick={submit} className={buttonClass('primary', 'lg', 'flex-1')}>{busy ? <Spinner /> : 'Continue'}</button>
+                  <button type="button" disabled={busy || (mood === null && conf === null)} onClick={submit} className={buttonClass('primary', 'lg', 'flex-1')}><Pending busy={busy} label="Saving">Continue</Pending></button>
                   <button type="button" onClick={() => onClose({ choice: 'continue' })} className={buttonClass('ghost', 'lg')}>Skip</button>
                 </div>
                 <p className="mt-3 text-[12px] text-faint">Only you see this. It’s deleted after two weeks.</p>

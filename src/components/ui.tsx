@@ -3,6 +3,8 @@ import { RichText } from '@/components/rich-text'
 import Link from 'next/link'
 import clsx, { type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { InkMark } from '@/components/system/wait'
+export { Pending, useAction, type ActionState } from '@/components/system/wait'
 
 export function cx(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -45,7 +47,8 @@ export function buttonClass(variant: ButtonVariant = 'primary', size: ButtonSize
     'inline-flex items-center justify-center gap-2 rounded-[10px] font-medium whitespace-nowrap select-none',
     'transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45',
     {
-      'h-8 px-3 text-[13px]': size === 'sm',
+      // Small buttons keep their 32 px look but get a 44 px touch area (Fitts's law, WCAG 2.5.5).
+      "relative h-8 px-3 text-[13px] before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-['']": size === 'sm',
       'h-10 px-4 text-sm': size === 'md',
       'h-12 px-6 text-[15px]': size === 'lg',
       'bg-accent text-white hover:bg-accent-hover': variant === 'primary',
@@ -68,13 +71,12 @@ export const textareaClass =
 
 export const labelClass = 'mb-1.5 block text-[13px] font-medium text-ink-2'
 
+/**
+ * The in-flight mark for a pressed button or a status line: a pen stroke writing itself (see system/wait.tsx).
+ * Kept under its old name so every caller moved to the new mark at once; prefer <Pending> for button labels.
+ */
 export function Spinner({ className }: { className?: string }) {
-  return (
-    <span
-      aria-hidden
-      className={cx('inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent opacity-70', className)}
-    />
-  )
+  return <InkMark className={className?.replace(/\bh-\S+|\bw-\S+|\banimate-spin\b/g, '').trim()} />
 }
 
 /* ───────────── Layout primitives ───────────── */

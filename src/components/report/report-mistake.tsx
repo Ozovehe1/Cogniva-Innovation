@@ -9,7 +9,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, Eye, Flag, RotateCcw, X } from 'lucide-react'
-import { Spinner, buttonClass, cx, textareaClass } from '@/components/ui'
+import { Pending, buttonClass, cx, textareaClass } from '@/components/ui'
 
 export type ReportCategory = 'wrong_maths' | 'wrong_picture' | 'confusing' | 'typo' | 'other'
 export interface ReportPayload {
@@ -169,7 +169,7 @@ export function ReportSheet({ open, onClose, payload, onReported, onRetry, what,
                 <div className="mt-5 grid grid-cols-[1fr_2fr] gap-2">
                   <button type="button" onClick={onClose} disabled={state === 'sending'} className={cx(buttonClass('ghost', 'md'), 'min-h-12 justify-center')}>Not now</button>
                   <button type="button" onClick={send} disabled={state === 'sending'} className={cx(buttonClass('primary', 'md'), 'min-h-12 justify-center')}>
-                    {state === 'sending' ? <><Spinner className="h-4 w-4" />Sending…</> : 'Send report'}
+                    <Pending busy={state === 'sending'} label="Sending">Send report</Pending>
                   </button>
                 </div>
               </>
@@ -189,7 +189,7 @@ export function FlaggedNotice({ what, onRetry, onShow, retrying = false, classNa
       <p className="mt-1 text-[13.5px] leading-relaxed text-ink-2">It’s set aside while we check it. Thanks for keeping GeniusMap honest.</p>
       {(onRetry || onShow) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
-          {onRetry && <button type="button" onClick={onRetry} disabled={retrying} className={cx(buttonClass('secondary', 'sm'), 'min-h-11')}>{retrying ? <Spinner className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" aria-hidden />}Show a corrected version</button>}
+          {onRetry && <button type="button" onClick={onRetry} disabled={retrying} className={cx(buttonClass('secondary', 'sm'), 'min-h-11')}><Pending busy={retrying} label="Asking for a corrected version"><RotateCcw className="h-3.5 w-3.5" aria-hidden />Show a corrected version</Pending></button>}
           {onShow && <button type="button" onClick={onShow} className={cx(buttonClass('ghost', 'sm'), 'min-h-11')}><Eye className="h-3.5 w-3.5" aria-hidden />Show it anyway</button>}
         </div>
       )}

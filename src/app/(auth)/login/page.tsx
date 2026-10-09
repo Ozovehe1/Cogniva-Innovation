@@ -3,7 +3,7 @@ import { use, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
-import { Alert, Spinner, buttonClass, inputClass, labelClass } from '@/components/ui'
+import { Alert, Pending, buttonClass, inputClass, labelClass } from '@/components/ui'
 
 
 export default function LoginPage({ searchParams }: { searchParams: Promise<{ reason?: string }> }) {
@@ -94,7 +94,7 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ re
         </div>
         {error && <Alert tone="danger">{error}</Alert>}
         <button type="submit" disabled={pending} className={buttonClass('primary', 'lg', 'w-full')}>
-          {pending ? (<><Spinner /> Signing in…</>) : 'Sign in'}
+          <Pending busy={pending} label="Signing in">Sign in</Pending>
         </button>
       </form>
 

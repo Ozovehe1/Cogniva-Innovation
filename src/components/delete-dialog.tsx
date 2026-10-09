@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Trash2 } from 'lucide-react'
 import { RichText, toPlainText } from './rich-text'
-import { SheetGrabber, Spinner, buttonClass, cx, inputClass } from './ui'
+import { SheetGrabber, Pending, buttonClass, cx, inputClass } from './ui'
 
 /**
  * The one delete control in the app: a trash button and a Keep / Delete confirmation. The request goes
@@ -95,7 +95,7 @@ export function DeleteButton({ what, title, body, endpoint, keepLabel, confirmLa
               <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <button ref={cancelRef} type="button" onClick={() => setOpen(false)} disabled={pending} className={buttonClass('secondary', 'lg', 'sm:h-10 sm:px-4 sm:text-sm')}>{keepLabel}</button>
                 <button type="button" onClick={confirm} disabled={pending || !armed} className={buttonClass('danger', 'lg', 'sm:h-10 sm:px-4 sm:text-sm')}>
-                  {pending ? <><Spinner />Deleting…</> : <><Trash2 className="h-4 w-4" strokeWidth={2} />{confirmLabel}</>}
+                  <Pending busy={pending} label="Deleting"><Trash2 className="h-4 w-4" strokeWidth={2} />{confirmLabel}</Pending>
                 </button>
               </div>
             </motion.div>

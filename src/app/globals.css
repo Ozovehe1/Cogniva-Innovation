@@ -93,15 +93,31 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 .pt-safe { padding-top: env(safe-area-inset-top); }
 
 /* Skeleton shimmer: slow and quiet */
-@keyframes skeleton-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
+/* Skeletons: warm paper with a slow light passing over it (shaped like what is coming; calm, not a blink).
+   Reduced motion: the paper stays still. */
+@keyframes skeleton-sheen {
+  0% { background-position: 120% 0; }
+  100% { background-position: -20% 0; }
 }
+/* In the components layer so a utility on the element (rounded-full, h-*) wins over these defaults. */
+@layer components {
 .skeleton {
-  background: var(--color-sunken);
+  background-color: var(--color-sunken);
+  background-image: linear-gradient(100deg, rgba(255,255,255,0) 30%, rgba(255,255,255,0.65) 50%, rgba(255,255,255,0) 70%);
+  background-size: 240% 100%;
+  background-repeat: no-repeat;
   border-radius: 6px;
-  animation: skeleton-pulse 1.6s ease-in-out infinite;
+  animation: skeleton-sheen 2.2s cubic-bezier(0.45, 0, 0.2, 1) infinite;
 }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none !important; background-image: none !important; }
+}
+
+/* A button whose action is in flight stays at full contrast (its label says what is happening) and shows a progress
+   cursor; it is still disabled, so a second tap cannot fire the action twice (system/wait.tsx Pending). */
+button:disabled:has(> [data-pending="busy"]), button:disabled:has(> [data-pending="done"]),
+a:has(> [data-pending="busy"]), span:has(> [data-pending="busy"]) { opacity: 1 !important; cursor: progress; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
