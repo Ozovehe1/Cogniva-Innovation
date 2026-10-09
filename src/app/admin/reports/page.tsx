@@ -48,8 +48,8 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <h1 className="mt-1 font-display text-[30px] leading-[1.1] text-ink md:text-[38px]">Mistake reports</h1>
         <p className="mt-2 max-w-[60ch] text-[15px] leading-relaxed text-muted">What learners flagged. Confirm real mistakes (wrong pictures go on the blocklist), dismiss the rest, and turn each confirmed one into a regression case.</p>
         <div className="mt-4 flex flex-wrap gap-2 text-[12.5px] text-ink-2">
-          <span className="rounded-full border border-line bg-surface px-3 py-1">{cases ?? 0} regression cases from reports</span>
-          <span className="rounded-full border border-line bg-surface px-3 py-1">{blocks ?? 0} blocklist entries</span>
+          <span className="rounded-full border border-line bg-surface px-3 py-1">{cases ?? 0} regression case{cases === 1 ? '' : 's'} from reports</span>
+          <span className="rounded-full border border-line bg-surface px-3 py-1">{blocks ?? 0} blocklist entr{blocks === 1 ? 'y' : 'ies'}</span>
         </div>
         <nav aria-label="Report status" className="mt-6 flex gap-0 overflow-x-auto border-b border-line sm:gap-1">
           {(['open', 'confirmed', 'invalid'] as const).map(s => (
@@ -93,7 +93,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 {sel.lesson_id && <><dt className="text-muted">Lesson step</dt><dd className="font-mono text-[12px] text-ink-2">{sel.step_index ?? '—'}</dd></>}
                 {sel.clip_job_id && <><dt className="text-muted">Clip job</dt><dd className="break-all font-mono text-[12px] text-ink-2">{sel.clip_job_id}</dd></>}
                 <dt className="text-muted">Model</dt><dd className="text-ink-2">{sel.model ?? '—'}</dd>
-                <dt className="text-muted">Guard now</dt><dd className="text-ink-2">{guardLine(sel.guard)}</dd>
+                <dt className="text-muted">Guard now</dt><dd className="text-ink-2">{guardLine(sel.guard, sel)}</dd>
               </dl>
               <TriageActions id={sel.id} status={sel.status} inRegression={!!sel.regression_case_id} />
               <h3 className="mb-2 mt-6 text-[13px] font-semibold uppercase tracking-[0.06em] text-muted">What the learner saw</h3>
@@ -116,8 +116,10 @@ function summary(r: ReportRow): string {
   const a = r.artefact as { text?: string; question?: string; step?: { say?: string; text?: string; prompt?: string }; block?: { kind?: string; title?: string; alt?: string } }
   return (a.block ? `${a.block.kind}: ${a.block.title ?? a.block.alt ?? ''}` : a.step ? a.step.prompt ?? a.step.text ?? a.step.say ?? '' : a.text ?? a.question ?? '').slice(0, 140)
 }
-function guardLine(g: unknown): string {
+function guardLine(g: unknown, r: { illustration_id?: string | null; status: string }): string {
+  // A wrong library picture is caught by the blocklist (fed on confirm), not by the maths/text re-check.
+  if (r.illustration_id) return r.status === 'confirmed' ? 'picture blocklisted for this topic (the guard now skips it)' : 'picture not blocked yet: confirm to blocklist it for this topic'
   const x = g as { flagged?: boolean; issues?: string[] } | null
   if (!x) return '—'
-  return x.flagged ? `flags it: ${(x.issues ?? []).slice(0, 2).join('; ')}` : 'does not catch this (a regression case will fail until it does)'
+  return x.flagged ? `flags it: ${(x.issues ?? []).slice(0, 2).join('; ')}` : 'the maths/text re-check does not flag this (its regression case fails until a check exists)'
 }
