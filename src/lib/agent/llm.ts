@@ -203,7 +203,12 @@ async function groqChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) =>
   if (req.builtin) { body.tools = [{ type: req.builtin }]; body.tool_choice = 'required' }
   else if (req.tools?.length) { body.tools = req.tools.map(t => ({ type: 'function', function: t })); body.tool_choice = req.toolChoice ?? 'auto'; body.parallel_tool_calls = true }
   // Groq's strict JSON mode rejects long generations with LaTeX escapes ("Failed to generate JSON"); big JSON is asked for in the prompt and parsed loosely.
-  if (req.json && !req.tools?.length && !req.builtin && (req.maxTokens ?? 1200) <= 1500) body.response_format = { type: 'json_object' }
+  if (req.json && !req.tools?.length && !req.builtin && (req.maxTokens ?? 1200) <= 1500) {
+    body.response_format = { type: 'json_object' }
+    // Groq's JSON mode 400s unless some message contains the word "json" ('messages' must contain the word 'json').
+    const msgs = body.messages as { role: string; content: unknown }[]
+    if (!msgs.some(m => typeof m.content === 'string' && /json/i.test(m.content))) msgs.unshift({ role: 'system', content: 'Answer with one JSON object only.' })
+  }
   if (/gpt-oss/.test(model)) { body.reasoning_effort = 'low'; body.include_reasoning = false }
   else if (/qwen/.test(model)) { body.reasoning_format = 'hidden'; body.reasoning_effort = req.purpose === 'chat' ? 'none' : 'default' }
   // Fast failover: a live turn that has not started within firstMs moves to the next slot; once tokens flow it may run on.

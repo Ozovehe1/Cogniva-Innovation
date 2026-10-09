@@ -106,6 +106,8 @@ export function inventory(env: Record<string, string | undefined> = process.env)
   }
   for (const k of discoverKeys('GEMINI_API_KEY', env)) {
     for (const model of GEMINI_TEXT_MODELS) {
+      // gemini-2.5-flash answers 404 "no longer available" on every project created after its retirement (keys 2+, seen 2026-10-09).
+      if (model === 'gemini-2.5-flash' && k.n > 1 && env.GEMINI_25_ALL_KEYS !== '1') continue
       slots.push({ id: `gem${k.n}:${model}`, provider: 'gemini', key: k.n, keyEnv: k.env, apiKey: k.value, model, limits: geminiLimits(model), resetTz: 'America/Los_Angeles' })
     }
   }
@@ -477,7 +479,7 @@ export interface RunOptions {
 
 export function classify(err: unknown): { kind: ReportKind; cooldownMs?: number; keyWide?: boolean; modelWide?: boolean } {
   const msg = err instanceof Error ? err.message : String(err)
-  if (/API key not valid|API_KEY_INVALID|invalid[_ ]api[_ ]key|Invalid API Key|\b401\b|organization_restricted|PERMISSION_DENIED.*(key|project)/i.test(msg)) return { kind: 'missing', cooldownMs: 3600_000, keyWide: true }
+  if (/API key not valid|API_KEY_INVALID|invalid[_ ]api[_ ]key|Invalid API Key|\b401\b|organization_restricted|PERMISSION_DENIED.*(key|project)/i.test(msg)) return { kind: 'missing', cooldownMs: 6 * 3600_000, keyWide: true }
   if (/\b429\b|rate.?limit|RESOURCE_EXHAUSTED|quota|Too Many Requests/i.test(msg)) {
     const m = /(?:try again in|retry(?:Delay)?["'\s:]*(?:in\s*)?["']?)\s*([\d.]+)\s*s/i.exec(msg)
     const daily = /PerDay|per day|daily|RPD|TPD|tokens per day|requests per day/i.test(msg)

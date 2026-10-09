@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { agentSecretOk } from '@/lib/agent/secret'
 import { regressionCases } from '@/lib/correctness/regression'
 import { poolCases } from '@/lib/agent/pool-eval'
+import { withLlmContext } from '@/lib/agent/pool'
 import { assessmentCases } from '@/lib/assessment/eval'
 import { playbookCases } from '@/lib/playbook/eval'
 import { turnCase, routingCases, lessonCases, giveawayCases, injectionCases, staticAsyncCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
@@ -14,6 +15,11 @@ export const dynamic = 'force-dynamic'
  * Runs the agent eval set on production (real models, budgets and services). Writes only to the given test student.
  */
 export async function POST(request: Request) {
+  // Evals are background traffic: they never take learner-reserved slots or a learner's share.
+  return withLlmContext({ priority: 'background', label: 'eval' }, () => run(request))
+}
+
+async function run(request: Request) {
   if (!agentSecretOk(request)) return Response.json({ error: 'Forbidden' }, { status: 403 })
   const url = new URL(request.url)
   const group = url.searchParams.get('group') ?? 'static'
