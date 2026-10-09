@@ -68,6 +68,27 @@ Every control has an `aria-label`; the stage is a `region` labelled by its title
 focus moved to it and Escape to close; visible focus rings (`outline 2px accent, offset 2px`); figures carry a text
 alternative (`interactiveAlt`).
 
+## 11. Library illustrations (real textbook pictures)
+- Real-world structures (organs, cells, circuits, atoms, levers, planets) come from the free illustration library
+  (`src/lib/illustrations/`: Bioicons, Servier Medical Art, Wikimedia Commons; CC0 / PD / CC BY / CC BY-SA only), never
+  drawn from shapes. The model asks with `find_illustration` (chat) or an `illustration` step (lesson); the server
+  picks, sanitises and caches the SVG in the public `illustrations` bucket. A board `figure` takes `src` only from
+  that bucket.
+- Every picture is credited: a credit strip inside the SVG on boards, and in chat a caption row (title · author,
+  source link, licence chip), each link a ≥44px target. Titles drop Commons language suffixes ("… en").
+- Card states: skeleton at the final aspect ratio while loading; on failure an "This picture didn't load" panel with
+  the alt text and a **Try again** button (44px); never a spinner, never a broken-image icon alone.
+- Labels go beside or below the picture as short board notes; on phones notes reflow under the figure, so lab and
+  prompts avoid arrows whose tails would end in empty space.
+
+## 12. Genie, the tutor character (Rive)
+- One fixed-size avatar (space reserved; nothing shifts on load) in the Ask header, the in-lesson sheet and the
+  lesson player strip. Runtime + `.riv` are self-hosted under `/genie/` and loaded only when on screen and idle.
+- Moods: idle, listening, thinking, talking (lip sync from `narrator.lipSync()`), happy, encouraging; a live status
+  line for screen readers. Reduced motion: pose changes only, no idle loop or mouth motion.
+- The learner can hide it (remembered); `NEXT_PUBLIC_GENIE=off` removes it everywhere. If Rive/WebAssembly fails, a
+  still drawing of the same character is shown.
+
 ## Not in this pass (tracked)
 - Dark theme: the app ships light-only today (no dark tokens); the roles above are defined so a dark palette can map
   1:1 later.
