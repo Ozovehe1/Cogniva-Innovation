@@ -112,7 +112,8 @@ export async function runAgent(input: {
   const { vt, teaching, forceFirst, firstSpecs, offerAll } = pol
   if (pol.note) messages.splice(messages.length - 1, 0, { role: 'system', content: pol.note })
   if (teaching) ctx.trace.push(`visual-first: ${firstSpecs.map(t => t.def.name).join(',')}`)
-  const richShown = () => (ctx.blocks ?? []).some(b => RICH_BLOCKS.has(b.kind))
+  // A board scene counts when it carries a real picture (find_illustration places the library picture on the board).
+  const richShown = () => (ctx.blocks ?? []).some(b => RICH_BLOCKS.has(b.kind) || (b.kind === 'board' && (b as { steps?: { type?: string; shape?: { kind?: string } }[] }).steps?.some(st => st.type === 'draw' && st.shape?.kind === 'figure')))
   const runTool = async (name: string, args: Record<string, unknown>, tag: string) => {
     const spec = byName.get(name)
     if (!spec) return null
@@ -177,7 +178,8 @@ export async function runAgent(input: {
         retried = true
         ctx.trace.push('visual-check: none shown, retrying with a visual')
         messages.push({ role: 'assistant', content: res.text || '(no visual yet)' })
-        messages.push({ role: 'system', content: 'Your answer has no picture or moving figure yet. Call ONE visual tool now that shows this idea (find_illustration for a real object, interactive or simulate for something that moves or changes, plot for a function, math_diagram for exact geometry, animate_concept for a process), then add one short sentence telling the learner what to look at. Do not repeat what you already said.' })
+        // A user-role note: Gemini rejects a request whose last turn is the model's (system notes are lifted out).
+        messages.push({ role: 'user', content: '(Note from the app, not the learner) Your answer has no picture or moving figure yet. Call ONE visual tool now that shows this idea (find_illustration for a real object, interactive or simulate for something that moves or changes, plot for a function, math_diagram for exact geometry, animate_concept for a process), then add one short sentence telling the learner what to look at. Do not repeat what you already said.' })
         forcedRetry = true
         continue
       }

@@ -13,7 +13,7 @@
 import { generateStructuredJson } from './gemini'
 import { LAYOUT_RULES, SHOW_DONT_TELL, TUTOR_VOICE, WORDS_PER_MINUTE, generateSteps, type GenMeta, type LessonLite } from './lesson-ai'
 import { beatVisualLine, readVisual } from './visual-policy'
-import { figureStage, functionFigure, functionFor, hasRichVisual, stageStep, stageTemplateFor } from './lesson-stages'
+import { figureStage, functionFigure, functionFor, hasRichVisual, stageStep, stageTemplateFor, type StageTemplate } from './lesson-stages'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, type Step } from './lesson-schema'
 import { lengthReport } from './lesson-timing'
 
@@ -325,6 +325,16 @@ export async function withRichVisual(ctx: BeatContext, steps: Step[]): Promise<S
   // 1. A field / current / motion figure for this beat's own subject, else the lesson's (not the same one twice running).
   // An invisible field gets its live scene even next to a still picture: the picture shows the device, the scene the field moving.
   const tpl = stageTemplateFor(own) ?? stageTemplateFor(lessonText)
+  // Invisible fields: a stage the beat writer drew itself (free models give a dot and a line on axes) is swapped for the
+  // hand-built scene of the same idea (magnet + field lines, coil + meter, wire + compasses, charges in a wire).
+  const FIELD_TPL: StageTemplate[] = ['magnet_coil', 'bar_magnet', 'wire_field', 'charge_drift']
+  if (tpl && FIELD_TPL.includes(tpl)) {
+    const i = steps.findIndex(st => st.type === 'stage' && !(st as { spec?: { scene?: string } }).spec?.scene)
+    if (i >= 0) {
+      const st = stageStep(tpl, (steps[i] as { id?: string }).id ?? `stage_${tpl}_${ctx.index}`)
+      if (st) { const swapped = [...steps]; swapped[i] = st; return swapped }
+    }
+  }
   const hasLive = steps.some(st => st.type === 'stage' || st.type === 'manim_clip')
   if (hasLive || (hasRichVisual(steps) && !(tpl && stageTemplateFor(own)))) return steps
   if (tpl && (tpl !== prevTpl || stageTemplateFor(own))) {

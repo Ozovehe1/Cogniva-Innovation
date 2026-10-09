@@ -19,6 +19,7 @@ import { FigureSkeleton } from '@/components/agent/interactive'
 const InteractiveFigure = dynamic(() => import('@/components/agent/interactive'), { ssr: false, loading: () => <FigureSkeleton /> })
 
 const EASE = [0.2, 0, 0, 1] as const
+const AUTO_BACK_MS = 6000
 
 export function StageView({ step, stepKey, narrating, reduced, recording = false, measureFrom, onBack }: {
   step: StageStep
@@ -43,6 +44,18 @@ export function StageView({ step, stepKey, narrating, reduced, recording = false
   const [morphing, setMorphing] = useState(!!startH && !reduced)
   const ready = handedOver && !narrating
   const backRef = useRef<HTMLButtonElement>(null)
+  // The lesson keeps flowing: once the demonstration and narration are done, an untouched stage hands back to the board
+  // by itself after a short beat (shown as a filling bar on the button). Touching the figure means the learner is
+  // exploring: then it waits for their tap.
+  const [explored, setExplored] = useState(false)
+  const autoBack = ready && !explored && !recording && !full
+  const onBackRef = useRef(onBack)
+  useEffect(() => { onBackRef.current = onBack })
+  useEffect(() => {
+    if (!autoBack) return
+    const t = setTimeout(() => onBackRef.current(), AUTO_BACK_MS)
+    return () => clearTimeout(t)
+  }, [autoBack])
   // A recorded lesson moves on by itself once the narration and demonstration are done.
   useEffect(() => {
     if (!recording || !ready) return
@@ -86,19 +99,20 @@ export function StageView({ step, stepKey, narrating, reduced, recording = false
           </button>
         )}
       </header>
-      <div className={cx('min-h-0 px-4', full && 'flex-1 overflow-y-auto')}>
+      <div className={cx('min-h-0 px-4', full && 'flex-1 overflow-y-auto')} onPointerDown={() => setExplored(true)} onKeyDown={() => setExplored(true)}>
         {(step.caption || spec.explain) && <p className="text-[15px] leading-relaxed text-ink-2"><RichText text={step.caption ?? spec.explain ?? ''} /></p>}
         <InteractiveFigure key={stepKey} spec={spec} alt={interactiveAlt(spec)} play={step.play} demo={!!step.play} onHandOver={() => setHandedOver(true)} />
       </div>
       {!recording && (
         <footer className="mt-3 flex items-center justify-between gap-3 border-t border-line px-4 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3">
-          <p className="text-[13px] leading-snug text-muted" aria-live="polite">{ready ? 'Your turn — explore, then carry on.' : step.play && !handedOver ? 'Watch…' : 'Listen, and try it.'}</p>
+          <p className="text-[13px] leading-snug text-muted" aria-live="polite">{autoBack ? 'Touch the figure to explore it yourself.' : ready ? 'Your turn — explore, then carry on.' : step.play && !handedOver ? 'Watch…' : 'Listen, and try it.'}</p>
           <AnimatePresence mode="wait" initial={false}>
             {ready ? (
               <motion.button key="back" ref={backRef} type="button" onClick={() => { setFull(false); onBack() }}
                 initial={{ opacity: 0, y: reduced ? 0 : 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: reduced ? 0.01 : 0.2, ease: EASE }}
-                className={cx(buttonClass('primary', 'lg'), 'h-11 flex-shrink-0 rounded-full px-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent')}>
+                className={cx(buttonClass('primary', 'lg'), 'relative h-11 flex-shrink-0 overflow-hidden rounded-full px-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent')}>
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" />Back to the board
+                {autoBack && !reduced && <motion.span aria-hidden className="pointer-events-none absolute inset-x-3 bottom-1 h-0.5 origin-left rounded-full bg-white/70" initial={{ scaleX: 0 }} animate={{ scaleX: 1 }} transition={{ duration: AUTO_BACK_MS / 1000, ease: 'linear' }} />}
               </motion.button>
             ) : (
               <motion.button key="skip" type="button" onClick={() => { setFull(false); onBack() }}
