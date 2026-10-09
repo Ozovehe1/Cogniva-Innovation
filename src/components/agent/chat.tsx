@@ -130,7 +130,11 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
           if (!line.trim()) continue
           let e: ChatEvent
           try { e = JSON.parse(line) } catch { continue }
-          if (e.t === 'session') { setSessionId(e.id); onSession?.(e.id) }
+          if (e.t === 'session') {
+            setSessionId(e.id); onSession?.(e.id)
+            // On the Ask page the chat lives in the URL, so a reload (or back) reopens it with its flags.
+            if (!onSession && !lessonId && window.location.pathname === '/ask') window.history.replaceState(null, '', `/ask?session=${e.id}`)
+          }
           else if (e.t === 'text') patch(a => ({ ...a, content: a.content + e.d }))
           else if (e.t === 'tool') patch(a => {
             const tools = [...(a.tools ?? [])]
@@ -158,7 +162,11 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
   }, [initialPrompt, send])
   useEffect(() => { if (initialMessages.length) scroll() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const reset = () => { if (busy) return; setSessionId(null); setMessages([]); inputRef.current?.focus() }
+  const reset = () => {
+    if (busy) return
+    setSessionId(null); setMessages([]); inputRef.current?.focus()
+    if (!onSession && !lessonId && window.location.pathname === '/ask' && window.location.search) window.history.replaceState(null, '', '/ask')
+  }
 
   return (
     <div className={cx('flex flex-col', compact ? 'h-full' : 'min-h-[calc(100dvh-180px)]')}>
