@@ -129,7 +129,9 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   let aux = 0
   const known = (n: unknown, at: string): boolean => {
     // Models sometimes send the [x, y] end as a string ("[-2, 4]" or "(px, 0)").
-    if (typeof n === 'string' && !pointNames.has(n)) { const m = n.trim().match(/^[[(]\s*([^,]+?)\s*,\s*([^,]+?)\s*[\])]$/); if (m) n = [m[1], m[2]] }
+    if (typeof n === 'string' && !pointNames.has(n)) { const m = n.trim().match(/^[[(]?\s*([^,[\]()]+?)\s*,\s*([^,[\]()]+?)\s*[\])]?$/); if (m) n = [m[1], m[2]] }
+    // ...or as an object {x, y}.
+    if (n && typeof n === 'object' && !Array.isArray(n) && 'x' in n && 'y' in n) n = [(n as Record<string, unknown>).x, (n as Record<string, unknown>).y]
     if (Array.isArray(n) && n.length === 2) {
       const [ax, ay] = n.map(v => (typeof v === 'number' ? String(v) : ex(v, 120)))
       if (!check(ax, `${at}[0]`, [], false) || !check(ay, `${at}[1]`, [], false)) return false
@@ -197,8 +199,10 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
     if (check(expr, 'ode.dydx', ['y']) && known(f.from, 'ode.from')) ode = { expr, from: String(f.from), color: color(f.color, 'clay') }
   }
   let surface: IxSpec['surface']
-  if (o.surface && typeof o.surface === 'object') {
-    const f = o.surface as Record<string, unknown>
+  // Models also send the surface as a bare string ("z = x^2 + y^2") or as a one-item `surfaces` list.
+  const rawSurface = typeof o.surface === 'string' ? { expr: o.surface } : o.surface ?? (Array.isArray(o.surfaces) ? o.surfaces[0] : undefined)
+  if (rawSurface && typeof rawSurface === 'object') {
+    const f = (typeof (rawSurface as Record<string, unknown>).z === 'string' && !(rawSurface as Record<string, unknown>).expr ? { ...(rawSurface as Record<string, unknown>), expr: (rawSurface as Record<string, unknown>).z } : rawSurface) as Record<string, unknown>
     const expr = ex(f.expr, 160).replace(/^\s*z\s*=\s*/i, '')
     if (check(expr, 'surface.expr', ['y'])) surface = { expr, z: range(f.z_range) ?? undefined, label: str(f.label, 30) || undefined }
   }

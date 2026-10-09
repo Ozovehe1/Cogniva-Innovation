@@ -85,6 +85,7 @@ const STATIC: Static[] = [
   { id: 'figure-need-rule', run: () => { const a = figureNeed({ q: 'Solve $2x + 5 = 13$.' }, 'linear equations'), b = figureNeed({ q: 'In the diagram, find angle ABC.' }, 'angles in triangles'); return { pass: !a.refers && !a.visual && b.refers && b.visual, detail: JSON.stringify({ a, b }) } } },
   // Sets of items: keys spread over positions; duplicates caught.
   { id: 'key-balance', run: () => { const items = balanceKeys([0, 1, 2, 3].map(i => base({ q: `Item ${i}: ${['add', 'take away', 'double', 'halve'][i]} it?`, options: ['a', 'b', 'c', 'd'].map(x => `${x}${i}`), answer: 0 }))); const pos = items.map(i => i.answer); return { pass: new Set(pos).size >= 3 && !setFindings(items).length, detail: `key positions ${pos.join(',')}` } } },
+  { id: 'key-balance-numeric', run: () => { const items = balanceKeys([0, 1, 2, 3].map(i => base({ q: `Item ${i}: ${['add', 'take away', 'double', 'halve'][i]} it?`, options: [10, 20, 30, 40].map(v => `${v + i} m`), answer: 2 }))); const pos = items.map(i => i.answer); const ordered = items.every(it => { const v = it.options.map(o => parseFloat(o)); return v.every((x, j) => !j || x > v[j - 1]) || v.every((x, j) => !j || x < v[j - 1]) }); return { pass: new Set(pos).size >= 2 && ordered, detail: `key positions ${pos.join(',')}${ordered ? '' : '; options out of order'}` } } },
   // Lesson checks go through the same validator.
   { id: 'lesson-check-validated', run: () => {
     const steps = [{ type: 'write', id: 't', text: 'Units of B', x: 40, y: 30 }, { type: 'check', id: 'c', kind: 'choice', prompt: 'What are the SI units of magnetic field B?', options: ['Tesla (T)', 'Amperes per metre (A/m)', 'Weber per square metre', 'Both A and C'], answer: 3, explanation: 'Both are the same unit.' }] as unknown as Step[]
@@ -142,7 +143,7 @@ async function liveCases(): Promise<CaseResult[]> {
     return [
       { id: 'live-mastery-all-verified', group: G, pass: items.length >= 3 && items.every(i => i.verified) && !bad.length, detail: `${items.length} items; ${bad.length ? bad.map(b => b.problems[0]).join(' | ') : 'all pass re-validation'}`.slice(0, 300), ms: Date.now() - t0 },
       { id: 'live-mastery-aligned', group: G, pass: items.every(i => !!i.objective) && re.every(v => !v.findings.some(f => f.code.startsWith('untaught') || f.code === 'objective-not-taught')), detail: items.map(i => i.objective ?? '(none)').join(' | ').slice(0, 300) },
-      { id: 'live-mastery-keys-spread', group: G, pass: new Set(pos).size >= Math.min(3, items.length - 1), detail: `key positions ${pos.join(',')}` },
+      { id: 'live-mastery-keys-spread', group: G, pass: new Set(pos).size >= Math.min(2, items.length - 1) && !setFindings(items).some(f => f.code === 'key-balance'), detail: `key positions ${pos.join(',')}` }, // numeric options stay in numerical order, so a set whose keys share one rank can only alternate between two slots
       { id: 'live-mastery-figures-drawn', group: G, pass: figOk, detail: `${items.filter(i => i.figure).length} with figures` },
     ]
   } catch (err) {

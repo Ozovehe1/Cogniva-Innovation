@@ -460,9 +460,15 @@ export function balanceKeys<T extends AssessItem>(items: T[], seed = 7): T[] {
   for (let i = order.length - 1; i > 0; i--) { s = (s * 9301 + 49297) % 233280; const j = s % (i + 1); [order[i], order[j]] = [order[j], order[i]] }
   return items.map((it, k) => {
     const nums = it.options.map(o => parseOptionNumber(o))
-    const perm = nums.every(Boolean) && new Set(nums.map(x => x!.unit)).size === 1
-      ? it.options.map((_, i) => i).sort((a, b) => nums[a]!.value - nums[b]!.value)
-      : rotateTo(it.options.length, it.answer, order[k % order.length] % it.options.length)
+    const want = order[k % order.length] % it.options.length
+    let perm: number[]
+    if (nums.every(Boolean) && new Set(nums.map(x => x!.unit)).size === 1) {
+      // Numeric options stay in numerical order, but the direction (ascending or descending) is picked per item so
+      // the key lands nearest its balanced slot: always-ascending let 'pick the larger value' find the key.
+      const up = it.options.map((_, i) => i).sort((a, b) => nums[a]!.value - nums[b]!.value)
+      const down = [...up].reverse()
+      perm = Math.abs(down.indexOf(it.answer) - want) < Math.abs(up.indexOf(it.answer) - want) ? down : up
+    } else perm = rotateTo(it.options.length, it.answer, want)
     const pick = <V,>(a: V[] | undefined) => (Array.isArray(a) && a.length === it.options.length ? perm.map(i => a[i]) : a)
     return { ...it, options: perm.map(i => it.options[i]), answer: perm.indexOf(it.answer), why: pick(it.why), calcs: pick(it.calcs) }
   })
