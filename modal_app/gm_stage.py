@@ -53,7 +53,8 @@ FW, FH = float(config.frame_width), float(config.frame_height)
 if PORTRAIT:
     FS = {"title": 26, "label": 18, "body": 18, "math": 24, "note": 18, "cell": 18, "min": 16, "box": 18}
 else:
-    FS = {"title": 38, "label": 28, "body": 28, "math": 46, "note": 28, "cell": 30, "min": 28, "box": 28}
+    # sized for a phone: a 16:9 clip plays ~390 px wide, so nothing under ~30 (about 11 px tall there)
+    FS = {"title": 38, "label": 32, "body": 30, "math": 46, "note": 30, "cell": 32, "min": 30, "box": 30}
 GW.BOX_FS = FS["box"]
 
 
@@ -61,12 +62,41 @@ def _t(text, fs=None, color="ink", weight="NORMAL"):
     return Text(str(text), font_size=max(FS["min"], fs or FS["body"]), color=col(color), weight=weight)
 
 
+def _tex_pow(s: str) -> str:
+    """Exponents grouped for TeX: x**(n-1) -> x^{n-1}, x**10 -> x^{10}, x^10 -> x^{10}, e^(-k t) -> e^{-k t}."""
+    out, i = [], 0
+    while i < len(s):
+        if s.startswith("**", i) or (s[i] == "^" and not s.startswith("^{", i)):
+            star = s.startswith("**", i)
+            i += 2 if star else 1
+            while i < len(s) and s[i] == " ":
+                i += 1
+            if i < len(s) and s[i] == "(":
+                depth, j = 0, i
+                while j < len(s):
+                    depth += s[j] == "("
+                    depth -= s[j] == ")"
+                    if depth == 0:
+                        break
+                    j += 1
+                out.append("^{" + s[i + 1:j] + "}")
+                i = j + 1
+                continue
+            m = re.match(r"-?[\w.]+" if star else r"-?\d+(?:\.\d+)?|[A-Za-z]", s[i:])
+            tok = m.group(0) if m else ""
+            out.append("^{" + tok + "}" if tok else "^")
+            i += len(tok)
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out)
+
+
 def _tex_clean(s: str) -> str:
     """Sympy-style products in a TeX string read as maths: 3*(y-5) -> 3(y-5), 2*x -> 2x, a*b -> a \\cdot b."""
-    s = str(s)
+    s = _tex_pow(str(s))
     if "*" not in s or "\\" in s:
         return s
-    s = re.sub(r"\*\*", "^", s)
     s = re.sub(r"(\d)\s*\*\s*(?=[(A-Za-z])", r"\1", s)
     return s.replace("*", r" \cdot ")
 
@@ -405,7 +435,7 @@ class Stage:
         ax.shift(target - ax.c2p((x0 + x1) / 2, (y0 + y1) / 2))
         g = VGroup(ax)
         if o.get("numbers", True):
-            fs = FS["min"] - 4 if not PORTRAIT else FS["min"]
+            fs = FS["min"] - 2 if not PORTRAIT else FS["min"]
             for v in _ticks(x0, x1, xs):
                 if abs(v) < 1e-9 and y0 < 0 < y1:
                     continue
@@ -1061,6 +1091,15 @@ class Stage:
         except Exception:  # noqa: BLE001
             return None
 
+    def _zero_length(self, ref):
+        o = self.W.objs.get(ref) if isinstance(ref, str) else None
+        if not o or o.get("type") not in ("vector", "segment") or not o.get("from"):
+            return None
+        try:
+            return bool(np.linalg.norm(self.W.end(ref, self.X, self.vals) - self.W.pos(o["from"], self.X, self.vals)) * self.W.transform[1] < 0.08)
+        except Exception:  # noqa: BLE001
+            return None
+
     def _relabel(self):
         """After a change of vars: re-render templated label text and re-place labels around their (moved) anchors."""
         anims = []
@@ -1082,6 +1121,13 @@ class Stage:
             templ = "{" in str(o.get("text", "")) + str(o.get("tex", "")) or isinstance(o.get("text"), list) or isinstance(o.get("tex"), list)
             new = self._make(o)
             new._anchor = self._anchor_now(o) if o.get("for") else None
+            # the label of an arrow/segment that has shrunk to nothing (vy at the top of a throw) fades out, and back in when it grows
+            tiny = self._zero_length(o.get("for"))
+            if tiny is not None:
+                new.set_opacity(0.0 if tiny else 1.0)
+                if tiny != getattr(old, "_tiny", False):
+                    templ = templ or True
+                new._tiny = tiny
             if templ or np.linalg.norm(new.get_center() - old.get_center()) > 0.05:
                 anims.append(Transform(old, new) if not templ else FadeTransform(old, new))
                 if templ:
@@ -1503,7 +1549,7 @@ def _as(a):
 def _lab(s, fs, color):
     s = str(s)
     if re.search(r"[\\^_]|^[a-zA-Z]$|^[a-zA-Z]\([a-z]\)$", s):
-        return MathTex(s, font_size=fs + 6, color=col(color))
+        return MathTex(_tex_pow(s), font_size=fs + 6, color=col(color))
     return _t(s, fs, color)
 
 

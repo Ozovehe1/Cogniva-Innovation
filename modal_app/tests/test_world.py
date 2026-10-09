@@ -164,6 +164,40 @@ def test_never_shown_and_transient_zero_size():
     assert not any("zero length" in p for p in r["problems"])  # s is zero only at t = 0 and t = pi
 
 
+
+def test_screen_overlap_scale_and_deterministic_concept_checks():
+    import gm_scenegen as sg
+    # a rearrangement with one piece in the wrong corner: two shaded pieces on top of each other after the morph
+    bad = json.load(open(os.path.join(HERE, "fixtures_bad", "pythagoras_rearranged_overlap.json")))
+    w, r = solved(sg.normalize(bad))
+    assert not r["ok"] and any("partly overlap" in p and "after beat 3" in p for p in r["problems"]), r["problems"]
+    # given numbers must be used; a tangent concept needs a tangent; a rearrangement needs a morph
+    ir = {"vars": {"v0": 15, "theta": "45*deg"}, "objects": [], "beats": []}
+    assert sg.given_values_report("a ball launched at 20 m/s at 45 degrees", ir)[0].startswith("the concept gives the value 20")
+    assert not sg.given_values_report("a ball launched at 15 m/s at 45 degrees", ir)
+    assert sg.concept_terms_report("the derivative as the slope of the tangent line on y = x^2", ir)
+    assert sg.concept_terms_report("Pythagoras proof by rearrangement", ir)
+    # id-less objects get ids; world vectors beside a free axes are bound to it
+    ir = sg.normalize({"objects": [{"type": "axes", "id": "g", "x": [-1, 6], "y": [-1, 5]}, {"type": "point", "id": "O", "at": [0, 0]},
+                                   {"type": "vector", "from": "O", "comp": [3, 1]}]})
+    assert ir["objects"][0]["origin"] == "O" and ir["objects"][2]["id"] == "vector1"
+    # a world-unit graph 34 units wide is shrunk unreadably: a problem, not a warning
+    big = {"vars": {}, "objects": [{"type": "point", "id": "O", "at": [0, 0]}, {"type": "axes", "id": "ax", "x": [0, 40], "y": [0, 20], "origin": "O"}],
+           "beats": [{"say": "x", "do": [["show", "ax"]]}]}
+    w, r = solved(big)
+    assert not r["ok"] and any("shrunk" in p for p in r["problems"])
+
+
+def test_tex_exponents_grouped():
+    import re as _re
+    src = open(os.path.join(os.path.dirname(HERE), "gm_stage.py")).read()
+    ns = {"re": _re}
+    exec(src[src.index("def _tex_pow"):src.index("def _m(")], ns)  # noqa: S102
+    assert ns["_tex_clean"]("x**(n-1)") == "x^{n-1}"
+    assert ns["_tex_clean"]("x^10 + 2*x**2") == "x^{10} + 2x^{2}"
+    assert ns["_tex_clean"]("e^{x}") == "e^{x}"
+
+
 if __name__ == "__main__":
     n = 0
     for k, f in list(globals().items()):

@@ -916,5 +916,767 @@
   },
   "score": null,
   "added": "2026-10-09"
+ },
+ {
+  "topic": "the derivative as the slope of the tangent line: a secant through two points of a curve slides until it becomes the tangent",
+  "tags": "calculus derivative tangent secant slope limit curve function graph rate change",
+  "ir": {
+   "title": "Derivative: secant to tangent",
+   "vars": {
+    "x0": 1,
+    "h": 2,
+    "x1": "x0+h",
+    "y0": "x0**2",
+    "y1": "x1**2",
+    "m": "(y1-y0)/(x1-x0)",
+    "k": "2*x0"
+   },
+   "objects": [
+    {
+     "type": "axes",
+     "id": "ax",
+     "x": [
+      -1,
+      4
+     ],
+     "y": [
+      -1,
+      10
+     ],
+     "size": [
+      5.5,
+      4.6
+     ],
+     "x_label": "x",
+     "y_label": "y"
+    },
+    {
+     "type": "function",
+     "id": "f",
+     "on": "ax",
+     "expr": "x**2",
+     "color": "ink",
+     "tex_label": "y = x^2"
+    },
+    {
+     "type": "point",
+     "id": "P",
+     "on": "ax",
+     "at": [
+      "x0",
+      "y0"
+     ],
+     "color": "accent",
+     "label": "P"
+    },
+    {
+     "type": "point",
+     "id": "Q",
+     "on": "ax",
+     "at": [
+      "x1",
+      "y1"
+     ],
+     "color": "b",
+     "label": "Q"
+    },
+    {
+     "type": "line",
+     "id": "sec",
+     "from": "P",
+     "to": "Q",
+     "color": "b",
+     "label": "secant"
+    },
+    {
+     "type": "point",
+     "id": "T",
+     "on": "ax",
+     "at": [
+      "x0+1",
+      "y0+k"
+     ]
+    },
+    {
+     "type": "line",
+     "id": "tan",
+     "from": "P",
+     "to": "T",
+     "color": "highlight",
+     "label": "tangent"
+    },
+    {
+     "type": "readout",
+     "id": "ro",
+     "text": "secant slope = {m:.2f}"
+    },
+    {
+     "type": "readout",
+     "id": "ro2",
+     "text": "tangent slope = {k:.0f}"
+    }
+   ],
+   "constraints": [],
+   "checks": [
+    [
+     "eq",
+     "deriv(f, x0)",
+     "k"
+    ],
+    [
+     "gt",
+     "m",
+     "k"
+    ]
+   ],
+   "beats": [
+    {
+     "say": "Here is the curve y equals x squared, with a point P at x equals 1.",
+     "do": [
+      [
+       "show",
+       "ax",
+       "f",
+       "P"
+      ]
+     ]
+    },
+    {
+     "say": "A secant through P and a second point Q has slope rise over run: here 4.",
+     "do": [
+      [
+       "show",
+       "Q",
+       "sec",
+       "ro"
+      ]
+     ]
+    },
+    {
+     "say": "Slide Q toward P, and the secant's slope falls toward 2.",
+     "do": [
+      [
+       "animate",
+       "h",
+       0.05,
+       {
+        "run": 3,
+        "rate": "smooth"
+       }
+      ]
+     ]
+    },
+    {
+     "say": "In the limit the secant becomes the tangent at P: its slope, 2, is the derivative there.",
+     "do": [
+      [
+       "hide",
+       "sec",
+       "Q",
+       "ro"
+      ],
+      [
+       "show",
+       "tan",
+       "ro2"
+      ],
+      [
+       "highlight",
+       "tan"
+      ]
+     ]
+    }
+   ]
+  },
+  "score": null,
+  "added": "2026-10-09"
+ },
+ {
+  "topic": "projectile motion: a ball launched at an angle follows a parabola; horizontal velocity constant, vertical velocity shrinks to zero at the top then grows downward",
+  "tags": "physics projectile motion launch velocity components gravity trajectory parabola ball kinematics",
+  "ir": {
+   "title": "Projectile motion",
+   "vars": {
+    "v0": 20,
+    "theta": "45*deg",
+    "g": 9.8,
+    "vx": "v0*cos(theta)",
+    "vy0": "v0*sin(theta)",
+    "T": "2*vy0/g",
+    "t": 0,
+    "vy": "vy0 - g*t"
+   },
+   "objects": [
+    {
+     "type": "axes",
+     "id": "ax",
+     "x": [
+      0,
+      45
+     ],
+     "y": [
+      0,
+      12
+     ],
+     "size": [
+      7.5,
+      3.6
+     ],
+     "x_label": "x (m)",
+     "y_label": "y (m)"
+    },
+    {
+     "type": "curve",
+     "id": "path",
+     "on": "ax",
+     "x": "vx*u",
+     "y": "vy0*u - g*u**2/2",
+     "param": "u",
+     "range": [
+      0,
+      "t"
+     ],
+     "color": "muted",
+     "dashed": true
+    },
+    {
+     "type": "point",
+     "id": "ball",
+     "on": "ax",
+     "at": [
+      "vx*t",
+      "vy0*t - g*t**2/2"
+     ],
+     "color": "accent"
+    },
+    {
+     "type": "vector",
+     "id": "vxv",
+     "from": "ball",
+     "comp": [
+      "vx",
+      0
+     ],
+     "on": "ax",
+     "scale": 0.3,
+     "color": "a",
+     "label": "vx"
+    },
+    {
+     "type": "vector",
+     "id": "vyv",
+     "from": "ball",
+     "comp": [
+      0,
+      "vy"
+     ],
+     "on": "ax",
+     "scale": 0.3,
+     "color": "b",
+     "label": "vy"
+    },
+    {
+     "type": "readout",
+     "id": "ro",
+     "text": "vx = {vx:.1f} m/s   vy = {vy:.1f} m/s"
+    }
+   ],
+   "constraints": [],
+   "checks": [
+    [
+     "eq",
+     "vx",
+     "v0*cos(theta)"
+    ],
+    [
+     "gt",
+     "vy0",
+     0
+    ]
+   ],
+   "beats": [
+    {
+     "say": "A ball is launched at 20 metres per second, 45 degrees above the ground.",
+     "do": [
+      [
+       "show",
+       "ax",
+       "ball",
+       "vxv",
+       "vyv",
+       "ro"
+      ]
+     ]
+    },
+    {
+     "say": "As it rises, the vertical velocity shrinks while the horizontal one stays the same.",
+     "do": [
+      [
+       "show",
+       "path"
+      ],
+      [
+       "animate",
+       "t",
+       "T/2",
+       {
+        "run": 3,
+        "rate": "linear"
+       }
+      ]
+     ]
+    },
+    {
+     "say": "At the top the vertical velocity is zero.",
+     "do": [
+      [
+       "highlight",
+       "ro"
+      ]
+     ]
+    },
+    {
+     "say": "Then it grows downward, and the ball lands with the same horizontal speed.",
+     "do": [
+      [
+       "animate",
+       "t",
+       "T",
+       {
+        "run": 3,
+        "rate": "linear"
+       }
+      ]
+     ]
+    }
+   ]
+  },
+  "score": null,
+  "added": "2026-10-09"
+ },
+ {
+  "topic": "proof of the Pythagorean theorem by rearrangement: four right triangles in a square of side a+b leave c^2, rearranged they leave a^2 + b^2",
+  "tags": "geometry pythagoras pythagorean theorem proof rearrangement dissection right triangle square hypotenuse morph",
+  "ir": {
+   "title": "Pythagoras by rearrangement",
+   "vars": {
+    "a": 1.9,
+    "b": 1.2,
+    "s": "a+b",
+    "c": "sqrt(a**2+b**2)"
+   },
+   "objects": [
+    {
+     "type": "point",
+     "id": "S0",
+     "at": [
+      0,
+      0
+     ]
+    },
+    {
+     "type": "point",
+     "id": "S1"
+    },
+    {
+     "type": "point",
+     "id": "S2"
+    },
+    {
+     "type": "point",
+     "id": "S3"
+    },
+    {
+     "type": "point",
+     "id": "E"
+    },
+    {
+     "type": "point",
+     "id": "F"
+    },
+    {
+     "type": "point",
+     "id": "G"
+    },
+    {
+     "type": "point",
+     "id": "H"
+    },
+    {
+     "type": "point",
+     "id": "M"
+    },
+    {
+     "type": "point",
+     "id": "Ab"
+    },
+    {
+     "type": "point",
+     "id": "As"
+    },
+    {
+     "type": "point",
+     "id": "Ar"
+    },
+    {
+     "type": "point",
+     "id": "Al"
+    },
+    {
+     "type": "polygon",
+     "id": "big_sq",
+     "points": [
+      "S0",
+      "S1",
+      "S2",
+      "S3"
+     ],
+     "color": "ink",
+     "fill": 0
+    },
+    {
+     "type": "polygon",
+     "id": "rt1",
+     "points": [
+      "S0",
+      "E",
+      "H"
+     ],
+     "color": "a",
+     "fill": 0.5
+    },
+    {
+     "type": "polygon",
+     "id": "rt2",
+     "points": [
+      "S1",
+      "F",
+      "E"
+     ],
+     "color": "a",
+     "fill": 0.5
+    },
+    {
+     "type": "polygon",
+     "id": "rt3",
+     "points": [
+      "S2",
+      "G",
+      "F"
+     ],
+     "color": "a",
+     "fill": 0.5
+    },
+    {
+     "type": "polygon",
+     "id": "rt4",
+     "points": [
+      "S3",
+      "H",
+      "G"
+     ],
+     "color": "a",
+     "fill": 0.5
+    },
+    {
+     "type": "polygon",
+     "id": "sq_c",
+     "points": [
+      "E",
+      "F",
+      "G",
+      "H"
+     ],
+     "color": "highlight",
+     "fill": 0.35
+    },
+    {
+     "type": "polygon",
+     "id": "rt1b",
+     "points": [
+      "M",
+      "Ab",
+      "Ar"
+     ],
+     "color": "a",
+     "fill": 0.5
+    },
+    {
+     "type": "polygon",
+     "id": "rt3b",
+     "points": [
+      "As",
+      "Al",
+      "M"
+     ],
+     "color": "a",
+     "fill": 0.5
+    },
+    {
+     "type": "polygon",
+     "id": "rt4b",
+     "points": [
+      "Al",
+      "As",
+      "S3"
+     ],
+     "color": "a",
+     "fill": 0.5
+    },
+    {
+     "type": "polygon",
+     "id": "sq_a",
+     "points": [
+      "S0",
+      "Ab",
+      "M",
+      "Al"
+     ],
+     "color": "b",
+     "fill": 0.35
+    },
+    {
+     "type": "polygon",
+     "id": "sq_b",
+     "points": [
+      "M",
+      "Ar",
+      "S2",
+      "As"
+     ],
+     "color": "c",
+     "fill": 0.35
+    },
+    {
+     "type": "label",
+     "id": "la",
+     "for": "S0-E",
+     "text": "a",
+     "side": "below"
+    },
+    {
+     "type": "label",
+     "id": "lb",
+     "for": "S0-H",
+     "text": "b",
+     "side": "left"
+    },
+    {
+     "type": "label",
+     "id": "lc",
+     "for": "sq_c",
+     "tex": "c^2"
+    },
+    {
+     "type": "label",
+     "id": "la2",
+     "for": "sq_a",
+     "tex": "a^2"
+    },
+    {
+     "type": "label",
+     "id": "lb2",
+     "for": "sq_b",
+     "tex": "b^2"
+    },
+    {
+     "type": "equation",
+     "id": "eq",
+     "lines": [
+      {
+       "sym": "a**2 + b**2 = c**2",
+       "note": "same square, same four triangles"
+      }
+     ]
+    }
+   ],
+   "constraints": [
+    [
+     "offset",
+     "S1",
+     "S0",
+     "s",
+     0
+    ],
+    [
+     "offset",
+     "S2",
+     "S0",
+     "s",
+     "s"
+    ],
+    [
+     "offset",
+     "S3",
+     "S0",
+     0,
+     "s"
+    ],
+    [
+     "offset",
+     "E",
+     "S0",
+     "a",
+     0
+    ],
+    [
+     "offset",
+     "F",
+     "S0",
+     "s",
+     "a"
+    ],
+    [
+     "offset",
+     "G",
+     "S0",
+     "b",
+     "s"
+    ],
+    [
+     "offset",
+     "H",
+     "S0",
+     0,
+     "b"
+    ],
+    [
+     "offset",
+     "M",
+     "S0",
+     "a",
+     "a"
+    ],
+    [
+     "offset",
+     "Ab",
+     "S0",
+     "a",
+     0
+    ],
+    [
+     "offset",
+     "Ar",
+     "S0",
+     "s",
+     "a"
+    ],
+    [
+     "offset",
+     "As",
+     "S0",
+     "a",
+     "s"
+    ],
+    [
+     "offset",
+     "Al",
+     "S0",
+     0,
+     "a"
+    ]
+   ],
+   "checks": [
+    [
+     "eq",
+     "area(sq_c)",
+     "area(sq_a) + area(sq_b)"
+    ],
+    [
+     "eq",
+     "area(rt1)",
+     "area(rt1b)"
+    ],
+    [
+     "eq",
+     "length(E,H)",
+     "c"
+    ]
+   ],
+   "beats": [
+    {
+     "say": "Four copies of a right triangle with legs a and b fill the corners of a square of side a plus b.",
+     "do": [
+      [
+       "show",
+       "big_sq",
+       "rt1",
+       "rt2",
+       "rt3",
+       "rt4",
+       "la",
+       "lb"
+      ]
+     ]
+    },
+    {
+     "say": "The space they leave is a tilted square with side c, so its area is c squared.",
+     "do": [
+      [
+       "show",
+       "sq_c",
+       "lc"
+      ],
+      [
+       "highlight",
+       "sq_c"
+      ]
+     ]
+    },
+    {
+     "say": "Now slide three of the triangles so they pair up into two rectangles.",
+     "do": [
+      [
+       "hide",
+       "sq_c",
+       "lc",
+       "la",
+       "lb"
+      ],
+      [
+       "morph",
+       [
+        "rt1",
+        "rt3",
+        "rt4"
+       ],
+       [
+        "rt1b",
+        "rt3b",
+        "rt4b"
+       ]
+      ]
+     ]
+    },
+    {
+     "say": "The space left is now two squares, a squared and b squared.",
+     "do": [
+      [
+       "show",
+       "sq_a",
+       "sq_b",
+       "la2",
+       "lb2"
+      ]
+     ]
+    },
+    {
+     "say": "Same big square, same four triangles, so a squared plus b squared equals c squared.",
+     "do": [
+      [
+       "show",
+       "eq"
+      ],
+      [
+       "equation",
+       "eq",
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  "score": null,
+  "added": "2026-10-09"
  }
 ]

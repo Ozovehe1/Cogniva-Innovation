@@ -1506,6 +1506,10 @@ class World:
         for label, ov, vals, X in solved[:1] + solved[-1:]:
             warn += self.soft_report(X, vals)
         self.warnings += list(dict.fromkeys(warn))
+        try:
+            probs += self.screen_overlaps(solved)
+        except Exception:  # noqa: BLE001
+            pass
         probs = list(dict.fromkeys(probs))
         self.solved = solved
         self.X = solved[0][3] if solved else np.zeros(0)
@@ -1517,7 +1521,15 @@ class World:
             fc = np.array([(stage_box[0] + stage_box[2]) / 2, (stage_box[1] + stage_box[3]) / 2])
             self.transform = (wc, ks, fc)
             if ks < 0.3:
-                self.warnings.append(f"the scene is large for the frame (scaled to {ks:.2f}); fewer or smaller parts would read better")
+                bw, bh = bb[2] - bb[0], bb[3] - bb[1]
+                if ks < 0.2 or any(o.get("type") == "axes" and o.get("origin") for o in self.objs.values()):
+                    # shrunk this far, tick numbers and labels are unreadable on a phone
+                    probs.append(f"the scene is {bw:.0f} x {bh:.0f} world units, so it is shrunk to {ks:.2f} to fit the "
+                                 f"9 x 5.4 stage and its text is unreadable: place graph points on the axes in axes units "
+                                 f"(point on: axesId, at: [x, y]) with axes unit/size, or use smaller distances")
+                else:
+                    self.warnings.append(f"the scene is large for the frame (scaled to {ks:.2f}); fewer or smaller parts would read better")
+        probs = list(dict.fromkeys(probs))
         return {"ok": not probs, "problems": probs[:14], "warnings": self.warnings[:10], "scale": round(self.transform[1], 3)}
 
     def _degenerate(self, X, vals):
@@ -1656,10 +1668,56 @@ class World:
                     out.append((msg, bad))
         return out[:4]
 
-    def overlaps(self, X, vals) -> list[str]:
+    def visible_after_beats(self) -> list[set]:
+        """The ids on screen at the end of each beat (show/hide/morph followed in order; groups expand)."""
+        on: set = set()
+        out = []
+
+        def ids(x):
+            r = []
+            for y in _as_list(x):
+                if isinstance(y, list):
+                    r += ids(y)
+                elif isinstance(y, str):
+                    o = self.objs.get(y) or {}
+                    r += [y] + (ids(o.get("members") or []) if o.get("type") == "group" else [])
+            return r
+        for b in self.ir.get("beats") or []:
+            for a in b.get("do") or []:
+                a = _as_list(a)
+                if not a:
+                    continue
+                if a[0] == "show":
+                    on |= set(ids(a[1:]))
+                elif a[0] == "hide":
+                    on -= set(ids(a[1:]))
+                elif a[0] == "morph" and len(a) > 2:
+                    on -= set(ids(a[1]))
+                    on |= set(ids(a[2]))
+            out.append(set(on))
+        return out
+
+    def screen_overlaps(self, solved) -> list[str]:
+        """Filled polygons ON SCREEN together after a beat that partly overlap: a dissection that does not tile (a piece put
+        in the wrong corner) shows as two shaded pieces on top of each other."""
+        out = []
+        for bi, vis in enumerate(self.visible_after_beats()):
+            st = [x for x in solved if x[0] == "start" or (x[0].startswith("beat ") and int(x[0].split()[1]) <= bi + 1)]
+            if not st:
+                continue
+            _, _, vals, X = st[-1]
+            for m in self.overlaps(X, vals, only=vis):
+                out.append(f"after beat {bi + 1}, {m} on screen: pieces of a dissection must tile (check which corners each piece uses)")
+            if out:
+                break
+        return out[:3]
+
+    def overlaps(self, X, vals, only=None) -> list[str]:
         """Filled polygons that PARTLY overlap (not one nested in the other): in a dissection proof the pieces must tile."""
         polys = []
         for oid, o in self.objs.items():
+            if only is not None and oid not in only:
+                continue
             if o["type"] == "polygon" and len(o.get("points") or []) >= 3 and float(o.get("fill", 0) or 0) > 0:
                 try:
                     polys.append((oid, np.array([self.pos(p, X, vals) for p in o["points"]], dtype=float)))

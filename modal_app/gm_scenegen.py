@@ -220,6 +220,16 @@ def normalize(ir) -> dict:
             o["type"] = o.pop("kind")
         if isinstance(o, dict) and o.get("type") == "icon" and "icon" not in o and o.get("name"):
             o["icon"] = o["name"]
+    # an object without an id can never be shown: name it after its type (curve -> curve1)
+    used = {o.get("id") for o in ir["objects"] if isinstance(o, dict)}
+    for o in ir["objects"]:
+        if isinstance(o, dict) and not o.get("id") and o.get("type"):
+            n = 1
+            while f"{o['type']}{n}" in used:
+                n += 1
+            o["id"] = f"{o['type']}{n}"
+            used.add(o["id"])
+    _bind_axes(ir)
     cons = []
     for c in ir["constraints"]:
         if isinstance(c, dict):
@@ -237,6 +247,62 @@ def normalize(ir) -> dict:
             beats.append(b)
     ir["beats"] = beats
     return ir
+
+
+def _bind_axes(ir: dict):
+    """Vectors drawn in world units from a world point at (0, 0), beside one free-standing axes (no origin/unit/size):
+    the model means the vectors on that grid, so the axes take that point as their origin (1 axes unit = 1 world unit)."""
+    objs = [o for o in ir["objects"] if isinstance(o, dict)]
+    axes = [o for o in objs if o.get("type") == "axes"]
+    if len(axes) != 1 or any(axes[0].get(k) for k in ("origin", "unit", "size", "at")):
+        return
+    zero = {o.get("id") for o in objs if o.get("type") == "point" and not o.get("on") and isinstance(o.get("at"), list)
+            and len(o["at"]) == 2 and all(str(v).strip() in ("0", "0.0") for v in o["at"])}
+    tails = [o.get("from") for o in objs if o.get("type") == "vector" and not o.get("on")]
+    hit = [t for t in tails if t in zero]
+    if hit:
+        axes[0]["origin"] = hit[0]
+
+
+_UNIT = r"(?:m/s\^?2|m/s|km/h|degrees?|deg|°|ohms?|Ω|V|A|kg|N|m|s|Hz|J|W|cm|mm|km|g)"
+
+
+def given_values_report(description: str, ir: dict) -> list[str]:
+    """Numbers the concept gives with a unit (20 m/s, 45 degrees, n = 1.5) must appear in the scene's vars or actions; a scene
+    that silently changes them (v0 = 15 for a 20 m/s launch) teaches the wrong numbers."""
+    given = re.findall(r"(?<![\w.])(\d+(?:\.\d+)?)\s*" + _UNIT + r"(?![A-Za-z])", description)
+    given += re.findall(r"\b[A-Za-z]\w{0,2}\s*=\s*(\d+(?:\.\d+)?)\b(?!\s*[A-Za-z(])", description)
+    if not given:
+        return []
+    try:
+        w = GW.World(ir)
+        vals = [v for v in w.vars.values().values() if isinstance(v, (int, float))]
+    except Exception:  # noqa: BLE001
+        vals = []
+    blob = json.dumps({k: ir.get(k) for k in ("vars", "beats", "objects", "checks")})
+    out = []
+    for g in dict.fromkeys(given):
+        x = float(g)
+        if any(abs(v - x) < 1e-6 * max(1, abs(x)) or abs(v - x * math.pi / 180) < 1e-6 for v in vals):
+            continue
+        if re.search(r"(?<![\w.])" + re.escape(g) + r"(?:\.0+)?(?![\w.])", blob):
+            continue
+        out.append(f"the concept gives the value {g}, but no var or action of the scene uses it: use the given numbers (put {g} in vars)")
+    return out[:3]
+
+
+def concept_terms_report(description: str, ir: dict) -> list[str]:
+    """Deterministic must-haves named by the concept."""
+    d = description.lower()
+    blob = json.dumps(ir)
+    out = []
+    if "tangent" in d and re.search(r"\b(curve|y\s*=|function|slope|derivative)", d) and '"tangent"' not in blob and "deriv(" not in blob:
+        out.append('the concept is about a tangent line, but the scene draws none: add a line through two points T1, T2 with '
+                   '["tangent", "T1-T2", functionId, x0] and show it when the secant reaches it (a secant whose points meet vanishes)')
+    if re.search(r"rearrang|dissect|cut .{0,40}(slid|mov)", d) and '"morph"' not in blob:
+        out.append('the concept is a rearrangement, but nothing moves into the new arrangement: draw the second arrangement as '
+                   'other polygons and ["morph", [old pieces], [new pieces]] (pieces must tile in both arrangements)')
+    return out
 
 
 # ───────────────────────── scoring ─────────────────────────
@@ -301,6 +367,10 @@ def variant(description, render, *, narration, context, aspect, examples, log, i
             ver = GW.verify_ir(ir, aspect)
         except Exception as exc:  # noqa: BLE001
             ver = {"ok": False, "problems": [f"engine could not read the scene: {type(exc).__name__}: {str(exc)[:200]}"]}
+        if ver.get("ok"):
+            det = given_values_report(description, ir) + concept_terms_report(description, ir)
+            if det:
+                ver = {**ver, "ok": False, "problems": det}
         rec["problems"] = ver.get("problems", [])
         if ver.get("ok") and rec.get("reviewed", 0) < 2 and (not t_end or time.time() < t_end - 80):
             # verified = consistent; the review asks whether it is the RIGHT scene (from the solver's numbers). A scene repaired
