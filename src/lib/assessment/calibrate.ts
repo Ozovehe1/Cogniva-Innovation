@@ -59,7 +59,7 @@ export function applyResponses(items: AssessItem[], answers: (number | null)[], 
 
 /**
  * Pooled calibration of the writer's difficulty tag (subject × bloom × tag → observed logit offset). Best effort: the
- * table may not exist yet (migration 20261020090000_assessment_calibration.sql); then nothing is pooled.
+ * table may not exist yet (migration 20261020091000_assessment_calibration.sql); then nothing is pooled.
  */
 export async function recordTagOutcome(db: SupabaseClient, key: { subject: string; bloom?: string; tag?: number }, correct: boolean, theta: number): Promise<void> {
   if (!key.tag) return

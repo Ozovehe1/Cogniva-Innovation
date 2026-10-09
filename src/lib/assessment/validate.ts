@@ -116,6 +116,24 @@ export function fullyFactorised(src: string): boolean {
   return true
 }
 
+/** An option with its number replaced by `v` at `sig` significant figures, keeping its notation and unit. */
+function restate(opt: string, v: number, sig: number): string | null {
+  const p = Math.max(2, Math.min(4, sig || 3))
+  const sci = /(-?\d+(?:\.\d+)?)\s*\\times\s*10\^\{?\s*(-?\d+)\s*\}?/
+  if (sci.test(opt)) {
+    if (v === 0) return null
+    const e = Math.floor(Math.log10(Math.abs(v)))
+    const m = (v / Math.pow(10, e)).toFixed(p - 1)
+    return opt.replace(sci, `${m} \\times 10^{${e}}`)
+  }
+  const plainNum = /-?\d+(?:,\d{3})*(?:\.\d+)?/
+  if (!plainNum.test(opt)) return null
+  const dec = (opt.match(plainNum)![0].split('.')[1] ?? '').length
+  const pr = v.toPrecision(p)
+  const txt = /e/.test(pr) ? null : dec ? pr : String(Number(pr))
+  return txt === null ? null : opt.replace(plainNum, txt)
+}
+
 function accuracyFindings(item: AssessItem): Finding[] {
   const out: Finding[] = []
   const q = plain(item.q)
@@ -160,14 +178,21 @@ function accuracyFindings(item: AssessItem): Finding[] {
       }
     }
   }
-  // Each numeric distractor's stated value must be what its mistake actually gives.
+  // Each numeric distractor's stated value must be what its mistake actually gives. When the writer's arithmetic
+  // for a distractor is right but the number it printed is not, the option is corrected to the computed value (the
+  // distractor then shows exactly what that mistake produces); it is blocked only if the corrected value would
+  // collide with the key or another option.
   if (Array.isArray(item.calcs)) item.calcs.forEach((c, i) => {
     if (i === item.answer || typeof c !== 'string' || !c.trim()) return
     const n = parseOptionNumber(item.options[i])
     const v = evalCalc(c)
     if (!n || !Number.isFinite(v)) return
-    const rel = Math.abs(v - n.value) / Math.max(1e-12, Math.abs(v))
-    if (rel > 0.006 && Math.abs(v - n.value) > Math.pow(10, -Math.max(0, n.decimals)) / 2 + 1e-12) out.push({ code: 'distractor-value', severity: 'block', detail: `option ${letter(i)} states ${plain(item.options[i])} but its mistake ("${c}") gives ${Number(v.toPrecision(4))}` })
+    if (Math.abs(v - n.value) <= Math.max(Math.abs(v) * 0.006, Math.pow(10, -Math.max(0, n.decimals)) / 2 + 1e-12)) return
+    const fixed = restate(item.options[i], v, n.sig)
+    const fn = fixed ? parseOptionNumber(fixed) : null
+    const clash = !fn || item.options.some((o, k) => { if (k === i) return false; const m = parseOptionNumber(o); return !!m && m.unit === fn.unit && Math.abs(m.value - fn.value) <= 0.015 * Math.max(Math.abs(m.value), Math.abs(fn.value)) })
+    if (fixed && !clash) { out.push({ code: 'distractor-fixed', severity: 'warn', detail: `option ${letter(i)} restated from ${plain(item.options[i])} to ${plain(fixed)} (what "${c}" gives)` }); item.options[i] = fixed }
+    else out.push({ code: 'distractor-value', severity: 'block', detail: `option ${letter(i)} states ${plain(item.options[i])} but its mistake ("${c}") gives ${Number(v.toPrecision(4))}` })
   })
   // The correctness guard's claim checker on the stem and the explanation (wrong arithmetic, solutions, percentages).
   for (const [where, text] of [['question', item.q], ['explanation', item.explain ?? '']] as const) {

@@ -153,7 +153,7 @@ figures are full width, capped at 52 vh, with alt text (`role="img"`), credit an
 `d −= K(r − P)`, `K = a / (1 + b·n)`; confidence-weighted evidence. Mastery submissions update each item's `elo` and the
 learner's topic rating (`path_topics.mastery.elo`). Because items are personal (never shared between learners), item
 ratings move only with their own learner; across learners only the **writer's difficulty tag** is calibrated (subject ×
-Bloom × tag → logit offset) in `assessment_calibration` (migration `20261020090000`, statistics only, service role).
+Bloom × tag → logit offset) in `assessment_calibration` (migration `20261020091000`, statistics only, service role).
 `pickByTarget` selects practice items near 75 % expected success.
 
 ## 9. Learner-facing language
