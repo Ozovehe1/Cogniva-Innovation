@@ -294,3 +294,46 @@ export function Stat({ label, value, hint, className }: { label: string; value: 
     </div>
   )
 }
+
+/* ───────────── Sheets ───────────── */
+
+/** The small handle at the top of a bottom sheet: it says "this slides away" (affordance) and anchors the eye. */
+export function SheetGrabber({ className }: { className?: string }) {
+  return <div aria-hidden className={cx('mx-auto mt-2 h-1 w-10 rounded-full bg-line-strong sm:hidden', className)} />
+}
+
+/* ───────────── System pages (404, errors) ───────────── */
+
+/**
+ * A calm full-page message for "not found" and "something went wrong": what happened in plain words, that nothing the
+ * learner did is lost, and one clear way forward (one primary action, Hick's law). Never a bare status code.
+ */
+export function SystemMessage({ eyebrow, title, children, actions, art }: {
+  eyebrow: string
+  title: React.ReactNode
+  children?: React.ReactNode
+  actions?: React.ReactNode
+  art?: React.ReactNode
+}) {
+  return (
+    <div className="mx-auto flex min-h-[62vh] w-full max-w-md flex-col justify-center px-1 py-10">
+      {art && <div className="mb-6">{art}</div>}
+      <Eyebrow className="mb-3">{eyebrow}</Eyebrow>
+      <h1 className="font-display text-[32px] leading-[1.1] text-ink md:text-[38px]">{title}</h1>
+      {children && <div className="mt-3 text-[15px] leading-relaxed text-muted">{children}</div>}
+      {actions && <div className="mt-8 flex flex-col gap-2 sm:flex-row">{actions}</div>}
+    </div>
+  )
+}
+
+/** A tiny board sketch for system pages: a dashed path that wanders off the map (on-brand, not a stock illustration). */
+export function LostMapArt() {
+  return (
+    <svg viewBox="0 0 220 120" className="h-auto w-[180px]" role="img" aria-label="A dotted path on a map that ends at a question mark">
+      <rect x="1" y="1" width="218" height="118" rx="14" fill="#FDFCF9" stroke="#E5E1D8" />
+      <path d="M22 94 C 52 94, 52 52, 86 56 S 120 92, 150 70" fill="none" stroke="#1F4D3A" strokeWidth="3" strokeLinecap="round" strokeDasharray="2 9" />
+      <circle cx="22" cy="94" r="6" fill="#1F4D3A" />
+      <text x="176" y="80" fontSize="44" fill="#A4502A" fontFamily="var(--font-serif), Georgia, serif" fontStyle="italic" textAnchor="middle">?</text>
+    </svg>
+  )
+}
