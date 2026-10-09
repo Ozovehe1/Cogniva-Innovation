@@ -413,7 +413,8 @@ export async function route(req: RouteRequest, slots = inventory()): Promise<Pla
     const st = state.get(s.id)
     const h = health(s, st, t)
     if (!h.ok) { blocked.push({ slot: s.id, why: h.why! }); retryAfterMs = Math.min(retryAfterMs, h.wait ?? 30_000); continue }
-    if (req.priority === 'background' && reserved.includes(s.id)) { blocked.push({ slot: s.id, why: 'reserved for learners' }); continue }
+    // Eval runs (label 'eval') go at Ask priority so they test the real routing, but never take a learner-reserved slot.
+    if ((req.priority === 'background' || llmContext().label === 'eval') && reserved.includes(s.id)) { blocked.push({ slot: s.id, why: 'reserved for learners' }); continue }
     const cap = dayCapFor(req.priority, s, t)
     const hr = headroomOf(s, st, req.estTokens, cap)
     if (req.priority === 'ask' && reserved.includes(s.id) && hr.minute < 0.5) { blocked.push({ slot: s.id, why: 'reserved for live lessons' }); continue }

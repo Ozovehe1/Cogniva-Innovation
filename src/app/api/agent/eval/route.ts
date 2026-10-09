@@ -15,8 +15,9 @@ export const dynamic = 'force-dynamic'
  * Runs the agent eval set on production (real models, budgets and services). Writes only to the given test student.
  */
 export async function POST(request: Request) {
-  // Evals are background traffic: they never take learner-reserved slots or a learner's share.
-  return withLlmContext({ priority: 'background', label: 'eval' }, () => run(request))
+  // Evals are marked 'eval': they route like Ask traffic (so they test what learners get) but never take the slots
+  // held in reserve for learners (pool.ts route); at background priority the daily pacing starved them by evening.
+  return withLlmContext({ priority: 'ask', label: 'eval' }, () => run(request))
 }
 
 async function run(request: Request) {
