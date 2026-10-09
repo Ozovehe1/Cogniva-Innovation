@@ -40,6 +40,8 @@ const APPS = [
   { file: 'modal_app/tts.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-tts[a-z0-9-]*\.modal\.run/i, env: 'MODAL_TTS_URL' },
   // Python sandbox for the agent's run_python tool (no network, 1 CPU, 1 GiB, 20 s per run).
   { file: 'modal_app/py_sandbox.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-py[a-z0-9-]*\.modal\.run/i, env: 'MODAL_PY_URL' },
+  // OmniSVG text-to-SVG trial (GPU, scale to zero; not used by the app). Endpoint is token-protected.
+  { file: 'modal_app/omnisvg_eval.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-omnisvg-eval[a-z0-9-]*\.modal\.run/i, env: 'MODAL_OMNISVG_URL' },
 ]
 
 /** Which app files need a deploy. */
