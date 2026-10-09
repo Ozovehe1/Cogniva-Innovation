@@ -19,6 +19,7 @@ import { retrieve, scoreBullet, relevant } from './retrieve'
 import { BULLET_COLS, rowToBullet, topicKey } from './store'
 import { learnerNotes, writeTeachingNotes } from './learner-notes'
 import type { Bullet, SignalForReflection } from './types'
+import { withLlmContext } from '../agent/pool'
 
 const G = 'playbook'
 
@@ -223,6 +224,11 @@ async function gateCases(admin: SupabaseClient, deadline: number): Promise<CaseR
 }
 
 export async function playbookCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
+  // Evals run at Ask priority so a busy pool does not defer them like background work.
+  return withLlmContext({ priority: 'ask', label: 'playbook-eval' }, () => playbookCasesInner(admin, studentId, only))
+}
+
+async function playbookCasesInner(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
   const want = (k: string) => !only || only.includes(k)
   const deadline = Date.now() + 280_000
   const out: CaseResult[] = []

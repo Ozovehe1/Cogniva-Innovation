@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { BULLET_COLS, bulletEmbedText, clearPlaybookCache, embedOne, logEvent, rowToBullet, topicKey } from '@/lib/playbook/store'
 import { privacyCheck } from '@/lib/playbook/privacy'
 import { gateBullet, lintBullet } from '@/lib/playbook/gate'
+import { withLlmContext } from '@/lib/agent/pool'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -44,7 +45,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     case 'reject': await set({ status: 'rejected' }, 'reject', { via: 'admin' }); return Response.json({ ok: true, status: 'rejected' })
     case 'restore': await set({ status: 'candidate', retired_at: null, gate_attempts: 0 }, 'restore'); return Response.json({ ok: true, status: 'candidate' })
     case 'gate': {
-      const v = await gateBullet(admin, b, { actor, deadline: Date.now() + 240_000 })
+      // An admin is waiting on this one: Ask-class priority in the pool.
+      const v = await withLlmContext({ priority: 'ask', label: 'playbook-gate' }, () => gateBullet(admin, b, { actor, deadline: Date.now() + 240_000 }))
       return Response.json({ ok: true, verdict: v })
     }
     case 'edit': {

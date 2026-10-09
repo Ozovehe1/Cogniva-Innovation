@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { agentSecretOk } from '@/lib/agent/secret'
 import { playbookTick } from '@/lib/playbook/tick'
+import { withLlmContext } from '@/lib/agent/pool'
 
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
@@ -11,6 +12,7 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(request: Request) {
   if (!agentSecretOk(request)) return Response.json({ error: 'Forbidden' }, { status: 403 })
-  const r = await playbookTick(createAdminClient(), { deadline: Date.now() + 270_000 })
+  // Background class in the shared LLM pool: shed / deferred first so learners keep their capacity.
+  const r = await withLlmContext({ priority: 'background', label: 'playbook' }, () => playbookTick(createAdminClient(), { deadline: Date.now() + 270_000 }))
   return Response.json(r)
 }
