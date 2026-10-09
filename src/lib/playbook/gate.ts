@@ -73,19 +73,32 @@ const PROBE_TEXT: Record<Exclude<Target, 'lesson' | 'illustration'>, (t: string)
   manim: t => `As a numbered plan, describe a 15-25 second animation that teaches "${t}": each scene, the objects and their labels, the motion, and where things sit on screen.`,
 }
 
-async function judge(check: string | null, output: string, deadline: number): Promise<{ yes: boolean | null; why: string }> {
-  if (!check) return { yes: null, why: 'no check question' }
-  try {
-    const { json } = await pbJson(`You review a tutor's output for one specific problem.
+const JUDGE = (check: string, output: string) => `You review a tutor's output for ONE specific problem. Read the output carefully before answering; do not guess.
 
 Output:
 ${output.slice(0, 7000)}
 
-Question (YES means the problem IS present): ${check}
+Question (YES means the problem IS present in this output): ${check}
 
-Reply {"yes": true|false, "why": "one short sentence"}.`, { purpose: 'light', maxTokens: 300, deadline, temperature: 0 })
-    const j = json as { yes?: unknown; why?: unknown }
-    return { yes: typeof j.yes === 'boolean' ? j.yes : null, why: String(j.why ?? '').slice(0, 160) }
+Reply {"yes": true|false, "evidence": "the exact words or element in the output that show the problem (empty if none)", "why": "one short sentence"}.`
+
+async function judgeOnce(check: string, output: string, deadline: number, purpose: 'light' | 'json'): Promise<{ yes: boolean | null; why: string }> {
+  const { json } = await pbJson(JUDGE(check, output), { purpose, maxTokens: 400, deadline, temperature: 0 })
+  const j = json as { yes?: unknown; why?: unknown; evidence?: unknown }
+  return { yes: typeof j.yes === 'boolean' ? j.yes : null, why: `${String(j.why ?? '').slice(0, 120)}${j.evidence ? ` [${String(j.evidence).slice(0, 60)}]` : ''}` }
+}
+
+/**
+ * The judge answers the bullet's own check question. A YES (problem present) must be confirmed by a second, different
+ * model before it counts: single LLM judgements are noisy and the gate must not reject good rules on one misreading.
+ */
+async function judge(check: string | null, output: string, deadline: number): Promise<{ yes: boolean | null; why: string }> {
+  if (!check) return { yes: null, why: 'no check question' }
+  try {
+    const a = await judgeOnce(check, output, deadline, 'light')
+    if (a.yes !== true) return a
+    const b = await judgeOnce(check, output, deadline, 'json').catch(() => ({ yes: null as boolean | null, why: 'second judge unavailable' }))
+    return b.yes === true ? { yes: true, why: a.why } : { yes: false, why: `not confirmed by a second judge (${a.why})` }
   } catch (err) { return { yes: null, why: `judge unavailable: ${err instanceof Error ? err.message.slice(0, 80) : err}` } }
 }
 
