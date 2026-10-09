@@ -63,10 +63,10 @@ export function GenieAvatar({ size = 56, look, className }: { size?: number; loo
   return (
     <div ref={ref} className={cx('relative flex-shrink-0 overflow-hidden rounded-full bg-accent-soft ring-1 ring-accent-line', className)} style={{ width: size, height: size }}>
       {status === 'loading' && <Skeleton className="absolute inset-[14%] rounded-full" />}
-      {status === 'error' && <GeniePoster className="absolute inset-0 h-full w-full origin-center translate-y-[7%] scale-[1.32]" />}
+      {status === 'error' && <GeniePoster className="absolute inset-0 h-full w-full origin-center translate-y-[3%] scale-[1.15]" />}
       {go && status !== 'error' && (
         // Framed close on the face (the artboard has room for sparkles and thought dots around the body).
-        <div className={cx('absolute inset-0 origin-center translate-y-[7%] scale-[1.32] transition-opacity duration-500 ease-out', status === 'ready' ? 'opacity-100' : 'opacity-0')}>
+        <div className={cx('absolute inset-0 origin-center translate-y-[3%] scale-[1.15] transition-opacity duration-500 ease-out', status === 'ready' ? 'opacity-100' : 'opacity-0')}>
           <GenieCanvas reducedMotion={reduced} look={look} onReady={() => setStatus('ready')} onError={() => setStatus('error')} />
         </div>
       )}

@@ -40,7 +40,7 @@ export function TutorLab() {
           <TutorPresence variant="lesson" look={{ x: 0.2, y: 0.55 }} className="rounded-[14px] border border-line bg-surface py-1.5 pl-2 pr-1.5 shadow-[var(--shadow-card)]" title={<p className="font-display text-[19px] text-ink">The heart</p>} />
           <nav aria-label="Tutor states" className="flex flex-wrap gap-2">
             {MOODS.map(m => (
-              <a key={m} href={`?mood=${m}`} className={cx('inline-flex h-11 items-center rounded-full border px-4 text-[13px] font-medium', m === mood ? 'border-accent bg-accent-soft text-accent' : 'border-line bg-surface text-ink-2')}>{m}</a>
+              <a key={m} href={`?mood=${m}`} aria-current={m === (mood || 'idle') ? 'page' : undefined} className={cx('inline-flex h-11 items-center rounded-full border px-4 text-[13px] font-medium', m === (mood || 'idle') ? 'border-accent bg-accent-soft text-accent' : 'border-line bg-surface text-ink-2')}>{m}</a>
             ))}
           </nav>
         </section>
