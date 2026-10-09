@@ -7,8 +7,8 @@
  * ≥ 9 px, labels ≥ 13 px after scaling.
  */
 
-export type SceneKind = 'magnet_coil' | 'wire_field' | 'charge_drift'
-export const SCENE_KINDS: SceneKind[] = ['magnet_coil', 'wire_field', 'charge_drift']
+export type SceneKind = 'magnet_coil' | 'bar_magnet' | 'wire_field' | 'charge_drift'
+export const SCENE_KINDS: SceneKind[] = ['magnet_coil', 'bar_magnet', 'wire_field', 'charge_drift']
 
 /** Live state the client keeps between frames. */
 export interface SceneLive {
@@ -82,7 +82,7 @@ function polyPath(pts: [number, number][], ox: number) {
 }
 const pathLen = (pts: [number, number][]) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0) * MC.U
 
-export function magnetCoilSvg(m: number, live: SceneLive, slider: { min: number; max: number }): string {
+export function magnetCoilSvg(m: number, live: SceneLive, slider: { min: number; max: number }, coil = true): string {
   const W = MC.W, H = MC.H
   const p: string[] = []
   const emf = live.emf ?? 0, needle = live.needle ?? 0, phase = live.phase ?? 0, t = live.t
@@ -95,7 +95,7 @@ export function magnetCoilSvg(m: number, live: SceneLive, slider: { min: number;
   // Coil back halves (behind the magnet): the far side of each turn, lighter.
   const turnX = (i: number) => MC.coilX0 + (MC.coilX1 - MC.coilX0) * (i + 0.5) / MC.turns
   const rx = 0.2 * MC.U, ry = MC.coilR * MC.U
-  for (let i = 0; i < MC.turns; i++) {
+  for (let i = 0; i < (coil ? MC.turns : 0); i++) {
     const cx = mx(turnX(i)), top = my(MC.coilR), bot = my(-MC.coilR)
     p.push(`<path d="M${f1(cx)},${f1(top)}A${f1(rx)},${f1(ry)} 0 0 1 ${f1(cx)},${f1(bot)}" fill="none" stroke="${COPPER}" stroke-opacity="0.38" stroke-width="3.2" stroke-linecap="round"/>`)
   }
@@ -128,6 +128,7 @@ export function magnetCoilSvg(m: number, live: SceneLive, slider: { min: number;
     const y = by - 12, c = bx + bw / 2, L = 14 + 18 * glow
     p.push(`<line x1="${f1(c - v * L / 2)}" y1="${f1(y)}" x2="${f1(c + v * L / 2)}" y2="${f1(y)}" stroke="${INK}" stroke-width="2" stroke-linecap="round"/>${head(c + v * L / 2, y, v > 0 ? 0 : Math.PI, 6, INK)}`)
   }
+  if (coil) {
   // Coil front halves (in front of the magnet), glowing while a current flows; current dots run round the wire.
   const hot = `rgb(${Math.round(180 + 60 * glow)},${Math.round(101 + 40 * glow)},${Math.round(47 - 20 * glow)})`
   for (let i = 0; i < MC.turns; i++) {
@@ -150,11 +151,13 @@ export function magnetCoilSvg(m: number, live: SceneLive, slider: { min: number;
   const na = (-90 + needle) * Math.PI / 180
   p.push(`<line x1="${f1(gx)}" y1="${f1(gy + 6)}" x2="${f1(gx + (gr - 6) * Math.cos(na))}" y2="${f1(gy + 6 + (gr - 6) * Math.sin(na))}" stroke="${N_RED}" stroke-width="2.4" stroke-linecap="round"/><circle cx="${f1(gx)}" cy="${f1(gy + 6)}" r="3" fill="${INK}"/>`)
   p.push(`<text x="${f1(l0 - 8)}" y="${f1(gy + 5)}" ${FONT} font-size="13" fill="${MUTED}" text-anchor="end" stroke="${BG}" stroke-width="4" paint-order="stroke">current meter</text>`)
+  }
   // Status line (top left): what is happening right now.
-  const msg = Math.abs(emf) > 0.08 ? (emf > 0 ? 'Magnet moving in: current flows' : 'Magnet moving out: current flows the other way') : 'Magnet still: field not changing, no current'
-  const col = Math.abs(emf) > 0.08 ? '#8A5A00' : MUTED
+  const moving = Math.abs(emf) > 0.08
+  const msg = !coil ? 'Field lines leave N, curve round and enter S' : moving ? (emf > 0 ? 'Magnet moving in: current flows' : 'Magnet moving out: current flows the other way') : 'Magnet still: field not changing, no current'
+  const col = coil && moving ? '#8A5A00' : MUTED
   p.push(`<rect x="8" y="8" width="${f1(Math.min(W - 16, 16 + msg.length * 7.6))}" height="24" rx="12" fill="#fff" stroke="#E5E1D8"/><text x="18" y="25" ${FONT} font-size="13" font-weight="600" fill="${col}">${msg}</text>`)
-  p.push(`<text x="${f1(mx(MC.coilC))}" y="${f1(my(MC.coilR) - 10)}" ${FONT} font-size="13" fill="${COPPER_D}" text-anchor="middle" font-weight="600" stroke="${BG}" stroke-width="4" paint-order="stroke">coil</text>`)
+  if (coil) p.push(`<text x="${f1(mx(MC.coilC))}" y="${f1(my(MC.coilR) - 10)}" ${FONT} font-size="13" fill="${COPPER_D}" text-anchor="middle" font-weight="600" stroke="${BG}" stroke-width="4" paint-order="stroke">coil</text>`)
   p.push('</g>')
   void slider
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${p.join('')}</svg>`
@@ -277,6 +280,7 @@ export function stepChargeDrift(live: SceneLive, V: number, dt: number): SceneLi
 /** Which scene a spec title names (older saved lessons carry the template without a scene key). */
 export function sceneForTitle(title: string): SceneKind | null {
   if (title === 'A moving magnet and a coil') return 'magnet_coil'
+  if (title === 'The field around a bar magnet') return 'bar_magnet'
   if (title === 'Magnetic field around a wire') return 'wire_field'
   if (title === 'Charges drifting along a wire') return 'charge_drift'
   return null

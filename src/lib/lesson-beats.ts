@@ -181,8 +181,9 @@ export function beatBudget(seconds: number, kind: BeatKind) {
   return { words, min, max }
 }
 
-const VISUAL = new Set(['draw', 'animate', 'move', 'transform', 'scale', 'color', 'camera', 'highlight', 'manim_clip', 'fade'])
-const MOTION = new Set(['animate', 'move', 'transform', 'scale', 'camera', 'manim_clip'])
+// A stage (live figure that plays itself) is both a picture and motion.
+const VISUAL = new Set(['draw', 'animate', 'move', 'transform', 'scale', 'color', 'camera', 'highlight', 'manim_clip', 'fade', 'stage', 'along', 'morph'])
+const MOTION = new Set(['animate', 'move', 'transform', 'scale', 'camera', 'manim_clip', 'stage', 'along', 'morph'])
 const TEXT = new Set(['write', 'math'])
 
 /** All actions of a beat, its cues included (a sentence with 3 cues is 4 actions). */
@@ -204,7 +205,7 @@ export function beatProblem(steps: Step[], kind: BeatKind, boardHasDiagram: bool
   const acts = actionsOf(steps)
   const visual = acts.filter(t => VISUAL.has(t)).length
   const text = acts.filter(t => TEXT.has(t)).length
-  const draws = acts.filter(t => t === 'draw' || t === 'manim_clip').length
+  const draws = acts.filter(t => t === 'draw' || t === 'manim_clip' || t === 'stage').length
   const motion = acts.filter(t => MOTION.has(t)).length
   const problems: string[] = []
   if (visual + text >= 4 && text > visual) problems.push(`${text} text actions (write/math) outnumber ${visual} visual ones; at most half may be text`)
@@ -262,7 +263,15 @@ Return {"steps": [...]} only.`
   const gen = { ...known, maxSteps: 40, timeoutMs: ctx.opening ? 25_000 : 40_000, primaryTimeoutMs: ctx.opening ? 20_000 : 30_000, meta: ctx.meta, played: ctx.chapterStart ? undefined : ctx.board, layoutRepair: false, deadline: ctx.deadline, preferFast: !!ctx.opening }
   const boardHasDiagram = !ctx.chapterStart && ctx.board.some(s => s.type === 'draw')
   let steps = await generateSteps(prompt, gen)
-  const problem = beatProblem(steps, beat.kind, boardHasDiagram)
+  // A concept beat that only lacks a moving / drawn visual is rescued by the code's own rich visual (a live figure or a
+  // library picture) instead of a second model call: no beat is dropped for it, and the learner waits less
+  // (measured 2026-10-09: beats rejected for "nothing moves" left gaps and a 1:45 wait after the opening).
+  const first0 = beatProblem(steps, beat.kind, boardHasDiagram)
+  if (first0 && (beat.kind === 'demo' || beat.kind === 'example')) {
+    const rescued = await withRichVisual(ctx, steps).catch(() => steps)
+    if (rescued !== steps && !beatProblem(rescued, beat.kind, boardHasDiagram) && lengthReport(rescued, beat.seconds / 60).ratio >= 0.45) return rescued
+  }
+  const problem = first0
   const short = lengthReport(steps, beat.seconds / 60).ratio < 0.45
   if (problem || short) {
     // One repair pass with the reasons, counted; then the beat is rejected (the worker retries it fresh).
@@ -283,7 +292,13 @@ Rewrite the beat so it is demonstrated visually (draw, then animate / move / tra
     }
     const p2 = beatProblem(fixed, beat.kind, boardHasDiagram)
     if (!p2 && (problem || lengthReport(fixed, 1).ms > lengthReport(steps, 1).ms)) steps = fixed
-    else if (problem) throw new Error(`Beat tells more than it shows (${p2 ?? problem})`)
+    else if (problem) {
+      // Last chance before dropping the beat: the code's own rich visual on the better of the two answers.
+      const base = p2 && actionsOf(fixed).length > actionsOf(steps).length ? fixed : steps
+      const rescued = await withRichVisual(ctx, base).catch(() => base)
+      if (rescued !== base && !beatProblem(rescued, beat.kind, boardHasDiagram)) return rescued
+      throw new Error(`Beat tells more than it shows (${p2 ?? problem})`)
+    }
   }
   return withRichVisual(ctx, steps)
 }
@@ -302,13 +317,16 @@ const beatText = (lesson: LessonLite, b: BeatPlan | undefined) => b ? `${b.title
  */
 export async function withRichVisual(ctx: BeatContext, steps: Step[]): Promise<Step[]> {
   const beat = ctx.plan[ctx.index]
-  if (!beat || (beat.kind !== 'demo' && beat.kind !== 'example') || hasRichVisual(steps)) return steps
+  if (!beat || (beat.kind !== 'demo' && beat.kind !== 'example')) return steps
   const out = [...steps]
   const own = beatText(ctx.lesson, beat)
   const lessonText = `${ctx.lesson.title}. ${ctx.lesson.objectives.join('; ')}`
   const prevTpl = ctx.index > 0 ? stageTemplateFor(beatText(ctx.lesson, ctx.plan[ctx.index - 1])) : null
   // 1. A field / current / motion figure for this beat's own subject, else the lesson's (not the same one twice running).
+  // An invisible field gets its live scene even next to a still picture: the picture shows the device, the scene the field moving.
   const tpl = stageTemplateFor(own) ?? stageTemplateFor(lessonText)
+  const hasLive = steps.some(st => st.type === 'stage' || st.type === 'manim_clip')
+  if (hasLive || (hasRichVisual(steps) && !(tpl && stageTemplateFor(own)))) return steps
   if (tpl && (tpl !== prevTpl || stageTemplateFor(own))) {
     const st = stageStep(tpl, `stage_${tpl}_${ctx.index}`)
     if (st) return insertAfterOpening(out, st)

@@ -14,7 +14,7 @@ import { compileExpr, validateScript } from './lesson-schema'
 import { validateInteractive, type IxSpec } from './agent/interactive'
 import { readVisual } from './visual-policy'
 
-export type StageTemplate = 'wire_field' | 'magnet_coil' | 'charge_drift' | 'projectile'
+export type StageTemplate = 'wire_field' | 'magnet_coil' | 'bar_magnet' | 'charge_drift' | 'projectile'
 
 const WIRE_FIELD = {
   title: 'Magnetic field around a wire', scene: 'wire_field',
@@ -51,6 +51,17 @@ const MAGNET_COIL = {
   ],
 }
 
+const BAR_MAGNET = {
+  title: 'The field around a bar magnet', scene: 'bar_magnet',
+  explain: 'The blue lines are the magnetic field: they leave the N end, curve round and go back into the S end, and the moving dots show which way. Where the lines crowd together (near the ends) the field is strongest. Slide the magnet and the whole field moves with it.',
+  x: [-5, 5], y: [-4, 4],
+  sliders: [{ name: 'm', label: 'Magnet position', min: -2.5, max: 2.5, step: 0.05, value: -2.5 }],
+  points: [{ name: 'S', x: 'm-0.7', y: 0, label: 'S', color: 'navy' }, { name: 'N', x: 'm+0.7', y: 0, label: 'N', color: 'clay' }],
+  segments: [{ from: 'S', to: 'N', color: 'clay', arrow: true }],
+  field: { dx: DX, dy: DY, kind: 'vector' },
+  readouts: [],
+}
+
 const CHARGE_DRIFT = {
   title: 'Charges drifting along a wire', scene: 'charge_drift',
   explain: 'Inside the wire the free charges drift along together when a cell pushes them. Current is how much charge passes a point each second: a bigger push moves them faster, so more charge passes.',
@@ -84,6 +95,8 @@ const TEMPLATES: Record<StageTemplate, { spec: Record<string, unknown>; play: { 
     say: 'Here is the wire seen end on, with small compasses around it. The arrows on the circles show the magnetic field: it goes round the wire in rings. Watch as the current shrinks to zero: the field fades and every compass swings back to north. Then the current flows the other way, and the field and the compasses turn round. Drag the slider yourself to try it.' },
   magnet_coil: { spec: MAGNET_COIL, play: { slider: 'm', seconds: 8 }, caption: 'Moving magnet, changing field through a coil',
     say: 'Here is a bar magnet with its field drawn as blue lines, and a coil joined to a current meter. Watch the magnet slide into the coil: the field passing through the coil gets stronger, the coil lights up and the meter needle swings. That changing field is what pushes a current round the coil. When the magnet stops, the needle falls back to zero. Drag the magnet back out yourself and watch the needle swing the other way.' },
+  bar_magnet: { spec: BAR_MAGNET, play: { slider: 'm', seconds: 7 }, caption: 'Field lines round a bar magnet',
+    say: 'Here is the invisible field made visible. Each blue line leaves the north end, curves round and goes back into the south end; the moving dots show the direction. See how the lines crowd together at the ends: that is where the field is strongest. Watch the field travel with the magnet as it slides.' },
   projectile: { spec: PROJECTILE, play: { slider: 'k', seconds: 7 }, caption: 'A thrown ball along its path',
     say: 'Watch the ball fly. Gravity pulls it down the whole time: it rises more and more slowly, stops rising at the very top, then falls faster and faster, tracing this curved path. Change the launch speed and play it again.' },
   charge_drift: { spec: CHARGE_DRIFT, play: { slider: 'V', seconds: 8 }, caption: 'Charges drifting along a wire',
@@ -97,7 +110,7 @@ export function stageTemplateFor(text: string): StageTemplate | null {
   if (f.has('field') || /\bmagnet/i.test(t)) {
     if (/\b(induc\w*|flux|faraday|lenz|generators?|dynamo|alternator|coil|moving magnet|changing magnetic|emf|e\.m\.f)\b/i.test(t)) return 'magnet_coil'
     if (/\b(wire|current[- ]carrying|conductor|solenoid|electromagnet\w*|right[- ]hand (grip|rule)|amp(e|è)re|biot|oersted)\b/i.test(t)) return 'wire_field'
-    if (/\b(magnet\w*|magnetic field|field lines?|magneti[sz]ation|domains?)\b/i.test(t)) return 'magnet_coil'
+    if (/\b(magnet\w*|magnetic field|field lines?|magneti[sz]ation|domains?)\b/i.test(t)) return 'bar_magnet'
   }
   if (f.has('motion') && /\b(throw\w*|thrown|projectile|trajectory|falls?|falling|free fall|gravity|comes? (back )?down|goes up|equations of motion|suvat|kinematics|accelerat\w*)\b/i.test(t)) return 'projectile'
   if (/\b(electric(al)? current|charges? (flow|move|drift)|drift velocity|free electrons?|ampere|coulombs? per second|current in a wire)\b/i.test(t)) return 'charge_drift'

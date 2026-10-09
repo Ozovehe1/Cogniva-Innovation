@@ -270,13 +270,13 @@ function SceneView({ kind, spec, vals, alt, onTouch }: { kind: SceneKind; spec: 
     const still = reducedMotion()
     const draw = () => {
       const v = valsRef.current[name] ?? sl.value
-      const html = kind === 'magnet_coil' ? magnetCoilSvg(v, live, range) : kind === 'wire_field' ? wireFieldSvg(v, live, range) : chargeDriftSvg(v, live, range)
+      const html = kind === 'magnet_coil' || kind === 'bar_magnet' ? magnetCoilSvg(v, live, range, kind === 'magnet_coil') : kind === 'wire_field' ? wireFieldSvg(v, live, range) : chargeDriftSvg(v, live, range)
       if (ref.current) ref.current.innerHTML = html
     }
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000); last = now
       const v = valsRef.current[name] ?? sl.value
-      live = kind === 'magnet_coil' ? stepMagnetCoil(live, v, prev, dt) : kind === 'wire_field' ? stepWireField(live, v, Math.max(Math.abs(sl.min), Math.abs(sl.max)), dt) : stepChargeDrift(live, v, still ? 0 : dt)
+      live = kind === 'magnet_coil' || kind === 'bar_magnet' ? stepMagnetCoil(live, v, prev, dt) : kind === 'wire_field' ? stepWireField(live, v, Math.max(Math.abs(sl.min), Math.abs(sl.max)), dt) : stepChargeDrift(live, v, still ? 0 : dt)
       prev = v
       draw()
       raf = requestAnimationFrame(tick)

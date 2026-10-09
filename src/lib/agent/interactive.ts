@@ -345,6 +345,7 @@ export function interactiveSvg(spec0: IxSpec, opts: { recap?: boolean } = {}): s
   if (spec0.scene && spec0.sliders[0]) {
     const sl = spec0.sliders[0], range = { min: sl.min, max: sl.max }
     if (spec0.scene === 'magnet_coil') return magnetCoilSvg(Math.min(sl.max, 1.6), { t: 0.4, emf: 0.75, needle: 39, phase: 0.3 }, range)
+    if (spec0.scene === 'bar_magnet') return magnetCoilSvg((sl.min + sl.max) / 2, { t: 0.4 }, range, false)
     if (spec0.scene === 'wire_field') { const I = Math.max(Math.abs(sl.min), Math.abs(sl.max)); return wireFieldSvg(I, stepWireField({ t: 0 }, I, I, 1), range) }
     return chargeDriftSvg(sl.max * 0.7, { t: 0.3, drift: 1.2, passed: 6 }, range)
   }
