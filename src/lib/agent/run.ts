@@ -4,6 +4,7 @@
  * data. Guardrails stay in code: distress is screened before this is ever called, injection-flagged runs
  * get no write or web tools, write caps, idempotency and the audit log live in the tools. Server only.
  */
+import { CONCEPT_ASK, GENERIC_REASK, visualPlanHint, visualText } from '@/lib/visual-policy'
 import { chat, AllModelsBusyError, type Msg } from './llm'
 import { selectTools, toolsFor, type AgentCtx } from './tools'
 
@@ -12,13 +13,15 @@ export const MAX_WRITES = 3
 const MAX_CALLS_PER_STEP = 4
 
 export const CHAT_SYSTEM = `You are GeniusMap, a patient AI tutor inside a learning app, talking with one learner (often a teenager in Nigeria).
-Teach by SHOWING: one strong visual beats several weak ones (usually one, at most two). Pick by what the learner needs:
-- exact maths structure (Venn diagram, geometry construction with right angles/bisectors/midpoints, tree or graph, vector sum) → math_diagram
-- explore by dragging (move a point, slide along a curve, tangent/gradient, slope or vector field, ODE solutions, 3D surface) → interactive; sliders on a physical formula with live numbers → simulate
-- step-by-step derivation or worked solution → draw_on_board; motion or a process (something moving, changing shape, a cycle) → draw_on_board with its motion cues (glide along a path, morph, pulse)
-- a function or data on axes → plot; a labelled real-world structure (cell, circuit, forces) → illustrate
-- cinematic or 3D animation the board cannot do → animate_concept (slow, async); heavy numerics or data → run_python
-When they ask for an animation, a clip or a video, call animate_concept (not simulate); only if it returns an error, draw it on the board with motion cues and say the clip is not available right now.
+Teach by SHOWING with the richest visual that fits (usually one, at most two). Pick by what the idea IS, even when the learner names no tool:
+- a real-world object or organism (heart, lungs, cell, leaf, atom, circuit, lever, planet) → find_illustration (a real, accurate, credited textbook picture), then point at its parts
+- a process or change over time (blood pumping through the heart, photosynthesis, digestion, a neuron firing, a ball rising and falling, a curve being traced, a secant becoming a tangent) → animate_concept, paired with a still visual now (picture, plot or simulation) because the clip takes 1-3 minutes
+- an object moving under forces (thrown ball, projectile, pendulum, orbit, spring) → simulate with the object moving along its path and sliders for what the learner can change
+- a function, rate or graph idea (derivative, gradient, parabola, sine) → plot, or interactive when dragging shows the change (a tangent sliding along a curve)
+- exact maths structure (Venn diagram, geometry construction with right angles/bisectors/midpoints, tree or graph, vector sum) → math_diagram; explore by dragging (unit circle, slope or vector field, ODE solutions, 3D surface) → interactive
+- step-by-step derivation, worked solution or algebra → draw_on_board; heavy numerics or data → run_python
+The board is not the default: use draw_on_board for working and derivations, or when the learner asks for the board. A "Visual plan" note in the context, when present, is the routing policy's pick for this question; follow it unless the learner asked for something else.
+When they ask for an animation, a clip or a video, call animate_concept (not simulate); only if it returns an error (e.g. the daily limit), show it another way (simulate, plot, a picture, or the board with motion cues) and say the clip is not available right now.
 When they ask for the board, a diagram, a graph or something to drag, call that visual tool first (no lookups needed first). Narration and text stay in sync with the visual (refer to what it shows, in its order), and your reply always explains the idea in words too, so it still makes sense if the visual does not load.
 The chat has ONE persistent whiteboard that you own: draw_on_board starts a new scene on it; board_inspect shows what is on it (element ids, boxes, the step that drew each); board_edit changes it in place (annotate/circle a term, move, morph, highlight, add a label, rewrite an equation); board_clear_region makes room. When the learner refers to something already on the board ("circle the -5 from step 2", "move that label", "fix the graph"), revise it by id with board_edit (board_inspect first if you did not just draw it) instead of drawing a new scene; draw_on_board only for a genuinely new explanation.
 Maths: never state a computed number unless compute or run_python checked it in this run. Write maths in $...$ (KaTeX). Use plain Unicode only outside $.
@@ -42,7 +45,7 @@ Use your tools, then reply with ONE short sentence on what you did and why.
 At most 3 writes. Do not repeat what is already in place. Only report actions whose tool result confirmed them (a result with "error" or "already" did not change anything).`
 
 /** The learner explicitly asked for a visual or a tool: the first step must call a tool. */
-const EXPLICIT_TOOL = /\b(on the (white)?board|whiteboard|draw|drag|let me (move|explore|play)|venn|interactive|circle (the|it|that)|underline|cross (it )?out|annotate|erase|diagram|illustrat|graph|plot|chart|simulat|slider|animat|clip|video|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
+export const EXPLICIT_TOOL = /\b(on the (white)?board|whiteboard|draw|drag|let me (move|explore|play)|venn|interactive|circle (the|it|that)|underline|cross (it )?out|annotate|erase|diagram|illustrat|graph|plot|chart|simulat|slider|animat|clip|video|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
 
 export interface RunResult { text: string; model: string | null; steps: number; toolCalls: string[]; busy?: boolean }
 
@@ -64,7 +67,11 @@ export async function runAgent(input: {
   const used: string[] = []
   let model: string | null = null
   let text = ''
-  const forceFirst = ctx.mode === 'chat' && EXPLICIT_TOOL.test(lastUser) && !ctx.restricted
+  // Explicit visual asks, and un-hinted concept questions with a visual subject ("explain how the heart pumps
+  // blood"): the first step must call a tool (otherwise free models often answer in words only).
+  const plan = ctx.mode === 'chat' ? visualPlanHint(visualText(lastUser, ctx.visualTopic)) : null
+  const forceFirst = ctx.mode === 'chat' && !ctx.restricted && (EXPLICIT_TOOL.test(lastUser) || (!!plan && (CONCEPT_ASK.test(lastUser) || GENERIC_REASK.test(lastUser))))
+  if (plan && !EXPLICIT_TOOL.test(lastUser)) messages.splice(messages.length - 1, 0, { role: 'system', content: plan })
   for (let step = 0; step < MAX_STEPS; step++) {
     const last = step === MAX_STEPS - 1
     const res = await chat({

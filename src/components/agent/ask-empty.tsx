@@ -1,15 +1,15 @@
 'use client'
-import { ArrowUpRight, BookOpen, FlaskConical, PenLine, Target } from 'lucide-react'
+import { ArrowUpRight, BookOpen, Clapperboard, FlaskConical, HeartPulse, PenLine, Target } from 'lucide-react'
 import { cx } from '@/components/ui'
 
 const GENERAL = [
-  { icon: PenLine, text: 'Explain how a ball thrown up comes back down, on the board' },
+  { icon: HeartPulse, text: 'Explain how the heart pumps blood' },
+  { icon: PenLine, text: 'Why does a ball thrown up come back down?' },
   { icon: BookOpen, text: 'What did we cover in my last lesson?' },
-  { icon: Target, text: 'Give me a quick practice set on my current topic' },
   { icon: FlaskConical, text: 'Show me a simulation of a pendulum' },
 ]
 const IN_LESSON = [
-  { icon: PenLine, text: 'Explain this step another way, on the board' },
+  { icon: Clapperboard, text: 'Show me this step another way' },
   { icon: BookOpen, text: 'Give me one more example' },
   { icon: Target, text: 'Quiz me on this lesson' },
 ]
@@ -23,7 +23,7 @@ export function AskEmpty({ inLesson, compact, onPick }: { inLesson: boolean; com
   return (
     <div className={cx('mx-auto max-w-xl', compact ? 'py-4' : 'py-6 md:py-10')}>
       <h2 className="font-display text-[26px] leading-tight text-ink md:text-[30px]">{inLesson ? 'Stuck on something in this lesson?' : 'What do you want to understand?'}</h2>
-      <p className="mt-2 text-[15px] leading-relaxed text-muted">Ask anything. Your tutor explains on the board, draws diagrams, builds simulations and checks the maths. It knows your lessons and your path.</p>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted">Ask anything. Your tutor shows real pictures, makes animations and simulations, graphs functions, works through problems on the board and checks the maths. It knows your lessons and your path.</p>
       <p className="mt-6 text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Try one</p>
       <ul className="mt-2 grid gap-2">
         {items.map(({ icon: Icon, text }) => (

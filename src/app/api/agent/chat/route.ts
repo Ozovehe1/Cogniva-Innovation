@@ -131,6 +131,7 @@ export async function POST(request: Request) {
     }
     const ctx: AgentCtx = {
       mode: 'chat', studentId, admin, userDb: supabase, runId: `chat_${randomUUID().slice(0, 12)}`, lessonId, sessionId, hasBoard: boardSteps > 0,
+      visualTopic: (lessonRow as { title?: string } | null)?.title ?? null,
       origin: new URL(request.url).origin, writes: 0, maxWrites: MAX_WRITES, restricted: inj.flagged, practiceMode: false,
       emit: b => emitChecked(b), blocks, trace: [], searchUrls: new Set(), computeCalls: 0, sources: [], limits: LIMITS(), guardIssues,
     }

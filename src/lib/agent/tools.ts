@@ -8,6 +8,7 @@
  *   visual   renders inline in the chat; per-student daily caps where they cost compute
  * Not exposed to any model: mark mastered, delete anything, guardian or consent actions.
  */
+import { CONCEPT_ASK, readVisual, toolsForFamilies, visualText } from '@/lib/visual-policy'
 import { exactTriangle } from './exact-triangle'
 import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -66,6 +67,8 @@ export interface AgentCtx {
   userDb: SupabaseClient | null
   runId: string
   lessonId?: string | null
+  /** In-lesson sheet: the lesson's title, read for the visual policy when the learner's ask is generic ("explain this another way"). */
+  visualTopic?: string | null
   origin?: string
   writes: number
   maxWrites: number
@@ -483,7 +486,7 @@ function boardTitle(doc: BoardDoc) {
 
 const VISUAL: ToolSpec[] = [
   {
-    def: { name: 'draw_on_board', description: 'Start a NEW scene on the chat whiteboard: a short narrated, animated explanation (drawn by hand, voiced). Best for step-by-step derivations, processes and motion. It replaces what is on the board; to change or add to the current board use board_edit instead. Every element gets an id you can edit later.', parameters: obj({ brief: { type: 'string', description: 'what to show, step by step, in 2-5 sentences (say which motion cues help: glide along a path, morph, pulse, circle a term)' } }, ['brief']) },
+    def: { name: 'draw_on_board', description: 'Start a NEW scene on the chat whiteboard: a short narrated, animated explanation (drawn by hand, voiced). Best for step-by-step derivations, worked solutions and quick sketches you will annotate. For a real-world object prefer find_illustration, for a process or change over time prefer animate_concept, for a function prefer plot/interactive, for a moving object prefer simulate. It replaces what is on the board; to change or add to the current board use board_edit instead. Every element gets an id you can edit later.', parameters: obj({ brief: { type: 'string', description: 'what to show, step by step, in 2-5 sentences (say which motion cues help: glide along a path, morph, pulse, circle a term)' } }, ['brief']) },
     tier: 'visual', modes: ['chat'], label: 'Drawing on the board',
     run: async (a, ctx) => {
       const learner = await loadLearner(ctx.admin, ctx.studentId)
@@ -745,7 +748,7 @@ const VISUAL: ToolSpec[] = [
     },
   },
   {
-    def: { name: 'animate_concept', description: 'Request a rendered 3Blue1Brown-style animation clip (takes 1-3 minutes; a placeholder shows until it is ready; works in Ask and inside a lesson). The render service builds it as a verified scene: every number from sympy, every position from a geometry solver, every claim checked before rendering. Max 3 a day. Use for motion the board cannot show (a proof by moving pieces, a point tracing a curve, an algorithm stepping through data, a process cycling, a quantity changing).', parameters: obj({ brief: { type: 'string', description: 'the learning objective, then what the 10-25 s clip shows, in order, with the exact numbers and formulas' } }, ['brief']) },
+    def: { name: 'animate_concept', description: 'Request a rendered 3Blue1Brown-style animation clip (takes 1-3 minutes; a placeholder shows until it is ready; works in Ask and inside a lesson). The render service builds it as a verified scene: every number from sympy, every position from a geometry solver, every claim checked before rendering. Max 3 a day per learner. Use it whenever an idea is a process or a change over time: blood moving through the heart\'s chambers, photosynthesis step by step, a thrown ball rising, slowing, stopping and falling, the path of a projectile, a secant turning into a tangent, a point tracing a sine wave, a proof by moving pieces, an algorithm stepping through data. Pair it with a still visual (picture, plot, simulation) because the clip arrives later.', parameters: obj({ brief: { type: 'string', description: 'the learning objective, then what the 10-25 s clip shows, in order, with the exact numbers and formulas' } }, ['brief']) },
     tier: 'visual', modes: ['chat'], label: 'Starting an animation',
     run: async (a, ctx) => {
       if (!renderServiceConfigured()) return { error: 'The animation service is not available right now. Use draw_on_board instead.' }
@@ -923,7 +926,7 @@ VISUAL_DEFAULT.push('find_illustration')
 export const ANIMATION_ASK = /\b(animat\w*|clip|video|movie)\b/i
 
 /** The tools offered for one chat turn: a core set plus what the message (and the last turns) point to. */
-export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonId' | 'hasBoard'>, text: string, lastUser = text): ToolSpec[] {
+export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonId' | 'hasBoard'> & { visualTopic?: string | null }, text: string, lastUser = text): ToolSpec[] {
   const all = toolsFor(ctx)
   if (ctx.mode !== 'chat') return all
   const want = new Set(CORE)
@@ -935,6 +938,10 @@ export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonI
   if (wantsClip) want.add('animate_concept')
   else if (!matched || /\b(explain|show|how|why|what is|teach)\b/i.test(text)) VISUAL_DEFAULT.forEach(n => want.add(n))
   if (wantsClip) { want.delete('simulate'); want.delete('interactive') }
+  // Un-hinted concept questions ("explain how the heart pumps blood", "what is a derivative"): offer the visuals the
+  // routing policy picks for the subject (visual-policy.ts), so the board is not the only visual the model can see.
+  if (!wantsClip) toolsForFamilies(readVisual(visualText(lastUser, ctx.visualTopic))).forEach(n => want.add(n))
+  if (!wantsClip && !matched && CONCEPT_ASK.test(lastUser)) want.add('animate_concept')
   if (ctx.lessonId) want.add('get_lesson_digest')
   if (ctx.hasBoard) { want.add('board_inspect'); want.add('board_edit') }
   return all.filter(t => want.has(t.def.name))

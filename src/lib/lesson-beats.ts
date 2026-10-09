@@ -12,6 +12,7 @@
  */
 import { generateStructuredJson } from './gemini'
 import { LAYOUT_RULES, SHOW_DONT_TELL, TUTOR_VOICE, WORDS_PER_MINUTE, generateSteps, type GenMeta, type LessonLite } from './lesson-ai'
+import { beatVisualLine } from './visual-policy'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, type Step } from './lesson-schema'
 import { lengthReport } from './lesson-timing'
 
@@ -240,6 +241,7 @@ ${ctx.opening ? 'This is the OPENING beat of the lesson.' : `Lesson plan:\n${pla
 THIS BEAT: [${beat.kind}] "${beat.title}"${ctx.opening ? '' : ` in chapter "${beat.chapter}"`}
 Show: ${beat.points.join('; ')}
 ${KIND_RULES[beat.kind]}
+${beatVisualLine(`${ctx.lesson.title}. ${beat.title}. ${beat.points.join('; ')}`, beat.kind) ?? ''}
 ${first ? `Open the lesson: write the lesson title (write, id "title", size lg, x 40, y 30), then hook the learner with a concrete picture of where "${ctx.lesson.title}" shows up in real life (draw it, make it move). Do not teach the method yet; end by saying what they will be able to do by the end.` : ''}
 ${ctx.recentSay ? `What the tutor just said (continue naturally from here; do not repeat it, no recap): ${ctx.recentSay}` : ''}
 ${ctx.notes ? `Teaching notes for this learner (follow them: level, examples, pace):\n${ctx.notes}\n` : ''}

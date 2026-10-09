@@ -24,7 +24,9 @@ import { validateScript, type Step } from '../lesson-schema'
 import { expandBoardDiagrams, nextTutorSteps } from '../lesson-ai'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
-import { runAgent, CHAT_SYSTEM, MAX_WRITES } from './run'
+import { runAgent, CHAT_SYSTEM, MAX_WRITES, EXPLICIT_TOOL } from './run'
+import { CONCEPT_ASK, beatVisualLine, readVisual, visualPlanHint } from '../visual-policy'
+import { trimRequest } from './llm'
 import { selectTools, type AgentCtx } from './tools'
 import type { Block } from './types'
 import { illustrationStaticCases, illustrationVisualCases } from '../illustrations/eval'
@@ -175,6 +177,28 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
     out.push({ id: 'lesson-board-diagram', group: 'static', pass: vd.ok && sh?.kind === 'figure', detail: vd.errors.join('; ').slice(0, 160) || 'figure on the lesson board' })
   } catch (err) { out.push({ id: 'lesson-board-diagram', group: 'static', pass: false, detail: String(err).slice(0, 160) }) }
   out.push({ id: 'md-rejects-bad-substance', group: 'static', pass: badPred.length > 0 && badType.length > 0 && notSub.errors.length > 0, detail: [...badPred, ...badType, ...notSub.errors].join('; ').slice(0, 160) })
+  // Tool diversity (routing policy, no model): un-hinted concept questions are offered a visual richer than the board,
+  // get a visual-plan note and a forced first tool call; algebra working still routes to the board; trimming a request
+  // for a fallback model never drops the tools.
+  const DIV: [string, string, string[]][] = [
+    ['heart', 'Explain how the heart pumps blood', ['find_illustration', 'animate_concept']],
+    ['ball', 'Why does a ball thrown up come back down?', ['simulate', 'animate_concept']],
+    ['derivative', 'What is a derivative?', ['plot', 'interactive']],
+    ['photosynthesis', 'How does photosynthesis work?', ['find_illustration', 'animate_concept']],
+    ['projectile', 'Explain projectile motion', ['simulate', 'animate_concept']],
+  ]
+  for (const [id, msg, need] of DIV) {
+    const names = selectTools({ mode: 'chat', restricted: false, lessonId: null, hasBoard: false }, msg, msg).map(t => t.def.name)
+    const hint = visualPlanHint(msg)
+    const ok = need.every(n => names.includes(n)) && !!hint && CONCEPT_ASK.test(msg)
+    out.push({ id: `diversity-route-${id}`, group: 'static', pass: ok, detail: `offered ${names.join(',')}; hint ${hint ? 'yes' : 'NO'}; families ${readVisual(msg).families.join('/')}` })
+  }
+  const alg = visualPlanHint('Solve 2(x + 3) = 14 step by step')
+  out.push({ id: 'diversity-algebra-no-plan', group: 'static', pass: !alg, detail: alg ?? 'no visual plan (board)' })
+  const tr = trimRequest({ purpose: 'chat', tools: [{ name: 'plot', description: 'x', parameters: {} }], messages: Array.from({ length: 9 }, (_, i) => ({ role: (i % 2 ? 'assistant' : 'user') as 'user' | 'assistant', content: `m${i}` })) })
+  out.push({ id: 'pool-trim-keeps-tools', group: 'static', pass: tr.tools?.length === 1, detail: `${tr.tools?.length ?? 0} tools after trim` })
+  const bl = [beatVisualLine('Inside the human heart: the four chambers', 'demo'), beatVisualLine('Gradient of a curve as a rate of change', 'demo'), beatVisualLine('Expanding brackets: 3(x + 2)', 'demo')]
+  out.push({ id: 'lesson-beat-visual-line', group: 'static', pass: !!bl[0]?.includes('"illustration"') && !!bl[1]?.includes('"stage"') && !bl[2], detail: bl.map(b => b?.slice(0, 40) ?? 'none').join(' | ') })
   out.push(...(await illustrationStaticCases()))
   out.push(...onboardingStaticCases())
   return out
@@ -228,6 +252,8 @@ const LESSON_CASES: ToolCase[] = [
   { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['find_illustration', 'illustrate', 'draw_on_board'] },
   { id: 'rag', msg: 'What did this lesson cover so far? Remind me of the example.', expect: ['get_lesson_digest', 'search_my_learning'] },
   { id: 'animate', msg: 'Make a proper animated clip of a tangent line sliding along a curve.', expect: ['animate_concept', 'draw_on_board', 'interactive'] },
+  { id: 'div-heart', msg: 'Explain how the heart pumps blood', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
+  { id: 'div-ball', msg: 'Why does a ball thrown up come back down?', expect: ['simulate', 'animate_concept', 'plot'] },
 ]
 
 /** Routing policy: which visual tool fits which need (one model step each), and whether its spec is valid. */
@@ -245,6 +271,15 @@ const ROUTING_CASES: ToolCase[] = [
   { id: 'cinematic', msg: 'Make a cinematic 3D animation of the Earth orbiting the Sun, tilted, to show why we get seasons.', expect: ['animate_concept'] },
   { id: 'board-circle', msg: 'Circle the -5 from the last step on the board and say what it means.', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX },
   { id: 'board-revise', msg: 'On the board, can you rewrite 2x = -10 as x = -10/2 before the last line?', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX },
+  // Tool diversity: everyday questions that name no tool must get a visual richer than the board.
+  { id: 'div-heart', msg: 'Explain how the heart pumps blood', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
+  { id: 'div-ball', msg: 'Why does a ball thrown up come back down?', expect: ['simulate', 'animate_concept', 'plot'] },
+  { id: 'div-derivative', msg: 'What is a derivative?', expect: ['plot', 'interactive', 'animate_concept'] },
+  { id: 'div-photosynthesis', msg: 'How does photosynthesis work?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
+  { id: 'div-projectile', msg: 'Explain projectile motion', expect: ['simulate', 'animate_concept', 'plot', 'interactive'] },
+  { id: 'div-neuron', msg: 'How does a neuron send a signal?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
+  { id: 'div-sine', msg: 'What is the sine function?', expect: ['plot', 'interactive', 'animate_concept'] },
+  { id: 'div-algebra-stays-board', msg: 'Solve 2(x + 3) = 14 step by step', expect: ['draw_on_board', 'compute'] },
 ]
 
 export async function lessonCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
@@ -271,9 +306,12 @@ export async function toolCases(admin: SupabaseClient, studentId: string, only?:
   const out: CaseResult[] = []
   for (const c of cases.filter(x => !only || only.includes(x.id))) {
     const t0 = Date.now()
-    const tools = selectTools({ ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now') }, c.msg).map(t => t.def)
+    const tools = selectTools({ ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now') }, c.msg, c.msg).map(t => t.def)
     try {
-      const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, { role: 'user', content: c.msg }] })
+      // Same per-turn policy as runAgent: the visual-plan note for un-hinted concept questions, and a forced first tool call.
+      const plan = visualPlanHint(c.msg)
+      const force = EXPLICIT_TOOL.test(c.msg) || (!!plan && CONCEPT_ASK.test(c.msg))
+      const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, toolChoice: force ? 'required' : 'auto', messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, ...(plan && !EXPLICIT_TOOL.test(c.msg) ? [{ role: 'system' as const, content: plan }] : []), { role: 'user', content: c.msg }] })
       const names = r.toolCalls.map(x => x.name)
       out.push({ id: `${group === 'tools' ? 'tool' : group === 'lesson' ? 'lesson' : 'route'}-${c.id}`, group, pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
       // Tool-arg validity: every call parsed as JSON with required fields present.
