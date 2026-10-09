@@ -172,7 +172,7 @@ export function WhiteboardPlayer({
   const [notice, setNotice] = useState<string | null>(null)
   const [started, setStarted] = useState(autoPlay)
   /** Restored position waiting for the student to choose how to continue. */
-  const [resumeOffer, setResumeOffer] = useState(!autoPlay && initialIndex > 0)
+  const [resumeOffer, setResumeOffer] = useState(!autoPlay && initialIndex > 0 && !embedded) // an embedded board (chat, triage) never asks to resume
   const completedRef = useRef(false)
   /** Playback reached the end of a script that may still grow. */
   const waitingAtEndRef = useRef(false)

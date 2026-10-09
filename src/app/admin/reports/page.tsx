@@ -51,9 +51,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           <span className="rounded-full border border-line bg-surface px-3 py-1">{cases ?? 0} regression cases from reports</span>
           <span className="rounded-full border border-line bg-surface px-3 py-1">{blocks ?? 0} blocklist entries</span>
         </div>
-        <nav aria-label="Report status" className="mt-6 flex gap-1 border-b border-line">
+        <nav aria-label="Report status" className="mt-6 flex gap-0 overflow-x-auto border-b border-line sm:gap-1">
           {(['open', 'confirmed', 'invalid'] as const).map(s => (
-            <Link key={s} href={`/admin/reports?status=${s}`} className={cx('-mb-px inline-flex min-h-11 items-center gap-2 border-b-2 px-3 text-[14px] font-medium', status === s ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink')}>
+            <Link key={s} href={`/admin/reports?status=${s}`} className={cx('-mb-px inline-flex min-h-11 flex-shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 text-[14px] font-medium sm:gap-2 sm:px-3', status === s ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink')}>
               {s === 'invalid' ? 'Not a mistake' : s[0].toUpperCase() + s.slice(1)}<span className="tnum rounded-full bg-sunken px-1.5 text-[11.5px] text-muted">{n[s]}</span>
             </Link>
           ))}
