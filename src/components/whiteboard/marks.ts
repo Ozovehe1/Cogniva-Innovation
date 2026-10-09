@@ -37,9 +37,12 @@ export function markGeometry(mark: AnnotateStep['mark'], box: MarkBox, seed: str
   if (mark === 'circle') {
     // An ellipse a little bigger than the box, starting at the upper left and overshooting its start.
     // Kept inside the board's left/right/top edges (a big figure's ring would otherwise be clipped by the frame).
+    // A big target (a figure) is ringed just inside its own box: its art has margins, and a ring outside it would run
+    // off the frame on a phone.
     const OVER = 1.12
-    const rx = Math.max(24, Math.min(box.w / 2 + 14, (Math.min(cx, BOARD_W - cx) - 4) / OVER))
-    const ry = Math.max(20, Math.min(box.h / 2 + 12, (cy - 4) / OVER))
+    const big = box.w > 240 || box.h > 180
+    const rx = big ? box.w / 2 / OVER - 2 : Math.max(24, Math.min(box.w / 2 + 14, (Math.min(cx, BOARD_W - cx) - 4) / OVER))
+    const ry = big ? box.h / 2 / OVER - 2 : Math.max(20, Math.min(box.h / 2 + 12, (cy - 4) / OVER))
     const pts: Pt[] = []
     const a0 = 2.4 + r(1) * 0.3
     for (let i = 0; i <= 44; i++) {

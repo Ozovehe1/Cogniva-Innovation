@@ -193,7 +193,7 @@ const LESSON_CASES: ToolCase[] = [
   { id: 'interactive', msg: 'Let me drag a point along y = x^2 and watch the tangent slope change.', expect: ['interactive'] },
   { id: 'plot', msg: 'Graph y = x^3 - 3x so I can see where the gradient is zero.', expect: ['plot', 'interactive'] },
   { id: 'simulate', msg: 'Make something with a slider for the launch angle so I can see how far a ball goes.', expect: ['simulate', 'interactive'] },
-  { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['illustrate', 'draw_on_board'] },
+  { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['find_illustration', 'illustrate', 'draw_on_board'] },
   { id: 'rag', msg: 'What did this lesson cover so far? Remind me of the example.', expect: ['get_lesson_digest', 'search_my_learning'] },
   { id: 'animate', msg: 'Make a proper animated clip of a tangent line sliding along a curve.', expect: ['animate_concept', 'draw_on_board', 'interactive'] },
 ]

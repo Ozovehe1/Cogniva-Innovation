@@ -71,7 +71,10 @@ export const SHOW_DONT_TELL = `Show, don't tell (the core of this tutor's teachi
 - For each idea: draw the picture first (draw), make it move as you explain (animate a variable, move, scale, transform, highlight), and let the "say" narrate what is happening on screen at that moment ("watch the point slide…", "see the area grow…").
 - Word problems are drawn too: sketch the situation (a roof and panels, a ball's path, a bar model of the quantities) before any algebra.
 - At most half of the teaching steps may be text-only (write or math); use write for short labels and one-line takeaways only.
-- Where motion the board cannot draw would help (e.g. a 3D rotation, a flowing process), say so in a key point so a short rendered animation can be added.`
+- Where motion the board cannot draw would help (e.g. a 3D rotation, a flowing process), say so in a key point so a short rendered animation can be added.
+- Curiosity first: pose the question the picture will answer ("what happens to the slope as the points close in?") one step BEFORE showing it.
+- Pre-training: name the parts (the axes, the point P, the angle θ) on the board before a stage or animation moves them.
+- Speak to the learner ("you", "your turn"); when they get something right after effort, name the effort, never their talent.`
 
 export interface GenMeta { ms: number; repaired: boolean; model: string | null; dropped: number; trace?: string[] }
 

@@ -5,6 +5,34 @@ board), the in-lesson Ask sheet, checks, and the tool outputs inside Ask (diagra
 is the bar every change to those surfaces is held to. Tokens live in `src/app/globals.css`; primitives in
 `src/components/ui.tsx` (`buttonClass`, `cx`).
 
+## 0. UX Magnifica — every choice names the learning principle it serves
+"UX Magnifica" is the bar: design that works *with* how attention, memory and motivation work, rendered with
+visual craft. Each rule below is tagged with the principle it uses; a change that cannot name one does not ship.
+
+| Design choice (where) | Principle |
+|---|---|
+| One filled control per moment; stage shows only Skip until narration ends (§1) | Hick's law (few choices), cognitive load (extraneous load) |
+| Narration plays *while* the figure moves; caption sits directly above the figure, readouts under it (§3, stage) | Mayer temporal + spatial contiguity, split-attention avoided |
+| Board text is short labels only; the voice carries the sentence (lesson-ai SHOW_DONT_TELL) | Mayer redundancy, dual coding |
+| A lesson is sections → steps; one idea per step, the player pauses at checks (§1, player) | Segmenting, chunking |
+| Clay (emphasis) is reserved for the one thing to look at now; everything else ink/neutral (§5) | Preattentive salience, signalling |
+| Annotate rings / highlight on the key line; recap lists exactly the highlighted lines (§13) | Signalling, retrieval cue |
+| Stage opens in the board's own frame, shared layoutId to full screen (§2) | Spatial continuity — no re-orientation cost (cognitive load) |
+| `play` demonstration first, then the learner drives (§3, §6) | Worked-example → fading, generation effect |
+| Explore check: "slide until sin θ = 0.5" answered by doing (§14) | Retrieval practice, generation effect, desirable difficulty |
+| Wrong answer: "Not quite yet — that tells us where to look", a where-you-are hint, work kept on retry (§7, §14) | Growth-mindset feedback, reduced threat |
+| Right answer: varied, effort-based line ("You worked that out" after a retry), spring tick + 8 ms haptic (§14) | Reward prediction (variable, effort-contingent, not slot-machine) |
+| No countdowns on questions; calm green/clay, never red fills or shakes (§7) | Reduced threat (maths anxiety) |
+| Progress bar + section label always visible; recap says what was done (§13) | Zeigarnik / progress visibility, competence (SDT) |
+| Lesson ends on the recap: key picture + "You worked through N questions" (§13) | Peak-end rule, competence (SDT) |
+| Replay / Skip / Full screen / Reset always available, never forced (§1, §6) | Autonomy (SDT) |
+| The tutor narrates in second person, names effort, asks "your turn" (lesson-ai SHOW_DONT_TELL) | Relatedness (SDT) |
+| Primary controls bottom of their frame, ≥ 44 px, snapping drag targets (§6, §8) | Fitts's law, thumb zone |
+| A stage step's caption poses the question before the demo answers it (lesson-ai SHOW_DONT_TELL "Curiosity first") | Curiosity gap |
+| Explore checks reuse the lesson's figure; recap still is the same picture (§13) | Spacing / retrieval cue (same cue at encoding and recall) |
+| Skeleton shaped like the coming figure, never a spinner (§9) | Perceived performance, reduced uncertainty |
+| Pre-training: the lesson tutor names the parts (axes, P, θ) before the stage moves them (lesson-ai SHOW_DONT_TELL) | Mayer pre-training |
+
 ## 1. Learner focus first
 - **One primary action per moment.** While the tutor explains, the only filled (accent) control is Play/Pause. When a
   stage is open, its one primary action is **Back to the board** (and it appears only once the narration has finished;
@@ -50,16 +78,16 @@ Fills use the `-soft` tints (≈ 12–16 % opacity); text on fills keeps AA cont
   stage demonstration uses (the learner can replay it).
 - Haptics: `navigator.vibrate(8)` (where supported) when a demonstration hands control over and on a correct check.
 
-## 7. Feedback psychology
+## 7. Feedback psychology  ·  *growth mindset, reduced threat*
 Wrong answers are information, not failure: "Not quite — here's another way to see it", effort is named ("Good try:
 you set up the equation correctly"), retry is one gentle tap. No red full-card fills, no shaking.
 
-## 8. Thumb zone (phones, 360–430px)
+## 8. Thumb zone (phones, 360–430px)  ·  *Fitts's law*
 Primary controls sit in the bottom third: the player transport and the stage's **Back to the board** bar are bottom
 anchored inside their frame; full-screen stage puts its bar at the bottom edge above the safe-area inset. Touch
 targets ≥ 44×44px.
 
-## 9. Perceived performance
+## 9. Perceived performance  ·  *reduced uncertainty*
 While a figure loads (JSXGraph chunk), show a skeleton shaped like it: the frame at its final aspect ratio with faint
 axes lines, never a spinner. Optimistic open: the stage frame appears immediately with the skeleton.
 
@@ -88,6 +116,26 @@ alternative (`interactiveAlt`).
   line for screen readers. Reduced motion: pose changes only, no idle loop or mouth motion.
 - The learner can hide it (remembered); `NEXT_PUBLIC_GENIE=off` removes it everywhere. If Rive/WebAssembly fails, a
   still drawing of the same character is shown.
+## 13. Lesson end: recap  ·  *peak-end rule, dual coding, competence*
+`src/components/whiteboard/recap.tsx`. When a lesson's last step plays (not in embedded chat boards) the end card is a
+recap: "Lesson complete" with a spring tick, the title, "You worked through N questions to get here" (effort, not a
+score), **the picture to remember** (a still of the lesson's last live figure, same colours as the stage) and **key
+ideas** (the lines the tutor highlighted or annotated, max 3, clay bullet). A ghost "From the top" replay sits at the
+bottom. The up-next card follows it.
+
+## 14. Checks  ·  *retrieval practice, generation effect, growth feedback*
+`src/components/whiteboard/check-card.tsx`. A check may carry a live `figure` (choice/short: read the answer off it).
+Kind **explore** is answered by moving the figure until a readout (by label) reaches `goal.equals ± tol`; "Check it"
+reads the live value. Feedback sits in a tinted strip (accent-soft / clay-soft) with a round icon (tick / lightbulb —
+never a cross), a varied line (first try vs after retries), and for explore a specific hint ("You're at 0.71; the goal
+is 0.5 — a little lower"). "Keep adjusting" keeps the figure where the learner left it. All buttons 44 px. A right
+answer buzzes 8 ms and the lesson carries on after reading time.
+Draggable points snap on release to a tidy step (≈ 1/40 of the range, 1/2/5 × 10^k) with a tick: readable values,
+less fiddly on touch (Fitts).
+
+## 15. Figures keep 1:1 units when they have circles
+`figureGeom` / `equalUnits` (src/lib/agent/interactive.ts): a figure with a circle takes its ranges' aspect (clamped
+1–1.6) and widens the shorter range so a unit is as long across as up — in the live figure and in the still.
 
 ## Not in this pass (tracked)
 - Dark theme: the app ships light-only today (no dark tokens); the roles above are defined so a dark palette can map

@@ -1,6 +1,6 @@
 'use client'
 /**
- * The end of a lesson (docs/design/lesson-ui.md §11): the lesson ends on a high (peak-end rule) with its key picture
+ * The end of a lesson (docs/design/lesson-ui.md §13): the lesson ends on a high (peak-end rule) with its key picture
  * once more (dual coding: the image the learner will remember the idea by) and the two or three lines the tutor
  * highlighted (signalling), plus what the learner did (competence: effort named, not a score).
  */
