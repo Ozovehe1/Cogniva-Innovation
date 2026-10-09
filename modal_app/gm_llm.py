@@ -19,12 +19,69 @@ _why: dict[str, str] = {}
 LAST_MODEL: dict = {}  # the model that served the latest call (stage logs)  # last refusal per model (status + quota id), for the error message
 
 
+# ───────────── The web app's shared LLM pool ─────────────
+# Inside Modal (APP_URL + RENDER_TOKEN from the geniusmap-render secret) every call goes first to the web app's pool
+# (POST {APP_URL}/api/llm/pool), so animation work shares the same keys, budgets and learner-reserved slots as lessons and
+# Ask instead of draining the free tier on its own. If the pool is unreachable or busy, the direct calls below run as before
+# (a render never fails because of the pool). GM_POOL=0 turns the pool off; GM_POOL_URL overrides the endpoint.
+_pool_down_until = 0.0
+
+
+def _pool_url() -> str:
+    if os.environ.get("GM_POOL", "1") == "0" or not os.environ.get("RENDER_TOKEN"):
+        return ""
+    if os.environ.get("GM_POOL_URL"):
+        return os.environ["GM_POOL_URL"]
+    app = os.environ.get("APP_URL", "").rstrip("/")
+    return f"{app}/api/llm/pool" if app and os.environ.get("MODAL_TASK_ID") else ""
+
+
+def _via_pool(body: dict, *, log=None, timeout=120.0):
+    """One call through the shared pool; None when the pool is off, unreachable or busy (the caller goes direct)."""
+    global _pool_down_until
+    url = _pool_url()
+    if not url or time.time() < _pool_down_until:
+        return None
+    import httpx
+    t = time.time()
+    try:
+        r = httpx.post(url, headers={"X-Render-Token": os.environ.get("RENDER_TOKEN", "")}, json=body, timeout=timeout, follow_redirects=True)
+    except Exception as exc:  # noqa: BLE001
+        _pool_down_until = time.time() + 60
+        if log is not None:
+            log.append(f"pool unreachable ({type(exc).__name__}) -> direct")
+        return None
+    if r.status_code != 200:
+        if r.status_code in (401, 404):
+            _pool_down_until = time.time() + 600  # not deployed / wrong token: stop asking for a while
+        if log is not None:
+            log.append(f"pool {r.status_code} -> direct")
+        return None
+    try:
+        j = r.json()
+    except Exception:  # noqa: BLE001
+        return None
+    text = j.get("text") or ""
+    if not text.strip():
+        return None
+    model = j.get("model") or "pool"
+    LAST_MODEL["model"] = model
+    if log is not None:
+        log.append(f"pool {model} ok {time.time() - t:.1f}s")
+    return text
+
+
 STRONG = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash"]  # composing / repairing a scene: quality over speed
 
 
 def gemini(prompt: str, *, json_out=True, images: list[bytes] | None = None, temperature=0.4, timeout=60, log=None, strong=False, models: list[str] | None = None) -> str:
     import httpx
 
+    if not models and not os.environ.get("GM_FORCE_MODELS"):
+        pooled = _via_pool({"mode": "gemini", "prompt": prompt, "json_out": json_out, "temperature": temperature,
+                            "images": [base64.b64encode(i).decode() for i in images or []]}, log=log, timeout=timeout * 2 + 60)
+        if pooled is not None:
+            return pooled
     keys = [k.strip() for k in (os.environ.get(n, "") for n in ("GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_API_KEY_4")) if k.strip()]
     key = keys[0] if keys else ""
     if not key and os.environ.get("GM_GEMINI_PROXY"):
@@ -251,6 +308,11 @@ def chat(prompt: str, *, purpose: str = "code", system: str | None = None, json_
     """One completion from the Groq chain (fall through on 429/413/5xx/timeouts), then Gemini (strong) as the fallback."""
     import httpx
 
+    if not os.environ.get("GM_GROQ_MODELS") and gemini_fallback:
+        pooled = _via_pool({"mode": "chat", "prompt": prompt, "system": system, "json_out": json_out, "max_tokens": max_tokens,
+                            "temperature": temperature}, log=log, timeout=timeout * 2 + 60)
+        if pooled is not None:
+            return pooled
     key = os.environ.get("GROQ_API_KEY", "").strip()
     order = [m.strip() for m in os.environ.get("GM_GROQ_MODELS", "").split(",") if m.strip()] or GROQ_CHAIN.get(purpose, GROQ_CHAIN["code"])
     need = float(est_tokens or (len(prompt) / 3.2 + max_tokens * 0.6))

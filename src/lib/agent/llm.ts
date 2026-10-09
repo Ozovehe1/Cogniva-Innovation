@@ -417,5 +417,27 @@ export async function visionJson(prompt: string, pngBase64: string, opts: { dead
   }
 }
 
+/**
+ * Free-form Gemini answer about one or more pictures, on the shared pool (vision purpose). Used by the render service's
+ * pool endpoint (/api/llm/pool) for the animation critic, which looks at rendered frames. Returns the raw text.
+ */
+export async function visionText(prompt: string, imagesB64: { data: string; mime: string }[], opts: { json?: boolean; maxTokens?: number; temperature?: number; deadline?: number; trace?: string[]; priority?: Priority } = {}): Promise<{ text: string; model: string }> {
+  const deadline = opts.deadline ?? Date.now() + 90_000
+  const r = await runOnPool<{ text: string; model: string }>({
+    purpose: 'vision', priority: opts.priority, providers: ['gemini'], estTokens: 1300 * imagesB64.length + (opts.maxTokens ?? 3000) + estTokens(prompt), deadline, trace: opts.trace, maxAttempts: 8,
+  }, async (slot, o) => {
+    const left = deadline - Date.now()
+    const res = await gemClient(slot.apiKey).models.generateContent({
+      model: slot.model,
+      contents: [{ role: 'user', parts: [...imagesB64.map(i => ({ inlineData: { mimeType: i.mime, data: i.data } })), { text: prompt }] }],
+      config: { httpOptions: { timeout: Math.max(5000, Math.min(60_000, left, o.timeoutMs)) }, maxOutputTokens: opts.maxTokens ?? 3000, temperature: opts.temperature ?? 0.3, ...(opts.json ? { responseMimeType: 'application/json' } : {}), ...(slot.model.startsWith('gemini-3') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : slot.model.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 512 } } : {}) },
+    })
+    const text = (res.candidates?.[0]?.content?.parts ?? []).filter(p => !p.thought && p.text).map(p => p.text).join('')
+    if (!text.trim()) throw new Error('empty answer')
+    return { value: { text, model: slot.model }, usage: { input: res.usageMetadata?.promptTokenCount ?? 0, output: res.usageMetadata?.candidatesTokenCount ?? 0 } }
+  })
+  return r.value
+}
+
 /** Gemini flash-lite model ids (light purposes elsewhere). */
 export const GEMINI_LITE_MODELS = GEMINI_LITE
