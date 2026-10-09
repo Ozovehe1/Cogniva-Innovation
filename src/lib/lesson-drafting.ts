@@ -90,13 +90,17 @@ interface LessonJobRow {
   draft_status: DraftStatus
   draft_notes: string | null
   draft_retry_at: string | null
+  watched_at?: string | null
   draft_lock_until: string | null
   generated_by?: string | null
   owner_student_id?: string | null
   created_at?: string | null
 }
 
-const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, generated_by, created_at, owner_student_id'
+const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, generated_by, created_at, owner_student_id, watched_at'
+/** A learner's lesson page polls the status route every few seconds while it plays: within this window they are watching. */
+export const WATCH_WINDOW_MS = 75_000
+const watching = (l: { watched_at?: string | null } | null | undefined) => !!l?.watched_at && Date.now() - Date.parse(l.watched_at) < WATCH_WINDOW_MS
 
 /* ───────────── Internal auth for the self-chain ───────────── */
 
@@ -143,7 +147,9 @@ export async function syncLessonScript(db: SupabaseClient, lessonId: string, sec
 }
 
 /** When to try again after a quota error. */
-function retryAt(err: GeminiQuotaError) {
+function retryAt(err: GeminiQuotaError, watched = false) {
+  // Someone is watching the lesson wait: try again within 40 s (the pool admits them at Ask priority).
+  if (watched) return new Date(Date.now() + Math.min(40_000, Math.max(15_000, err.retryAfterMs ?? 30_000))).toISOString()
   // The pool spans many keys and models: one model's daily window is rarely all of them, and a learner may be
   // watching the lesson wait on its next section (measured: a fresh lesson paused 30 min after its opening beat while
   // other slots were healthy). Retry within 3 minutes; the pool itself paces background work.
@@ -224,9 +230,13 @@ async function runDraftWorkInner(lessonId: string, opts: { origin?: string } = {
 
   /** Quota: sleep through a short wait when it fits, otherwise pause until the retry time. */
   const onQuota = async (err: GeminiQuotaError): Promise<'continue' | 'paused'> => {
+    const { data: w } = await db.from('lessons').select('watched_at').eq('id', lessonId).maybeSingle()
+    const watched = watching(w as { watched_at?: string | null } | null)
     const wait = err.retryAfterMs ?? MAX_INLINE_WAIT_MS
+    // A watched lesson waits inline through a longer pause rather than handing over to a later retry.
+    if (watched && wait <= 45_000 && Date.now() + wait + BEAT_RESERVE_MS < hardEnd) { await sleep(wait); return 'continue' }
     if (!err.daily && wait <= MAX_INLINE_WAIT_MS && Date.now() + wait + BEAT_RESERVE_MS < hardEnd) { await sleep(wait); return 'continue' }
-    await db.from('lessons').update({ draft_status: 'paused', draft_error: `quota: ${err.message.slice(0, 400)}`, draft_retry_at: retryAt(err) }).eq('id', lessonId)
+    await db.from('lessons').update({ draft_status: 'paused', draft_error: `quota: ${err.message.slice(0, 400)}`, draft_retry_at: retryAt(err, watched) }).eq('id', lessonId)
     return 'paused'
   }
 
@@ -387,7 +397,11 @@ async function runDraftWorkInner(lessonId: string, opts: { origin?: string } = {
       try {
         // The next few beats may be needed soon by a learner playing the lesson (Ask class); drafting further ahead
         // is background work, the first to be deferred when the pool is under pressure.
-        const priority = ready.length < HEAD_START_BEATS + 2 ? 'ask' as const : 'background' as const
+        // A learner watching the lesson right now (their page polls the status route) keeps every beat at Ask
+        // priority: the beat being written is the one they are about to reach (measured: 'background pacing'
+        // deferred beat 6 of a watched lesson for minutes and the player sat on 'Next part on its way').
+        const { data: w } = await db.from('lessons').select('watched_at').eq('id', lessonId).maybeSingle()
+        const priority = ready.length < HEAD_START_BEATS + 2 || watching(w as { watched_at?: string | null } | null) ? 'ask' as const : 'background' as const
         let steps = await withLlmContext({ priority, learnerId: lesson.owner_student_id ?? null, label: 'lesson-beat' }, () => draftBeat({ lesson: lite, plan, index, board, recentSay, notes, meta, chapterStart, deadline: Math.min(Date.now() + BEAT_DEADLINE_MS, hardEnd - 15_000) }))
         if (chapterStart && before.length > 0 && !(steps[0]?.type === 'clear' && !(steps[0] as { targets?: string[] }).targets)) steps = [{ type: 'clear' }, ...steps]
         const len = lengthReport(steps, (next.seconds ?? 60) / 60)

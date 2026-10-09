@@ -20,6 +20,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     .eq('id', id).eq('owner_student_id', profile.id).maybeSingle()
   const l = data as { id: string; draft_status: string; draft_error: string | null; draft_retry_at: string | null; draft_lock_until: string | null; chapters: unknown[] } | null
   if (!l) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  // The learner is on the lesson page: drafting keeps their next beats at Ask priority (lesson-drafting.ts), and a
+  // pause that only deferred background work is lifted now rather than in minutes.
+  const deferred = l.draft_status === 'paused' && /deferred|background pacing|busy/i.test(l.draft_error ?? '') && !!l.draft_retry_at && Date.parse(l.draft_retry_at) > Date.now()
+  await createAdminClient().from('lessons').update(deferred ? { watched_at: new Date().toISOString(), draft_retry_at: new Date().toISOString() } : { watched_at: new Date().toISOString() }).eq('id', id).eq('owner_student_id', profile.id).then(() => undefined, () => undefined)
+  if (deferred) l.draft_retry_at = new Date(Date.now() - 1000).toISOString()
   // Beats that failed are dropped, never retried later: later beats are already published after them.
   if (needsWorker(l)) {
     const origin = selfOrigin(request)
