@@ -291,15 +291,22 @@ Code:
 Return ONLY the corrected Python source in one ```python block."""
 
 
-CRITIC_PROMPT = """You review frames from a short teaching animation that students watch on a phone. The frames are in time order.
+CRITIC_PROMPT = """You are a strict maths teacher reviewing frames from a short teaching animation that students watch on a phone. The frames are in time order.
 Learning objective: {objective}
 Automatic layout check found: {layout}
-Look hard for: shapes that should fit together (tiles, a proof's pieces, a closed circuit) but leave gaps or pile on each other,
-overlapping or colliding text, labels covering lines or shapes so they are hard to read, text cut off at the frame edge,
-text too small to read on a phone, cluttered frames, empty or near-empty frames, wrong maths or wrong labels, a picture that does not
-match the objective.
-Return JSON only: {{"score": 1-10 (10 = clean, correct, readable), "issues": [{{"severity": "high|medium|low", "frame": n, "problem": "...", "fix": "concrete change"}}]}}
-"high" = a student would be confused or could not read something. Do not invent problems; an empty list is fine."""
+{facts}First check CORRECTNESS, shape by shape, as if marking a proof:
+- Every shape is what the narration/labels call it: a "square" has 4 equal sides and 4 right angles (a rhombus or parallelogram is WRONG);
+  a right triangle has a visible right angle; pieces of a dissection/rearrangement fit exactly inside the outer shape with no gaps and no overlaps;
+  congruent pieces really look congruent; a side labelled "a" is the same length everywhere it is labelled "a".
+- Lines stop where the physics/geometry says (a refracted ray starts at the boundary, an incident ray does not continue past it);
+  a tangent touches the curve at one point with the right slope; vectors add head to tail; a circuit is closed.
+- Numbers, equations and labels are right, and the answer is not shown before the step that derives it.
+- The main picture is there in every frame after the first (no empty stage while only text changes).
+Then legibility: overlapping or colliding text, labels covering lines, text cut off at the edge, text too small for a phone, clutter.
+Scoring: any wrong geometry, wrong maths, wrong physics or a picture that does not show the objective -> score at most 4 and a "high" issue.
+Any unreadable or missing key element -> at most 6. Only a correct, clean, readable clip scores 8+.
+Return JSON only: {{"score": 1-10, "correct": true|false, "issues": [{{"severity": "high|medium|low", "frame": n, "problem": "...", "fix": "concrete change"}}]}}
+Do not invent problems; an empty list is fine when the clip is correct."""
 
 
 # ───────────────────────── guard ─────────────────────────
@@ -618,11 +625,12 @@ def fact_check(code: str, plan: dict, log: list) -> list[dict]:
         return []
 
 
-def critique(frames: list[bytes], plan: dict, layout: list[dict], log: list) -> dict:
+def critique(frames: list[bytes], plan: dict, layout: list[dict], log: list, facts: str = "") -> dict:
     if not frames:
         return {"score": None, "issues": [], "skipped": "no frames"}
     lay = "; ".join(i["problem"] for i in layout[:8]) or "nothing"
-    prompt = CRITIC_PROMPT.format(objective=plan.get("objective", "")[:300], layout=lay)
+    fx = f"Measured from the solved scene (exact; trust these over your eyes):\n{facts[:1800]}\n" if facts else ""
+    prompt = CRITIC_PROMPT.format(objective=plan.get("objective", "")[:300], layout=lay, facts=fx)
     ex = ThreadPoolExecutor(max_workers=1)
     try:
         # bounded: a busy free-tier vision model must never hold the clip back (the layout check still applies)
@@ -632,6 +640,12 @@ def critique(frames: list[bytes], plan: dict, layout: list[dict], log: list) -> 
         if not isinstance(c, dict):
             raise ValueError("critic answer is not an object")
         c["issues"] = [i for i in c.get("issues", []) if isinstance(i, dict)][:10]
+        # enforce the rubric: the model sometimes says "wrong" and still scores 8
+        if isinstance(c.get("score"), (int, float)):
+            if c.get("correct") is False:
+                c["score"] = min(c["score"], 4)
+            elif any(i.get("severity") == "high" for i in c["issues"]):
+                c["score"] = min(c["score"], 6)
         return c
     except Exception as exc:  # noqa: BLE001
         log.append(f"critic unavailable: {type(exc).__name__} {str(exc)[:160]}")

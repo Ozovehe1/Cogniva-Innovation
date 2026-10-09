@@ -1441,7 +1441,7 @@ class World:
             ks = k
         seen_kind: dict = {}
         for label, ov, vals, X in solved:
-            for m in self.constraint_report(X, vals) + self.checks_report(X, vals) + self._degenerate(X, vals):
+            for m in self.constraint_report(X, vals) + self.checks_report(X, vals) + self._degenerate(X, vals) + self._shape_report(X, vals):
                 key = m.split(" fails")[0].split(" is not satisfied")[0][:120]
                 if key in seen_kind:
                     seen_kind[key][1] += 1
@@ -1483,6 +1483,95 @@ class World:
             except Exception:  # noqa: BLE001
                 continue
         return out
+
+    def _seg_ends(self, ref, X, vals):
+        """Two world points of a side named "A-B" or of a segment/vector id, or None (axes-unit objects are skipped)."""
+        if isinstance(ref, str) and "-" in ref and ref not in self.objs:
+            a, b = ref.split("-", 1)
+            if a in self.objs and b in self.objs:
+                if any(self.objs[q].get("on") for q in (a, b)):
+                    return None
+                return self.pos(a, X, vals), self.pos(b, X, vals)
+            return None
+        o = self.objs.get(ref)
+        if o and o["type"] in ("segment", "vector") and isinstance(o.get("to"), str) and not o.get("on"):
+            if any(self.objs.get(q, {}).get("on") for q in (o["from"], o["to"])):
+                return None
+            return self.pos(o["from"], X, vals), self.pos(o["to"], X, vals)
+        return None
+
+    def _shape_report(self, X, vals):
+        """Deterministic proof-shape checks: what the scene NAMES must be what the solver BUILT.
+        - a side labelled with a var or a formula of vars ("c", "a+b") must have that length
+        - a polygon called square/sq must have equal sides and right angles; rect/rectangle right angles; right_*/rt triangle a 90 deg angle
+        - a polygon with 4+ points must not cross itself"""
+        out = []
+        names = set(vals)
+        for oid, o in self.objs.items():
+            try:
+                if o["type"] == "label" and o.get("for"):
+                    txt = str(o.get("tex") or o.get("text") or "").strip().strip("$").replace("\\", "").replace(" ", "")
+                    if not txt or "{" in txt or "=" in txt or len(txt) > 14:
+                        continue
+                    toks = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", txt))
+                    if not toks or not toks <= names or not re.fullmatch(r"[A-Za-z0-9_+\-*/(). ^]+", txt):
+                        continue
+                    ends = self._seg_ends(o["for"], X, vals)
+                    if ends is None:
+                        continue
+                    want = float(self.vars.eval(txt.replace("^", "**"), vals))
+                    got = float(np.linalg.norm(ends[1] - ends[0]))
+                    if want > 1e-6 and abs(got - want) / want > 0.03:
+                        out.append(f"side {o['for']} is labelled '{txt}' (= {want:.3g}) but the solver made it {got:.3g} long; "
+                                   f"constrain its length (distance or equal_length) or change the label")
+                elif o["type"] == "polygon" and len(o.get("points") or []) >= 3:
+                    P = [self.pos(p, X, vals) for p in o["points"]]
+                    n = len(P)
+                    nm = (oid + " " + str(o.get("label") or "")).lower()
+                    sides = [float(np.linalg.norm(P[(i + 1) % n] - P[i])) for i in range(n)]
+                    angs = []
+                    for i in range(n):
+                        u, v = P[i - 1] - P[i], P[(i + 1) % n] - P[i]
+                        angs.append(math.degrees(math.acos(max(-1.0, min(1.0, float(u @ v) / (np.linalg.norm(u) * np.linalg.norm(v) + 1e-12))))))
+                    is_sq = re.search(r"(^|[^a-z])(sq|square)", nm) and not re.search(r"squared", nm)
+                    if is_sq and n == 4 and (max(sides) - min(sides) > 0.02 * max(sides) or any(abs(a - 90) > 1.5 for a in angs)):
+                        out.append(f"polygon {oid} is called a square but its sides are {', '.join(f'{x:.3g}' for x in sides)} and angles "
+                                   f"{', '.join(f'{a:.0f}' for a in angs)} deg; constrain it (equal sides, perpendicular) or use the square_on macro")
+                    elif re.search(r"(^|[^a-z])rect", nm) and n == 4 and any(abs(a - 90) > 1.5 for a in angs):
+                        out.append(f"polygon {oid} is called a rectangle but its angles are {', '.join(f'{a:.0f}' for a in angs)} deg")
+                    elif n == 3 and re.search(r"(^|[^a-z])(right|rt)([^a-z]|$)", nm) and not any(abs(a - 90) < 1.5 for a in angs):
+                        out.append(f"triangle {oid} is called right-angled but its angles are {', '.join(f'{a:.0f}' for a in angs)} deg")
+                    if n >= 4 and _self_intersects(P):
+                        out.append(f"polygon {oid} crosses itself (its points {'-'.join(o['points'])} are not in order around the shape, "
+                                   f"or a point sits on the wrong side); fix the order or pin the side with ccw/cw/opposite_sides")
+            except Exception:  # noqa: BLE001
+                continue
+        return out
+
+    def overlaps(self, X, vals) -> list[str]:
+        """Filled polygons that PARTLY overlap (not one nested in the other): in a dissection proof the pieces must tile."""
+        polys = []
+        for oid, o in self.objs.items():
+            if o["type"] == "polygon" and len(o.get("points") or []) >= 3 and float(o.get("fill", 0) or 0) > 0:
+                try:
+                    polys.append((oid, np.array([self.pos(p, X, vals) for p in o["points"]], dtype=float)))
+                except Exception:  # noqa: BLE001
+                    continue
+        out = []
+        if len(polys) < 2 or len(polys) > 14:
+            return out
+        allp = np.vstack([p for _, p in polys])
+        lo, hi = allp.min(0), allp.max(0)
+        g = np.stack(np.meshgrid(np.linspace(lo[0], hi[0], 90), np.linspace(lo[1], hi[1], 90)), -1).reshape(-1, 2)
+        masks = {oid: _inside(g, P) for oid, P in polys}
+        ids = [oid for oid, _ in polys]
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                a, b = masks[ids[i]], masks[ids[j]]
+                inter, small = int((a & b).sum()), min(int(a.sum()), int(b.sum()))
+                if small and 0.08 < inter / small < 0.92:
+                    out.append(f"{ids[i]} and {ids[j]} partly overlap ({100 * inter / small:.0f}% of the smaller)")
+        return out[:6]
 
     def bbox_all(self, solved) -> list[float]:
         xs, ys = [], []
@@ -1562,6 +1651,12 @@ def describe(w: "World", max_lines: int = 60) -> str:
         same = [g for g in groups.values() if len(g) > 1]
         if same:
             out.append("congruent pieces (same sides and area): " + "; ".join(", ".join(g) for g in same))
+        try:
+            ov = w.overlaps(X, vals)
+            if ov:
+                out.append("filled pieces that partly overlap (pieces of a dissection must not): " + "; ".join(ov))
+        except Exception:  # noqa: BLE001
+            pass
         if len(out) > max_lines:
             break
     return "\n".join(out[:max_lines])
@@ -1570,6 +1665,36 @@ def describe(w: "World", max_lines: int = 60) -> str:
 def _fit_scale(bb, box):
     w, h = max(bb[2] - bb[0], 1e-3), max(bb[3] - bb[1], 1e-3)
     return float(min((box[2] - box[0]) / w, (box[3] - box[1]) / h, 2.5))
+
+
+def _inside(g, P):
+    """Even-odd point-in-polygon for a grid of points g (N x 2)."""
+    x, y = g[:, 0], g[:, 1]
+    m = np.zeros(len(g), dtype=bool)
+    n = len(P)
+    for i in range(n):
+        (x1, y1), (x2, y2) = P[i], P[(i + 1) % n]
+        c = ((y1 > y) != (y2 > y)) & (x < (x2 - x1) * (y - y1) / ((y2 - y1) + 1e-12) + x1)
+        m ^= c
+    return m
+
+
+def _self_intersects(P) -> bool:
+    n = len(P)
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    for i in range(n):
+        a, b = P[i], P[(i + 1) % n]
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue
+            c, d = P[j], P[(j + 1) % n]
+            d1, d2, d3, d4 = cross(c, d, a), cross(c, d, b), cross(a, b, c), cross(a, b, d)
+            eps = 1e-9
+            if ((d1 > eps and d2 < -eps) or (d1 < -eps and d2 > eps)) and ((d3 > eps and d4 < -eps) or (d3 < -eps and d4 > eps)):
+                return True
+    return False
 
 
 def _shoelace(pts):

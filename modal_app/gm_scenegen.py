@@ -159,6 +159,16 @@ def semantic_review(description: str, ir: dict, aspect: str, log: list) -> list[
     return []
 
 
+def scene_facts(ir: dict, aspect: str) -> str:
+    """describe() of a verified scene, handed to the vision critic so it judges geometry from exact numbers."""
+    try:
+        w = GW.World(ir, aspect)
+        w.build([-4.5, -2.7, 4.5, 2.7])
+        return GW.describe(w, max_lines=30)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 # ───────────────────────── compile ─────────────────────────
 def compile_scene(ir: dict) -> str:
     glue = ir.get("glue") if isinstance(ir.get("glue"), dict) else {}
@@ -365,11 +375,11 @@ def run(description: str, render, *, narration: dict | None = None, context: str
         crit = None
         if vision:
             # the critic sees the leader; when the runner-up is within a point it sees that too and the better critique wins
-            crit = critique(best["res"].get("frames") or [], {"objective": description}, best["score"]["layout"], log)
+            crit = critique(best["res"].get("frames") or [], {"objective": description}, best["score"]["layout"], log, scene_facts(best["ir"], aspect))
             best["critique"] = crit
             low_first = isinstance(crit.get("score"), (int, float)) and crit["score"] < 6
             if len(good) > 1 and (good[1]["score"]["score"] >= best["score"]["score"] - 1.0 or low_first) and time.time() < t_end - 60:
-                c2 = critique(good[1]["res"].get("frames") or [], {"objective": description}, good[1]["score"]["layout"], log)
+                c2 = critique(good[1]["res"].get("frames") or [], {"objective": description}, good[1]["score"]["layout"], log, scene_facts(good[1]["ir"], aspect))
                 good[1]["critique"] = c2
                 if isinstance(c2.get("score"), (int, float)) and isinstance(crit.get("score"), (int, float)) and c2["score"] > crit["score"]:
                     best, crit = good[1], c2
@@ -399,7 +409,7 @@ def run(description: str, render, *, narration: dict | None = None, context: str
                         s2 = score_render(ir2, r2, aspect, v2)
                         rep["revision"]["score"] = s2["score"]
                         if s2["score"] >= best["score"]["score"] - 0.3 and s2["layout_high"] <= best["score"]["layout_high"]:
-                            c3 = critique(r2.get("frames") or [], {"objective": description}, s2["layout"], log) if vision else None
+                            c3 = critique(r2.get("frames") or [], {"objective": description}, s2["layout"], log, scene_facts(ir2, aspect)) if vision else None
                             if not (c3 and isinstance(c3.get("score"), (int, float)) and crit and isinstance(crit.get("score"), (int, float)) and c3["score"] < crit["score"]):
                                 best = {**best, "ir": ir2, "code": code2, "res": r2, "score": s2, "verify": v2, "critique": c3 or crit}
                                 crit = c3 or crit
