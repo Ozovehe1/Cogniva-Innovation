@@ -43,7 +43,9 @@ export async function renderItemFigure(item: AssessItem, opts: { admin?: Supabas
     }
     if (f.kind === 'diagram') {
       const sub = f.substance.replace(/\\n/g, '\n').replace(/;\s*/g, '\n')
-      const d = await renderMathDiagram(f.library as DiagramLibrary, sub, { timeoutMs: 8_000 })
+      let d = await renderMathDiagram(f.library as DiagramLibrary, sub, { timeoutMs: 8_000 })
+      // A cold start can cut the layout search to one variation; once warm, try again before giving up.
+      if (d.unmet > 0) d = await renderMathDiagram(f.library as DiagramLibrary, sub, { timeoutMs: 10_000 })
       if (d.unmet > 0) return [`the diagram's layout leaves ${d.unmet} constraint(s) unmet (it would be drawn wrongly)`]
       f.svg = phoneSvg(d.svg, 20, 1)
       return []
