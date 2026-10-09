@@ -926,6 +926,19 @@ class Stage:
         self.shown.append(o["id"])
         return FadeIn(m)
 
+    def _fit_text(self, m, txt, w, o):
+        """Never let a readout run off the frame: shrink to the phone minimum, then wrap onto two lines, then shrink."""
+        if m.width > w:
+            m.scale(max(w / m.width, FS["min"] / FS["body"]))
+        if m.width > w and isinstance(m, Text):
+            chars = max(10, int(len(txt) * w / m.width * 0.95), len(txt) // 2 + 2)
+            m = _t(GW.wrap(txt, chars, 3), FS["body"], o.get("color", "ink"))
+            if m.width > w:
+                m.scale(max(w / m.width, FS["min"] / FS["body"]))
+        if m.width > w:
+            m.scale(w / m.width)
+        return m
+
     def _readout_mob(self, o):
         i = list(self.readouts).index(o["id"]) if o["id"] in self.readouts else len(self.readouts)
         txt = GW.fmt_template(o.get("text", ""), self.vals)
@@ -938,17 +951,15 @@ class Stage:
                 parts = [p.strip() for p in re.split(r"\s*\|\s*|\s{3,}|;\s*", txt) if p.strip()]
                 if len(parts) > 1:
                     m = VGroup(*[_t(p, FS["body"], o.get("color", "ink")) for p in parts]).arrange(DOWN, buff=0.12, aligned_edge=LEFT)
-                if m.width > w:
-                    m.scale(max(w / m.width, FS["min"] / FS["body"]))
+                m = self._fit_text(m, txt, w, o)
             # stack readouts from the bottom of the panel up
             y = z[1] + 0.3 + m.height / 2 + sum(getattr(self.readouts.get(k), "height", 0.5) + 0.2 for k in list(self.readouts)[:i])
             m.move_to([(z[0] + z[2]) / 2, y, 0])
             return m
         z = self.ro_strip or [self.main_box[0], self.main_box[1], self.main_box[2], self.main_box[1] + 0.5]
         cols = 1 if self.n_ro == 1 else 2
-        w = (z[2] - z[0]) / cols - 0.3
-        if m.width > w:
-            m.scale(max(w / m.width, FS["min"] / FS["body"]))
+        w = min((z[2] - z[0]) / cols - 0.3, FW - 0.6)
+        m = self._fit_text(m, txt, w, o)
         r, c = divmod(i, cols)
         cx = (z[0] + z[2]) / 2 if cols == 1 else z[0] + (c + 0.5) * (z[2] - z[0]) / 2
         m.move_to([cx, z[3] - 0.28 - 0.55 * r, 0])

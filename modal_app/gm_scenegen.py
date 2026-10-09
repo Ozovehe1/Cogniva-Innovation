@@ -296,6 +296,22 @@ def concept_terms_report(description: str, ir: dict) -> list[str]:
     d = description.lower()
     blob = json.dumps(ir)
     out = []
+    stage_types = GW.GEOM | GW.BLOCKS | GW.ON_AXES | {"flow", "pointer"} | set(GW.MACROS) | {"macro"}
+    shown = {str(x) for b in ir.get("beats") or [] for a in b.get("do") or [] if GW._as_list(a)[:1] in (["show"], ["morph"])
+             for x in (GW._as_list(a)[1:] if GW._as_list(a)[0] == "show" else GW._as_list(a)[2:3]) for x in GW._as_list(x)}
+    objs = {o.get("id"): o for o in ir.get("objects") or [] if isinstance(o, dict)}
+
+    def pictured(i, depth=0):
+        o = objs.get(i.split("[")[0]) or {}
+        if o.get("type") == "group" and depth < 4:
+            return any(pictured(str(m), depth + 1) for m in o.get("members") or [])
+        return o.get("type") in stage_types and o.get("type") != "text"
+    if not any(pictured(i) for i in shown):
+        out.append("the main stage shows no picture (only equations/readouts/text): draw the idea itself on the stage "
+                   "(a balance, a diagram, a graph, cells...) and show it in the first beat")
+    if re.search(r"\bbalance\b", d) and re.search(r"equation|solv", d) and "->" not in d and '"balance"' not in blob:
+        out.append('the concept asks for the balance of both sides: use the balance macro {"type": "balance", "id": ..., "left": [...], '
+                   '"right": [...]} (one entry per step) and tilt/level it as the equation steps change')
     if "tangent" in d and re.search(r"\b(curve|y\s*=|function|slope|derivative)", d) and '"tangent"' not in blob and "deriv(" not in blob:
         out.append('the concept is about a tangent line, but the scene draws none: add a line through two points T1, T2 with '
                    '["tangent", "T1-T2", functionId, x0] and show it when the secant reaches it (a secant whose points meet vanishes)')
