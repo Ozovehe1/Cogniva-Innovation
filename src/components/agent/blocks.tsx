@@ -242,10 +242,12 @@ function niceStep(raw: number) {
 
 function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
   const [state, setState] = useState<{ status: string; url: string | null }>({ status: block.status, url: block.url ?? null })
+  const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
     if (state.status !== 'rendering') return
     let stop = false
     const started = Date.now()
+    const tick = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000)
     const poll = async () => {
       if (stop) return
       try {
@@ -256,21 +258,74 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
       else setState(s => ({ ...s, status: 'failed' }))
     }
     const id = setTimeout(poll, 4000)
-    return () => { stop = true; clearTimeout(id) }
+    return () => { stop = true; clearTimeout(id); clearInterval(tick) }
   }, [block.jobId, state.status])
   return (
-    <figure className={frame}>
-      {state.status === 'done' && state.url ? (
-        <video src={state.url} controls autoPlay muted loop playsInline className="aspect-video w-full bg-[#14141A]" />
-      ) : (
-        <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 bg-[#F1EEE7] px-6 text-center">
-          {state.status === 'failed'
-            ? <><X className="h-5 w-5 text-clay" /><p className="text-[14px] text-ink-2">This animation couldn’t be rendered. The explanation above still holds.</p></>
-            : <><Spinner className="h-5 w-5 text-accent" /><p className="text-[14px] text-ink-2">Rendering your animation… usually 1–3 minutes. You can keep chatting.</p></>}
-        </div>
-      )}
+    <figure className={frame} role="region" aria-label={block.caption ? `Animation: ${block.caption}` : 'Animation'}>
+      {state.status === 'done' && state.url
+        ? <ClipPlayer url={state.url} label={block.caption ?? 'Animation'} />
+        : state.status === 'failed'
+          ? (
+            <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-sunken px-6 text-center">
+              <X className="h-5 w-5 text-clay" aria-hidden />
+              <p className="text-[14px] text-ink-2">This animation couldn’t be drawn. The explanation above still holds.</p>
+            </div>
+          )
+          : <ClipSkeleton elapsed={elapsed} />}
       {block.caption && <figcaption className="border-t border-line px-4 py-2.5 text-[13px] text-muted">{block.caption}</figcaption>}
     </figure>
+  )
+}
+
+/** A skeleton shaped like the clip (16:9, a faint title bar and stage), with honest progress: time so far and the usual range. */
+function ClipSkeleton({ elapsed }: { elapsed: number }) {
+  const mm = Math.floor(elapsed / 60), ss = String(elapsed % 60).padStart(2, '0')
+  return (
+    <div className="relative aspect-video w-full overflow-hidden bg-sunken" aria-busy="true" aria-live="polite">
+      <div className="absolute inset-0 animate-pulse motion-reduce:animate-none">
+        <div className="absolute left-[5%] top-[7%] h-[7%] w-[38%] rounded-[6px] bg-line" />
+        <div className="absolute left-[5%] top-[18%] h-px w-[90%] bg-line" />
+        <div className="absolute left-[14%] top-[30%] h-[42%] w-[46%] rounded-[10px] border-2 border-line" />
+        <div className="absolute right-[8%] top-[34%] h-[6%] w-[22%] rounded-[6px] bg-line" />
+        <div className="absolute right-[8%] top-[46%] h-[6%] w-[16%] rounded-[6px] bg-line" />
+      </div>
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 bg-gradient-to-t from-sunken via-sunken/90 to-transparent px-4 pb-3 pt-6">
+        <p className="text-[13.5px] text-ink-2">Drawing your animation · checking the maths first</p>
+        <span className="tnum shrink-0 text-[13px] text-muted">{mm}:{ss} · usually 1–3 min</span>
+      </div>
+    </div>
+  )
+}
+
+/** The rendered clip with large (44px) bottom controls: play/pause and replay; the frame keeps its 16:9 size while it loads. */
+function ClipPlayer({ url, label }: { url: string; label: string }) {
+  const ref = useRef<HTMLVideoElement>(null)
+  const [playing, setPlaying] = useState(false)
+  const [ready, setReady] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const toggle = () => { const v = ref.current; if (!v) return; if (v.paused) void v.play(); else v.pause() }
+  const replay = () => { const v = ref.current; if (!v) return; v.currentTime = 0; void v.play() }
+  return (
+    <div className="relative aspect-video w-full bg-surface">
+      {!ready && <div className="absolute inset-0 animate-pulse bg-sunken motion-reduce:animate-none" aria-hidden />}
+      <video ref={ref} src={url} autoPlay muted playsInline preload="auto" aria-label={label}
+        onLoadedData={() => setReady(true)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
+        onTimeUpdate={e => { const v = e.currentTarget; setProgress(v.duration ? v.currentTime / v.duration : 0) }}
+        onClick={toggle} className="absolute inset-0 h-full w-full object-contain" />
+      <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/45 to-transparent px-2 pb-1.5 pt-6">
+        <button type="button" onClick={toggle} aria-label={playing ? 'Pause animation' : 'Play animation'}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-ink shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
+        </button>
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/40" aria-hidden>
+          <div className="h-full bg-white" style={{ width: `${Math.round(progress * 1000) / 10}%` }} />
+        </div>
+        <button type="button" onClick={replay} aria-label="Replay animation"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-ink shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+          <RotateCcw className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
   )
 }
 
