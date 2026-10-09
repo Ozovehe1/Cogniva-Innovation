@@ -2,7 +2,7 @@
 
 Code: `src/lib/agent/pool.ts` (inventory, routing, budgets, health, ladder), `src/lib/agent/llm.ts` (Groq/Gemini
 call shapes on top of the pool), `src/lib/gemini.ts` (`generateText` / `generateStructuredJson` on the pool),
-`src/lib/agent/pool-prompt.ts` (history compaction), `supabase/migrations/20261019090000_llm_pool.sql` (shared
+`src/lib/agent/pool-prompt.ts` (history compaction), `supabase/migrations/20261019093000_llm_pool.sql` (shared
 ledger), `/api/admin/llm-pool` + `/admin/pool` (health), `src/lib/agent/pool-eval.ts` (eval group `pool`),
 `scripts/llm-pool-loadtest.mjs` (mocked-provider load test).
 
