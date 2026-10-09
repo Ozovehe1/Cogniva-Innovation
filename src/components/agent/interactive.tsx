@@ -12,6 +12,7 @@ import { Hand, Pause, Play, RotateCcw, Target } from 'lucide-react'
 import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
 import { IX_HEX, compileSpec, figureGeom, initialEnv, odeCurve, type IxEnv, type IxSpec } from '@/lib/agent/interactive'
+import { chargeDriftSvg, magnetCoilSvg, stepChargeDrift, stepMagnetCoil, stepWireField, wireFieldSvg, type SceneKind, type SceneLive } from '@/lib/agent/scenes'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Board = any
@@ -71,6 +72,7 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
     let cancelled = false
     let board: Board = null
     let jxg: any = null
+    if (spec.scene) { setReady(true); return () => { cancelled = true } }
     ;(async () => {
       try {
         const mod: any = await import('jsxgraph')
@@ -158,6 +160,7 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
     sliders.current = { ...sliders.current, [name.toLowerCase()]: v }
     setVals(s => ({ ...s, [name.toLowerCase()]: v }))
     boardRef.current?.update()
+    if (spec.scene && k.readouts.length) setReads(k.readouts.map(f => f(0, { ...sliders.current })))
   }
   /** Glide one slider from its min to its max (ease-in-out), narrated by the lesson; reduced motion jumps to the end. */
   const runPlay = (name: string, seconds = 4, done?: () => void) => {
@@ -199,7 +202,7 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
       ) : (
         <div className="relative">
           {!ready && <div className="pointer-events-none absolute inset-0 z-[1] -mt-3"><FigureSkeleton aspect={String(geom.aspect)} /></div>}
-          <div id={`${ids}-${nonce}`} ref={boxRef} onPointerDown={() => setTouched(true)} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: String(geom.aspect), maxWidth: Math.round(440 * geom.aspect), marginInline: "auto" }} role="img" aria-label={alt} />
+          {spec.scene ? <SceneView key={nonce} kind={spec.scene} spec={spec} vals={vals} alt={alt} onTouch={() => setTouched(true)} /> : <div id={`${ids}-${nonce}`} ref={boxRef} onPointerDown={() => setTouched(true)} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: String(geom.aspect), maxWidth: Math.round(440 * geom.aspect), marginInline: "auto" }} role="img" aria-label={alt} />}
           {/* Drag affordance: a hint chip that fades after the first touch. */}
           {ready && !touched && !spec.surface && dragNames.length > 0 && (
             <div className={cx('pointer-events-none absolute bottom-2 left-2 z-[2] inline-flex items-center gap-1.5 rounded-full bg-ink/85 px-2.5 py-1 text-[12px] font-medium text-white shadow-[var(--shadow-raised)]', !reducedMotion() && 'animate-[pulse_2.4s_ease-in-out_3]')}>
@@ -248,4 +251,39 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
       </div>
     </div>
   )
+}
+
+/** A hand-built animated scene (lib/agent/scenes.ts): redrawn every frame from the slider value and its own live state
+ * (time, the magnet's speed), so the field flows, the meter swings and the charges drift as the learner watches. */
+function SceneView({ kind, spec, vals, alt, onTouch }: { kind: SceneKind; spec: IxSpec; vals: IxEnv; alt: string; onTouch: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const valsRef = useRef(vals)
+  useEffect(() => { valsRef.current = vals }, [vals])
+  useEffect(() => {
+    const sl = spec.sliders[0]
+    if (!sl || !ref.current) return
+    const name = sl.name.toLowerCase()
+    const range = { min: sl.min, max: sl.max }
+    let live: SceneLive = { t: 0 }
+    let prev = valsRef.current[name] ?? sl.value
+    let last = performance.now(), raf = 0
+    const still = reducedMotion()
+    const draw = () => {
+      const v = valsRef.current[name] ?? sl.value
+      const html = kind === 'magnet_coil' ? magnetCoilSvg(v, live, range) : kind === 'wire_field' ? wireFieldSvg(v, live, range) : chargeDriftSvg(v, live, range)
+      if (ref.current) ref.current.innerHTML = html
+    }
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now
+      const v = valsRef.current[name] ?? sl.value
+      live = kind === 'magnet_coil' ? stepMagnetCoil(live, v, prev, dt) : kind === 'wire_field' ? stepWireField(live, v, Math.max(Math.abs(sl.min), Math.abs(sl.max)), dt) : stepChargeDrift(live, v, still ? 0 : dt)
+      prev = v
+      draw()
+      raf = requestAnimationFrame(tick)
+    }
+    if (still) { live = kind === 'wire_field' ? stepWireField(live, prev, Math.max(Math.abs(sl.min), Math.abs(sl.max)), 1) : live; draw() }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [kind, spec])
+  return <div ref={ref} onPointerDown={onTouch} className="mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', maxWidth: 560, marginInline: 'auto', minHeight: 120 }} role="img" aria-label={alt} />
 }

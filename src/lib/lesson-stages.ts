@@ -17,8 +17,8 @@ import { readVisual } from './visual-policy'
 export type StageTemplate = 'wire_field' | 'magnet_coil' | 'charge_drift' | 'projectile'
 
 const WIRE_FIELD = {
-  title: 'Magnetic field around a wire',
-  explain: 'The wire carries current out of the page. The arrows show the magnetic field: circles around the wire. Drag the current slider through zero and watch the field reverse.',
+  title: 'Magnetic field around a wire', scene: 'wire_field',
+  explain: 'The wire is seen end on: a dot means current towards you, a cross means away from you. The arrows show the magnetic field going round the wire in rings, and the compasses line up with it. Slide the current through zero and watch everything reverse.',
   x: [-5, 5], y: [-5, 5],
   sliders: [{ name: 'I', label: 'Current I (A)', min: -3, max: 3, step: 0.1, value: 1.5 }],
   points: [{ name: 'W', x: 0, y: 0, draggable: false, label: 'wire', color: 'clay' }],
@@ -31,50 +31,42 @@ const WIRE_FIELD = {
 const DX = '(3*(x-m)^2-((x-m)^2+y^2))/(((x-m)^2+y^2+0.3)^2.5)'
 const DY = '3*(x-m)*y/(((x-m)^2+y^2+0.3)^2.5)'
 const MAGNET_COIL = {
-  title: 'A moving magnet and a coil',
-  explain: 'The magnet slides toward the coil. The arrows are its magnetic field. As the field through the coil grows, a current is pushed round the coil; when the magnet stops, the field stops changing and the current stops.',
+  title: 'A moving magnet and a coil', scene: 'magnet_coil',
+  explain: 'The magnet slides into the coil. The blue lines are its magnetic field. While the field through the coil is changing, a current is pushed round the coil and the meter swings; when the magnet stops, the current stops. Pull it back out and the needle swings the other way.',
   x: [-5, 5], y: [-4, 4],
-  sliders: [{ name: 'm', label: 'Magnet position', min: -4, max: 1.2, step: 0.05, value: -4 }],
+  sliders: [{ name: 'm', label: 'Magnet position', min: -3.5, max: 2.4, step: 0.05, value: -3.5 }],
   points: [
     { name: 'S', x: 'm-0.7', y: 0, label: 'S', color: 'navy' },
     { name: 'N', x: 'm+0.7', y: 0, label: 'N', color: 'clay' },
-    { name: 'P', x: 2.2, y: -1.6, draggable: false, label: 'coil', color: 'ink' },
-    { name: 'Q', x: 2.8, y: -1.6, draggable: false, label: '', color: 'ink' },
-    { name: 'R', x: 2.8, y: 1.6, draggable: false, label: '', color: 'ink' },
-    { name: 'U', x: 2.2, y: 1.6, draggable: false, label: '', color: 'ink' },
   ],
   segments: [
     { from: 'S', to: 'N', color: 'clay', arrow: true },
-    { from: 'P', to: 'Q', color: 'ink' }, { from: 'Q', to: 'R', color: 'ink' }, { from: 'R', to: 'U', color: 'ink' }, { from: 'U', to: 'P', color: 'ink' },
+    { from: [2.2, -1.6], to: [2.8, -1.6], color: 'ink' }, { from: [2.8, -1.6], to: [2.8, 1.6], color: 'ink' },
+    { from: [2.8, 1.6], to: [2.2, 1.6], color: 'ink' }, { from: [2.2, 1.6], to: [2.2, -1.6], color: 'ink' },
   ],
   field: { dx: DX, dy: DY, kind: 'vector' },
   readouts: [
-    { label: 'Magnetic field through the coil (relative)', expr: '10/(1+(2.5-m)^2)' },
-    { label: 'Distance from magnet to coil', expr: '2.5-m' },
+    { label: 'Field through the coil (relative)', expr: '10/(1+0.9*(3.2-m)^2)' },
+    { label: 'Magnet to coil centre', expr: 'abs(3.2-m)' },
   ],
 }
 
 const CHARGE_DRIFT = {
-  title: 'Charges drifting along a wire',
+  title: 'Charges drifting along a wire', scene: 'charge_drift',
   explain: 'Inside the wire the free charges drift along together when a cell pushes them. Current is how much charge passes a point each second: a bigger push moves them faster, so more charge passes.',
   x: [-5, 5], y: [-3, 3],
   sliders: [
-    { name: 'V', label: 'Push from the cell (voltage)', min: 0, max: 2, step: 0.1, value: 1 },
-    { name: 's', label: 'Time (s)', min: 0, max: 3, step: 0.05, value: 0 },
+    { name: 'V', label: 'Push from the cell (voltage)', min: 0, max: 2, step: 0.1, value: 0 },
   ],
   points: [
-    { name: 'A', x: -5, y: 1, draggable: false, label: '', color: 'ink' },
-    { name: 'B', x: 5, y: 1, draggable: false, label: 'wire', color: 'ink' },
-    { name: 'C', x: -5, y: -1, draggable: false, label: '', color: 'ink' },
-    { name: 'D', x: 5, y: -1, draggable: false, label: '', color: 'ink' },
-    { name: 'Qa', x: '-4.5+s*V', y: 0.4, label: '', color: 'clay' },
-    { name: 'Qb', x: '-3+s*V', y: -0.3, label: '', color: 'clay' },
-    { name: 'Qc', x: '-1.5+s*V', y: 0.2, label: '', color: 'clay' },
-    { name: 'Qd', x: '0+s*V', y: -0.5, label: '', color: 'clay' },
-    { name: 'Qf', x: '-6+s*V', y: -0.1, label: '', color: 'clay' },
+    { name: 'Qa', x: '-4.5+V', y: 0.4, label: '', color: 'clay' },
+    { name: 'Qb', x: '-3+V', y: -0.3, label: '', color: 'clay' },
+    { name: 'Qc', x: '-1.5+V', y: 0.2, label: '', color: 'clay' },
+    { name: 'Qd', x: '0+V', y: -0.5, label: '', color: 'clay' },
+    { name: 'Qf', x: '-6+V', y: -0.1, label: '', color: 'clay' },
   ],
-  segments: [{ from: 'A', to: 'B', color: 'ink', line: false }, { from: 'C', to: 'D', color: 'ink', line: false }],
-  readouts: [{ label: 'Distance each charge has drifted', expr: 's*V' }, { label: 'Current (relative: charge per second)', expr: 'V' }],
+  segments: [{ from: [-5, 1], to: [5, 1], color: 'ink' }, { from: [-5, -1], to: [5, -1], color: 'ink' }],
+  readouts: [{ label: 'Current (charge per second, relative)', expr: 'V' }],
 }
 
 const PROJECTILE = {
@@ -89,13 +81,13 @@ const PROJECTILE = {
 
 const TEMPLATES: Record<StageTemplate, { spec: Record<string, unknown>; play: { slider: string; seconds: number }; say: string; caption: string }> = {
   wire_field: { spec: WIRE_FIELD, play: { slider: 'I', seconds: 8 }, caption: 'Field around a current-carrying wire',
-    say: 'Look at the field itself now. Each arrow shows which way the magnetic field points: they go round the wire in circles. Watch what happens as the current shrinks to zero and then flows the other way: the arrows fade and then turn round. Drag the slider yourself to try it.' },
+    say: 'Here is the wire seen end on, with small compasses around it. The arrows on the circles show the magnetic field: it goes round the wire in rings. Watch as the current shrinks to zero: the field fades and every compass swings back to north. Then the current flows the other way, and the field and the compasses turn round. Drag the slider yourself to try it.' },
   magnet_coil: { spec: MAGNET_COIL, play: { slider: 'm', seconds: 8 }, caption: 'Moving magnet, changing field through a coil',
-    say: 'Here is the magnet with its field drawn as arrows, and a coil on the right. Watch the magnet slide toward the coil: the field passing through the coil gets stronger. That change is what pushes a current round the coil. Stop the magnet and the field stops changing, so the current stops. Drag the magnet yourself.' },
+    say: 'Here is a bar magnet with its field drawn as blue lines, and a coil joined to a current meter. Watch the magnet slide into the coil: the field passing through the coil gets stronger, the coil lights up and the meter needle swings. That changing field is what pushes a current round the coil. When the magnet stops, the needle falls back to zero. Drag the magnet back out yourself and watch the needle swing the other way.' },
   projectile: { spec: PROJECTILE, play: { slider: 'k', seconds: 7 }, caption: 'A thrown ball along its path',
     say: 'Watch the ball fly. Gravity pulls it down the whole time: it rises more and more slowly, stops rising at the very top, then falls faster and faster, tracing this curved path. Change the launch speed and play it again.' },
-  charge_drift: { spec: CHARGE_DRIFT, play: { slider: 's', seconds: 8 }, caption: 'Charges drifting along a wire',
-    say: 'Let us look inside the wire. These dots are free charges. When the cell pushes, they all drift along the wire together. Current is how much charge passes a point every second. Turn up the push and watch them move faster: more charge passes, so the current is bigger.' },
+  charge_drift: { spec: CHARGE_DRIFT, play: { slider: 'V', seconds: 8 }, caption: 'Charges drifting along a wire',
+    say: 'Let us look inside the wire. These blue dots are free charges. With no push they only jiggle in place. As the cell pushes harder they all drift along the wire together, faster and faster, and the counter shows more charge passing the dashed line every second. That rate is the current.' },
 }
 
 /** Which ready-made live figure fits a text (lesson title + beat/section text), or null. */

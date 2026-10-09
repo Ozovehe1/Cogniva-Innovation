@@ -5,6 +5,7 @@
  * <name>x / <name>y (point A gives ax, ay). Shared by the server (validation, static SVG fallback) and the client.
  */
 import { compileExpr } from '../lesson-schema'
+import { SCENE_KINDS, chargeDriftSvg, magnetCoilSvg, sceneForTitle, stepWireField, wireFieldSvg, type SceneKind } from './scenes'
 
 export type IxColor = 'ink' | 'accent' | 'clay' | 'navy' | 'amber'
 export const IX_HEX: Record<IxColor, string> = { ink: '#14141A', accent: '#1F4D3A', clay: '#A4502A', navy: '#23406A', amber: '#8A5A00' }
@@ -34,6 +35,8 @@ export interface IxSpec {
   ode?: { expr: string; from: string; color: IxColor }
   surface?: { expr: string; z?: [number, number]; label?: string }
   readouts: IxReadout[]
+  /** A hand-built animated scene drawn instead of the plotted figure (fixed templates only; sliders still drive it). */
+  scene?: SceneKind
 }
 
 const RESERVED = new Set(['x', 'y', 'e', 'pi', 't', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'exp', 'ln', 'log', 'sqrt', 'abs', 'sinh', 'cosh', 'tanh', 'floor', 'ceil'])
@@ -214,7 +217,9 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
     readouts.push({ label: str(q.label, 30) || expr.slice(0, 30), expr, unit: str(q.unit, 10) || undefined })
   })
 
-  const spec: IxSpec = { title, explain: str(o.explain, 300) || undefined, x, y, sliders, points, gliders, functions, segments, polygons, circles, field, ode, surface, readouts }
+  const sceneRaw = str(o.scene, 20) as SceneKind
+  const scene = SCENE_KINDS.includes(sceneRaw) ? sceneRaw : sceneForTitle(title) ?? undefined
+  const spec: IxSpec = { title, explain: str(o.explain, 300) || undefined, x, y, sliders, points, gliders, functions, segments, polygons, circles, field, ode, surface, readouts, ...(scene ? { scene } : {}) }
   const things = points.length + functions.length + (field ? 1 : 0) + (surface ? 1 : 0)
   if (!things) errors.push('give at least one function, point, field or surface')
   if (surface && (points.length || gliders.length || field || ode)) errors.push('a 3D surface stands alone: use sliders with it, not points, fields or ODEs')
@@ -336,6 +341,13 @@ export function figureGeom(spec: IxSpec): { aspect: number; bbox: [number, numbe
 }
 
 export function interactiveSvg(spec0: IxSpec, opts: { recap?: boolean } = {}): string {
+  // A scene's still: the moment that teaches (magnet entering the coil with the meter swung; field on; charges moving).
+  if (spec0.scene && spec0.sliders[0]) {
+    const sl = spec0.sliders[0], range = { min: sl.min, max: sl.max }
+    if (spec0.scene === 'magnet_coil') return magnetCoilSvg(Math.min(sl.max, 1.6), { t: 0.4, emf: 0.75, needle: 39, phase: 0.3 }, range)
+    if (spec0.scene === 'wire_field') { const I = Math.max(Math.abs(sl.min), Math.abs(sl.max)); return wireFieldSvg(I, stepWireField({ t: 0 }, I, I, 1), range) }
+    return chargeDriftSvg(sl.max * 0.7, { t: 0.3, drift: 1.2, passed: 6 }, range)
+  }
   // The recap still is shown about 340 px wide on a phone: a smaller canvas with larger type keeps every label
   // readable there (≥ 12 px rendered; docs/design/lesson-ui.md §4, §13). The chat/lesson still keeps 640 × 420.
   const R = !!opts.recap
