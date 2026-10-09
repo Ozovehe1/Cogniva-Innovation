@@ -729,8 +729,14 @@ const VISUAL: ToolSpec[] = [
       // A moving object (pendulum, spring, projectile, orbit) must be seen moving: a sliders-and-readout card with no
       // figure was shown to learners, then the model called again with the motion (three cards for one pendulum).
       const about = `${s(a.title, 120)} ${s(a.explain, 300)}`
-      if (!v.spec.motion && !v.spec.plot && /\b(pendul|swing|spring|oscillat|projectile|thrown|orbit|planet|satellite|bob\b|bounce|roll)/i.test(about)) {
-        return { error: 'Nothing moves on screen: this is about a moving object, so add `motion` (x(t), y(t), t_max; for a pendulum anchor ["0","0"] so the rod swings) and a `plot` with the space it moves in. Call simulate once more with the full spec.' }
+      // A graph alone is not enough either (a pendulum answer showed only a period-vs-length line, no bob).
+      if (!v.spec.motion && /\b(pendul|swing|spring|oscillat|projectile|thrown|orbit|planet|satellite|bob\b|bounce|roll)/i.test(about)) {
+        return { error: 'Nothing moves on screen: this is about a moving object, so add `motion` (x(t), y(t), t_max; for a pendulum anchor ["0","0"] so the rod swings) and a `plot` with the space it moves in (for a pendulum: x and y in metres, curve y = -sqrt(L^2 - x^2)). Put period etc. in outputs. Call simulate once more with the full spec.' }
+      }
+      // Every curve is a function of x: an expression without x draws one flat line that never changes along the axis.
+      const curves = v.spec.plot?.curves ?? []
+      if (curves.length && curves.every(c => !/(^|[^a-z])x([^a-z]|$)/i.test(c.expr))) {
+        return { error: `The plot curves (${curves.map(c => c.expr).join(', ').slice(0, 120)}) do not use x, so each draws a flat line. Write curves as functions of x (the horizontal axis), using sliders as constants. Call simulate once more.` }
       }
       // One simulation per answer: a second call in the same turn is a revision, and two near-identical cards confuse.
       if (ctx.blocks.some(b => b.kind === 'sim')) return { shown: false, note: 'A simulation is already shown in this answer; describe it instead of calling simulate again.' }
