@@ -7,7 +7,7 @@
  * part of the board scrolls the page (browserPan), on a point it drags.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import 'jsxgraph/distrib/jsxgraph.css'
+import './jsxgraph.css'
 import { RotateCcw } from 'lucide-react'
 import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
