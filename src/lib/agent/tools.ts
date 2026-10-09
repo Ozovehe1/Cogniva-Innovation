@@ -27,6 +27,8 @@ import { MAX_BOARD_STEPS, REGIONS, emptyDoc, ensureIds, idsInRegion, loadBoard, 
 import { reviewBoard } from './board-review'
 import { boardSnapshotSvg, svgToPng } from './board-render'
 import { visionJson } from './llm'
+import { validateInteractive, interactiveSvg, interactiveAlt } from './interactive'
+import { sanitizeSvg } from './visual'
 import { LIBRARY, SubstanceError, renderMathDiagram, type DiagramLibrary } from './math-diagram'
 import type { Step } from '../lesson-schema'
 import { compute, type ComputeOp } from './compute'
@@ -595,6 +597,51 @@ const VISUAL: ToolSpec[] = [
   },
   {
     def: {
+      name: 'interactive',
+      description: 'A live figure the learner explores by DRAGGING (JSXGraph), from a JSON spec (never code). Expressions use x (and y in field/ode/surface), slider names, and point coordinates as <name>x/<name>y (point A gives ax, ay); ^ for powers; sin cos tan exp ln sqrt abs pi. Pieces: points {name (1-3 letters), x, y: numbers (draggable) or expressions (follows others)}; gliders {name, on: function name, x} (a point that slides along a curve; functions may use its coords, e.g. a tangent "2*px*(x-px)+px^2"); functions {name, expr}; segments {from, to, arrow?, line?, dashed?}; polygons {points}; circles {center, through | radius}; sliders {name, min, max, value}; field {kind: vector (dx, dy) | slope (dy)}; ode {dydx, from: a draggable point} (solution curve through it); surface {expr z(x,y)} (3D, rotatable; sliders only); readouts {label, expr} (live values). Must have something to drag or a slider.',
+      parameters: obj({
+        title: { type: 'string' }, explain: { type: 'string', description: 'one sentence: what to try' },
+        x_range: { type: 'array', items: { type: 'number' } }, y_range: { type: 'array', items: { type: 'number' } },
+        points: { type: 'array', maxItems: 10, items: { type: 'object', properties: { name: { type: 'string' }, x: { description: 'number (draggable) or expression' }, y: { description: 'number (draggable) or expression' }, draggable: { type: 'boolean' }, label: { type: 'string' }, color: { type: 'string' } }, required: ['name', 'x', 'y'] } },
+        gliders: { type: 'array', maxItems: 3, items: { type: 'object', properties: { name: { type: 'string' }, on: { type: 'string' }, x: { type: 'number' }, label: { type: 'string' } }, required: ['name', 'on'] } },
+        functions: { type: 'array', maxItems: 4, items: { type: 'object', properties: { name: { type: 'string' }, expr: { type: 'string' }, label: { type: 'string' }, dashed: { type: 'boolean' }, color: { type: 'string' } }, required: ['expr'] } },
+        segments: { type: 'array', maxItems: 10, items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, arrow: { type: 'boolean' }, line: { type: 'boolean' }, dashed: { type: 'boolean' } }, required: ['from', 'to'] } },
+        polygons: { type: 'array', maxItems: 3, items: { type: 'object', properties: { points: { type: 'array', items: { type: 'string' } } }, required: ['points'] } },
+        circles: { type: 'array', maxItems: 3, items: { type: 'object', properties: { center: { type: 'string' }, through: { type: 'string' }, radius: { description: 'number or expression' } }, required: ['center'] } },
+        sliders: { type: 'array', maxItems: 5, items: { type: 'object', properties: { name: { type: 'string' }, label: { type: 'string' }, min: { type: 'number' }, max: { type: 'number' }, value: { type: 'number' }, step: { type: 'number' } }, required: ['name', 'min', 'max'] } },
+        field: { type: 'object', properties: { kind: { type: 'string', enum: ['vector', 'slope'] }, dx: { type: 'string' }, dy: { type: 'string' } }, required: ['dy'] },
+        ode: { type: 'object', properties: { dydx: { type: 'string' }, from: { type: 'string' } }, required: ['dydx', 'from'] },
+        surface: { type: 'object', properties: { expr: { type: 'string' }, z_range: { type: 'array', items: { type: 'number' } } }, required: ['expr'] },
+        readouts: { type: 'array', maxItems: 4, items: { type: 'object', properties: { label: { type: 'string' }, expr: { type: 'string' }, unit: { type: 'string' } }, required: ['label', 'expr'] } },
+        on_board: { type: 'boolean', description: 'also pin a still of it on the chat whiteboard (to annotate it later)' },
+      }, ['title']),
+    },
+    tier: 'visual', modes: ['chat'], label: 'Building an interactive figure',
+    run: async (a, ctx) => {
+      const v = validateInteractive(a)
+      if (!v.spec) return { error: `Invalid interactive spec: ${v.errors.slice(0, 6).join('; ')}. Fix it and call again (or use plot/simulate).` }
+      const alt = interactiveAlt(v.spec)
+      let boardFigure: string | undefined
+      if (a.on_board === true) {
+        const svg = sanitizeSvg(interactiveSvg(v.spec)).svg
+        if (svg) {
+          const doc0 = await getBoard(ctx)
+          const append = doc0.steps.length > 0
+          const area = append ? { x: 420, y: 70, w: 360, h: 410 } : { x: 30, y: 72, w: 740, h: 410 }
+          const kk = Math.min(area.w / 640, area.h / 420), w = Math.round(640 * kk), h = Math.round(420 * kk)
+          const fig = { type: 'draw', shape: { kind: 'figure', x: Math.round(area.x + (area.w - w) / 2), y: Math.round(area.y + (area.h - h) / 2), w, h, svg, alt }, say: v.spec.title } as unknown as Step
+          const steps = append ? ensureIds([...doc0.steps, fig]) : ensureIds([{ type: 'write', text: v.spec.title, x: 24, y: 22, size: 'lg' } as unknown as Step, fig])
+          const out = await commitBoard(ctx, append ? { ...doc0, steps } : { ...emptyDoc(), rev: doc0.rev, steps }, append ? doc0.steps.length : 0, append ? boardTitle(doc0) : v.spec.title, { vision: false, replace: !append })
+          boardFigure = sceneOf(ctx.board!).elements.filter(e => e.type === 'figure').pop()?.id
+          void out
+        }
+      }
+      ctx.emit({ kind: 'interactive', id: bid(), spec: v.spec, alt, boardFigure })
+      return { shown: true, alt, board_figure: boardFigure, note: 'Tell the learner what to drag and what to notice (1-3 sentences).' }
+    },
+  },
+  {
+    def: {
       name: 'simulate', description: 'An interactive simulation: sliders drive formulas, live readouts and curves; optional moving dot along (x(t), y(t)). Expressions use slider names, x in curves, t in motion; ^ for powers.',
       parameters: obj({
         title: { type: 'string' }, explain: { type: 'string' },
@@ -754,7 +801,8 @@ const ROUTES: [RegExp, string[]][] = [
   [/\b(graph|plot|chart|curve|axes|parabola|sketch y|y\s*=)/i, ['plot']],
   [/\b(diagram|label(l)?ed|illustrat|draw (me )?a|picture of|structure of|cell|circuit|anatomy|parts of)\b/i, ['illustrate']],
   [/\b(venn|euler|sets\b|set notation|subset|union|intersection|complement|triangle|bisect|perpendicular|midpoint|right angle|angle [A-Z]{1,3}\b|construction|congruen|tree diagram|binary tree|graph theory|nodes?|vertices|edges|vector (sum|addition)|resultant|head to tail|orthogonal)/i, ['math_diagram']],
-  [/\b(simulat|slider|drag|play with|what happens (if|when)|change the|interactive|experiment)/i, ['simulate']],
+  [/\b(simulat|slider|drag|play with|what happens (if|when)|change the|interactive|experiment)/i, ['simulate', 'interactive']],
+  [/\b(drag|move the point|explore|tangent|gradient|slope field|direction field|vector field|differential equation|ode|dy\/dx|surface|3d graph|z\s*=|locus|circle through|transformation|reflect|rotate the)/i, ['interactive']],
   [/\b(animat|clip|video|3d|rotate|rotating|movie)/i, ['animate_concept']],
   [/\b(python|code|program|matrix|matrices|eigen|dataset|data set|csv|statistic|regression|numpy|integrat|differentia|numerical|network graph)/i, ['run_python']],
   [/\b(search|web|internet|online|news|latest|current|today'?s|recent|who (is|was|won)|when (did|was)|wikipedia|arxiv|research|paper|source)/i, ['web_search', 'fetch_page']],

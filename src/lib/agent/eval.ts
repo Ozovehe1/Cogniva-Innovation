@@ -17,6 +17,7 @@ import { compute } from './compute'
 import { ensureIds, opsToSteps, sceneOf } from './board-scene'
 import { checkScene } from './board-review'
 import { boardSnapshotPng } from './board-render'
+import { validateInteractive, interactiveSvg } from './interactive'
 import { checkSubstance, cleanSubstance, renderMathDiagram, repairSubstance, type DiagramLibrary } from './math-diagram'
 import type { Step } from '../lesson-schema'
 import { fetchPage, webSearch } from './web'
@@ -108,12 +109,23 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   const badPred = checkSubstance('sets', 'Set A\nOrbit(A, A)')
   const badType = checkSubstance('geometry', 'Point A, B\nSet S\nTriangle(A, B, S)')
   const notSub = cleanSubstance('Set A\nforall Set x { x.icon = Circle {} }')
+  // Interactive figures: valid specs pass and draw a static fallback; code and dangling names are refused.
+  const IX: [string, unknown][] = [
+    ['ix-tangent-glider', { title: 'Tangent', x_range: [-4, 4], y_range: [-2, 10], functions: [{ name: 'f', expr: 'x^2' }, { expr: '2*px*(x - px) + px^2', dashed: true }], gliders: [{ name: 'P', on: 'f', x: 1 }], readouts: [{ label: 'slope', expr: '2*px' }] }],
+    ['ix-triangle-drag', { title: 'Triangle', points: [{ name: 'A', x: 0, y: 0 }, { name: 'B', x: 4, y: 0 }, { name: 'C', x: 1, y: 3 }, { name: 'M', x: '(ax+bx)/2', y: '(ay+by)/2' }], polygons: [{ points: ['A', 'B', 'C'] }], segments: [{ from: 'C', to: 'M', dashed: true }] }],
+    ['ix-ode-slope', { title: 'ODE', field: { kind: 'slope', dy: 'y - x' }, points: [{ name: 'P', x: 0, y: 0.5 }], ode: { dydx: 'y - x', from: 'P' } }],
+    ['ix-surface-3d', { title: 'Saddle', x_range: [-2, 2], y_range: [-2, 2], surface: { expr: 'x^2 - k*y^2' }, sliders: [{ name: 'k', min: 0, max: 2, value: 1 }] }],
+  ]
+  for (const [id, raw] of IX) { const v = validateInteractive(raw); const svg = v.spec ? sanitizeSvg(interactiveSvg(v.spec)).svg : null; out.push({ id, group: 'static', pass: !!v.spec && !!svg && svg.length > 500, detail: v.errors.join('; ').slice(0, 160) || `${svg?.length ?? 0} chars fallback` }) }
+  const ixBad = [validateInteractive({ title: 'x', functions: [{ expr: 'constructor.constructor("alert(1)")()' }], points: [{ name: 'A', x: 0, y: 0 }] }), validateInteractive({ title: 'x', segments: [{ from: 'A', to: 'Q' }], points: [{ name: 'A', x: 0, y: 0 }] }), validateInteractive({ title: 'x', functions: [{ expr: 'x^2' }] })]
+  out.push({ id: 'ix-rejects-bad-spec', group: 'static', pass: ixBad.every(v => !v.spec), detail: ixBad.map(v => v.errors[0] ?? 'ACCEPTED').join(' | ').slice(0, 160) })
   out.push({ id: 'md-rejects-bad-substance', group: 'static', pass: badPred.length > 0 && badType.length > 0 && notSub.errors.length > 0, detail: [...badPred, ...badType, ...notSub.errors].join('; ').slice(0, 160) })
   return out
 }
 
 /** Spec checks for tool calls whose arguments can be validated without running them. */
 const ARG_CHECKS: Record<string, (a: Record<string, unknown>) => string | null> = {
+  interactive: a => { const v = validateInteractive(a); return v.spec ? null : `${v.errors.slice(0, 3).join('; ')} <- ${JSON.stringify(a).slice(0, 160)}` },
   math_diagram: a => { const lib = String(a.library) as DiagramLibrary; const e = checkSubstance(lib, repairSubstance(lib, cleanSubstance(String(a.substance ?? '').replace(/\\n/g, '\n').replace(/;\s*/g, '\n')).substance)); return e.length ? `${e.join('; ')} <- ${String(a.substance).slice(0, 160)}` : null },
 }
 
@@ -132,12 +144,14 @@ const TOOL_CASES: { id: string; msg: string; expect: string[] }[] = [
   { id: 'board', msg: 'Can you explain on the whiteboard how a lever lets you lift heavy things?', expect: ['draw_on_board', 'animate_concept'] },
   { id: 'plot', msg: 'Graph y = x^2 - 4 and show me where it crosses the x-axis.', expect: ['plot', 'compute', 'run_python'] },
   { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['illustrate', 'draw_on_board'] },
-  { id: 'simulate', msg: 'I want to play with how the launch angle changes how far a ball flies. Make something I can drag.', expect: ['simulate'] },
+  { id: 'simulate', msg: 'I want to play with how the launch angle changes how far a ball flies. Make something I can drag.', expect: ['simulate', 'interactive'] },
   { id: 'compute', msg: 'What is 23.5 multiplied by 17.2?', expect: ['compute', 'run_python'] },
   { id: 'rag', msg: 'What did we cover in my last lesson? Remind me of the example.', expect: ['search_my_learning', 'get_lesson_digest', 'get_path_progress'] },
   { id: 'practice', msg: 'Give me a few practice questions on my current topic.', expect: ['make_practice_set', 'get_path_progress', 'get_learner_snapshot'] },
   { id: 'web', msg: 'Search the web: what is the tallest building in Lagos right now?', expect: ['web_search'] },
   { id: 'python', msg: 'Use Python to find the eigenvalues of the matrix [[2,1],[1,2]] and plot the vectors.', expect: ['run_python'] },
+  { id: 'ix-tangent', msg: 'I want to drag a point along y = x^2 and watch the tangent line and its slope change.', expect: ['interactive'] },
+  { id: 'ix-ode', msg: 'Let me explore solutions of dy/dx = y - x: I want to drag the starting point and see the solution curve over the slope field.', expect: ['interactive'] },
   { id: 'venn', msg: 'Draw a Venn diagram: in a class, 20 students play football, 15 play chess and 6 play both.', expect: ['math_diagram'] },
   { id: 'geometry', msg: 'Show me triangle ABC with the bisector of angle B meeting AC at D, with the equal angles marked exactly.', expect: ['math_diagram'] },
   { id: 'animate', msg: 'Make me a proper animated clip showing a 3D cube rotating to explain volume.', expect: ['animate_concept', 'draw_on_board'] },

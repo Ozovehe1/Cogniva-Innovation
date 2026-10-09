@@ -27,7 +27,7 @@ const LIMITS = () => ({
 
 /** What earlier assistant messages showed, as a system note (never inside assistant text, which models imitate). */
 function blockNote(blocks: Block[]) {
-  return blocks.filter(b => b.kind !== 'checked' && b.kind !== 'sources').map(b => b.kind === 'board' ? `${b.plot ? 'graph' : 'whiteboard scene'} "${b.title}"` : b.kind === 'practice' ? `practice set "${b.title}" (practice_action_id ${b.actionId})` : b.kind === 'confirm' ? `proposal "${b.title}" (${b.status})` : b.kind === 'svg' ? 'SVG diagram' : b.kind === 'sim' ? `simulation "${b.spec.title}"` : b.kind === 'clip' ? 'animation clip' : b.kind === 'image' ? 'Python figure' : b.kind)
+  return blocks.filter(b => b.kind !== 'checked' && b.kind !== 'sources').map(b => b.kind === 'board' ? `${b.plot ? 'graph' : 'whiteboard scene'} "${b.title}"` : b.kind === 'practice' ? `practice set "${b.title}" (practice_action_id ${b.actionId})` : b.kind === 'confirm' ? `proposal "${b.title}" (${b.status})` : b.kind === 'svg' ? 'SVG diagram' : b.kind === 'sim' ? `simulation "${b.spec.title}"` : b.kind === 'interactive' ? `interactive figure "${b.spec.title}"${b.boardFigure ? ` (also on the board as ${b.boardFigure})` : ''}` : b.kind === 'clip' ? 'animation clip' : b.kind === 'image' ? 'Python figure' : b.kind)
 }
 
 /**

@@ -1,6 +1,7 @@
 'use client'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { ArrowRight, Check, ExternalLink, Pause, Play, RotateCcw, Volume2, X } from 'lucide-react'
 import { WhiteboardPlayer } from '@/components/whiteboard'
 import { RichText } from '@/components/rich-text'
@@ -10,6 +11,9 @@ import type { Block } from '@/lib/agent/types'
 import type { SimSpec } from '@/lib/agent/visual'
 import { ConfirmBlock } from './confirm'
 
+// JSXGraph (~1 MB) loads only when an interactive figure is on screen.
+const InteractiveFigure = dynamic(() => import('./interactive'), { ssr: false, loading: () => <div className="mt-3 flex aspect-[3/2] w-full items-center justify-center rounded-[10px] bg-[#FBFAF7]"><Spinner /></div> })
+
 const frame = 'overflow-hidden rounded-[14px] border border-line bg-surface shadow-[var(--shadow-card)]'
 const label = 'text-[11px] font-medium uppercase tracking-[0.08em] text-muted'
 
@@ -18,6 +22,14 @@ export function AgentBlock({ block }: { block: Block }) {
     case 'board': return <BoardBlock block={block} />
     case 'svg': return <SvgBlock svg={block.svg} alt={block.alt} />
     case 'sim': return <SimBlock spec={block.spec} />
+    case 'interactive': return (
+      <div className={cx(frame, 'p-4')}>
+        <p className={label}>Interactive</p>
+        <h3 className="mt-1 font-display text-[20px] leading-snug text-ink"><RichText text={block.spec.title} /></h3>
+        {block.spec.explain && <p className="mt-1 text-[14px] leading-relaxed text-ink-2"><RichText text={block.spec.explain} /></p>}
+        <InteractiveFigure spec={block.spec} alt={block.alt} />
+      </div>
+    )
     case 'clip': return <ClipBlock block={block} />
     case 'image': return <figure className={cx(frame, 'bg-white p-2')}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src={`data:image/png;base64,${block.png}`} alt={block.caption ?? 'Figure from Python'} className="mx-auto h-auto max-w-full" />{block.caption && <figcaption className="px-2 pb-1 pt-2 text-[13px] text-muted">{block.caption}</figcaption>}</figure>
     case 'code': return <CodeBlock block={block} />

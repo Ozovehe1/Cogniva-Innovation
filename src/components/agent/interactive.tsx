@@ -1,0 +1,142 @@
+'use client'
+/**
+ * Live interactive figure (JSXGraph, loaded only when one appears). Draws a validated IxSpec: draggable points,
+ * gliders, functions that follow points and sliders, segments, polygons, circles, vector/slope fields, ODE solution
+ * curves from a draggable start, and 3D surfaces. Every formula is compiled by the app's safe expression parser;
+ * nothing from the model runs as code. Sliders are native range inputs (big touch targets); one finger on an empty
+ * part of the board scrolls the page (browserPan), on a point it drags.
+ */
+import { useEffect, useMemo, useRef, useState } from 'react'
+import 'jsxgraph/distrib/jsxgraph.css'
+import { RotateCcw } from 'lucide-react'
+import { RichText } from '@/components/rich-text'
+import { buttonClass, cx } from '@/components/ui'
+import { IX_HEX, compileSpec, initialEnv, odeCurve, type IxEnv, type IxSpec } from '@/lib/agent/interactive'
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Board = any
+
+const fmt = (v: number) => (!Number.isFinite(v) ? '—' : Math.abs(v) >= 1e5 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(2) : String(Number(v.toFixed(3))))
+
+export default function InteractiveFigure({ spec, alt }: { spec: IxSpec; alt: string }) {
+  const k = useMemo(() => compileSpec(spec), [spec])
+  const boxRef = useRef<HTMLDivElement>(null)
+  const boardRef = useRef<Board>(null)
+  const sliders = useRef<IxEnv>(Object.fromEntries(spec.sliders.map(s => [s.name.toLowerCase(), s.value])))
+  const [vals, setVals] = useState<IxEnv>(() => ({ ...sliders.current }))
+  const [reads, setReads] = useState<number[]>(() => { const { env } = initialEnv(spec, k); return k.readouts.map(f => f(0, env)) })
+  const [failed, setFailed] = useState<string | null>(null)
+  const [nonce, setNonce] = useState(0)
+  const ids = useMemo(() => `ix-${Math.random().toString(36).slice(2, 9)}`, [])
+
+  useEffect(() => {
+    let cancelled = false
+    let board: Board = null
+    let jxg: any = null
+    ;(async () => {
+      try {
+        const mod: any = await import('jsxgraph')
+        const JXG = mod.default ?? mod
+        jxg = JXG
+        if (cancelled || !boxRef.current) return
+        const is3d = !!spec.surface
+        board = JXG.JSXGraph.initBoard(boxRef.current.id, {
+          boundingbox: is3d ? [-8, 8, 8, -8] : [spec.x[0], spec.y[1], spec.x[1], spec.y[0]],
+          axis: !is3d, grid: false, keepAspectRatio: false, showCopyright: false, showNavigation: false, showInfobox: false,
+          pan: { enabled: true, needTwoFingers: true }, browserPan: true, zoom: { enabled: false },
+          defaultAxes: { x: { ticks: { label: { fontSize: 11, color: '#66666F' } } }, y: { ticks: { label: { fontSize: 11, color: '#66666F' } } } },
+        })
+        boardRef.current = board
+        const pts: Record<string, any> = {}
+        // The live environment: slider values plus every point's current coordinates.
+        const env = (): IxEnv => {
+          const e: IxEnv = { ...sliders.current }
+          for (const [n, p] of Object.entries(pts)) { e[`${n.toLowerCase()}x`] = p.X(); e[`${n.toLowerCase()}y`] = p.Y() }
+          return e
+        }
+        const pointStyle = (color: string, drag: boolean, label: string) => ({ name: label, size: drag ? 6 : 3.5, fillColor: color, strokeColor: drag ? '#ffffff' : color, strokeWidth: drag ? 2 : 0, fixed: !drag, showInfobox: false, label: { fontSize: 15, color, offset: [10, 10] }, highlightFillColor: color, precision: { touch: 30, mouse: 6 } })
+        if (is3d) {
+          const zf = k.surface!
+          const zr = spec.surface!.z ?? (() => { const vs: number[] = []; for (let i = 0; i <= 12; i++) for (let j = 0; j <= 12; j++) vs.push(zf(spec.x[0] + (spec.x[1] - spec.x[0]) * i / 12, { ...sliders.current, y: spec.y[0] + (spec.y[1] - spec.y[0]) * j / 12 })); const f = vs.filter(Number.isFinite); const lo = Math.min(...f), hi = Math.max(...f); return [lo, hi > lo ? hi : lo + 1] as [number, number] })()
+          const view = board.create('view3d', [[-6, -5], [11, 11], [spec.x, spec.y, zr]], { xPlaneRear: { visible: false }, yPlaneRear: { visible: false }, projection: 'parallel', trackball: { enabled: true } })
+          view.create('functiongraph3d', [(x: number, y: number) => zf(x, { ...sliders.current, y }), spec.x, spec.y], { strokeWidth: 0.6, strokeColor: IX_HEX.accent, stepsU: 28, stepsV: 28 })
+        } else {
+          for (const p of spec.points) {
+            const k2 = k
+            const coords = p.xExpr || p.yExpr ? [() => (p.xExpr ? k2.px[p.name](0, env()) : p.x), () => (p.yExpr ? k2.py[p.name](0, env()) : p.y)] : [p.x, p.y]
+            pts[p.name] = board.create('point', coords, pointStyle(IX_HEX[p.color], p.drag, p.label))
+          }
+          const curves: Record<string, any> = {}
+          for (const f of spec.functions) curves[f.name] = board.create('functiongraph', [(x: number) => k.fn[f.name](x, env())], { strokeColor: IX_HEX[f.color], strokeWidth: 2.6, dash: f.dashed ? 2 : 0, name: f.label, withLabel: !!f.label, label: { fontSize: 13, color: IX_HEX[f.color] }, highlight: false })
+          for (const g of spec.gliders) pts[g.name] = board.create('glider', [g.x, k.fn[g.on](g.x, env()), curves[g.on]], pointStyle(IX_HEX[g.color], true, g.label))
+          for (const pg of spec.polygons) board.create('polygon', pg.points.map(n => pts[n]), { fillColor: IX_HEX[pg.color], fillOpacity: 0.12, highlight: false, borders: { strokeColor: IX_HEX[pg.color], strokeWidth: 2, highlight: false }, vertices: { visible: false } })
+          spec.circles.forEach((c, i) => board.create('circle', c.through ? [pts[c.center], pts[c.through]] : [pts[c.center], () => Math.abs(k.radius[i]!(0, env()))], { strokeColor: IX_HEX[c.color], strokeWidth: 2.2, highlight: false }))
+          for (const s of spec.segments) board.create(s.arrow ? 'arrow' : s.line ? 'line' : 'segment', [pts[s.from], pts[s.to]], { strokeColor: IX_HEX[s.color], strokeWidth: 2.2, dash: s.dashed ? 2 : 0, highlight: false })
+          if (spec.field) {
+            const n = 14, xr = [spec.x[0], n, spec.x[1]], yr = [spec.y[0], Math.round(n * 0.7), spec.y[1]]
+            if (spec.field.kind === 'slope') board.create('slopefield', [(x: number, y: number) => k.fieldDy!(x, { ...env(), y }), xr, yr], { strokeColor: '#8C8C99', strokeWidth: 1.2, highlight: false })
+            else board.create('vectorfield', [[(x: number, y: number) => k.fieldDx!(x, { ...env(), y }), (x: number, y: number) => k.fieldDy!(x, { ...env(), y })], xr, yr], { strokeColor: '#8C8C99', strokeWidth: 1.2, highlight: false, scale: 0.35 * (spec.x[1] - spec.x[0]) / n })
+          }
+          if (spec.ode) {
+            const from = pts[spec.ode.from]
+            const curve = board.create('curve', [[0], [0]], { strokeColor: IX_HEX[spec.ode.color], strokeWidth: 2.6, highlight: false })
+            curve.updateDataArray = function (this: any) {
+              const d = odeCurve(k.ode!, env(), from.X(), from.Y(), spec.x, spec.y, 200)
+              this.dataX = d.map(p => p[0]); this.dataY = d.map(p => p[1])
+            }
+          }
+          // Keep draggable points on screen.
+          for (const p of spec.points.filter(q => q.drag)) pts[p.name].on('drag', () => { const q = pts[p.name]; const x = Math.min(spec.x[1], Math.max(spec.x[0], q.X())), y = Math.min(spec.y[1], Math.max(spec.y[0], q.Y())); if (x !== q.X() || y !== q.Y()) q.moveTo([x, y]) })
+        }
+        let raf = 0
+        board.on('update', () => {
+          if (raf || !k.readouts.length) return
+          raf = requestAnimationFrame(() => { raf = 0; const e = env(); setReads(k.readouts.map(f => f(0, e))) })
+        })
+        board.update()
+      } catch (err) {
+        if (!cancelled) setFailed(err instanceof Error ? err.message : String(err))
+      }
+    })()
+    return () => {
+      cancelled = true
+      try { if (board && jxg) jxg.JSXGraph.freeBoard(board) } catch { /* already gone */ }
+      boardRef.current = null
+    }
+  }, [spec, k, nonce])
+
+  const setSlider = (name: string, v: number) => {
+    sliders.current = { ...sliders.current, [name.toLowerCase()]: v }
+    setVals(s => ({ ...s, [name.toLowerCase()]: v }))
+    boardRef.current?.update()
+  }
+
+  return (
+    <div>
+      {failed ? (
+        <p className="rounded-[10px] bg-sunken px-3 py-2 text-[13px] text-muted">The live figure could not load here. {alt}</p>
+      ) : (
+        <div id={`${ids}-${nonce}`} ref={boxRef} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] border-0 bg-[#FBFAF7]" style={{ aspectRatio: spec.surface ? '1 / 0.9' : '3 / 2', maxHeight: 440 }} role="img" aria-label={alt} />
+      )}
+      {spec.sliders.length > 0 && (
+        <div className="mt-3 space-y-3">
+          {spec.sliders.map(s => (
+            <label key={s.name} className="block">
+              <span className="flex items-baseline justify-between text-[13px]"><span className="text-ink-2"><RichText text={s.label} /></span><span className="tnum font-medium text-ink">{fmt(vals[s.name.toLowerCase()])}</span></span>
+              <input type="range" min={s.min} max={s.max} step={s.step} value={vals[s.name.toLowerCase()]} onChange={e => setSlider(s.name, Number(e.target.value))} className="mt-1 h-6 w-full accent-[#1F4D3A]" />
+            </label>
+          ))}
+        </div>
+      )}
+      {spec.readouts.length > 0 && (
+        <dl className="mt-3 grid grid-cols-2 gap-2">
+          {spec.readouts.map((r, i) => <div key={i} className="rounded-[10px] bg-sunken px-3 py-2"><dt className="text-[12px] text-muted"><RichText text={r.label} /></dt><dd className="tnum text-[17px] font-medium text-ink">{fmt(reads[i])}{r.unit ? <span className="text-[13px] font-normal text-muted"> {r.unit}</span> : null}</dd></div>)}
+        </dl>
+      )}
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <span className="text-[12.5px] leading-snug text-muted">{spec.surface ? 'Drag the surface to turn it.' : [...spec.points.filter(p => p.drag).map(p => p.label), ...spec.gliders.map(g => g.label)].length ? `Drag ${[...spec.points.filter(p => p.drag).map(p => p.label), ...spec.gliders.map(g => g.label)].join(', ')}.` : 'Move the sliders.'}</span>
+        <button type="button" onClick={() => { sliders.current = Object.fromEntries(spec.sliders.map(s => [s.name.toLowerCase(), s.value])); setVals({ ...sliders.current }); setNonce(n => n + 1) }} className={cx(buttonClass('ghost', 'sm'), 'flex-shrink-0')}><RotateCcw className="h-3.5 w-3.5" />Reset</button>
+      </div>
+    </div>
+  )
+}

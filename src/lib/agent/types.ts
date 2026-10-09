@@ -1,12 +1,15 @@
 /** Shared between the server agent and the chat UI. */
 import type { Step } from '../lesson-schema'
 import type { SimSpec } from './visual'
+import type { IxSpec } from './interactive'
 
 export type Block =
   /** start: steps before it are already on the board (shown at once); the rest animate (a board edit). */
   | { kind: 'board'; id: string; title: string; steps: Step[]; plot?: boolean; start?: number; rev?: number }
   | { kind: 'svg'; id: string; svg: string; alt: string }
   | { kind: 'sim'; id: string; spec: SimSpec }
+  /** A live JSXGraph figure from a validated spec (boardFigure: its static picture was also placed on the board). */
+  | { kind: 'interactive'; id: string; spec: IxSpec; alt: string; boardFigure?: string }
   | { kind: 'clip'; id: string; jobId: string; status: 'rendering' | 'done' | 'failed'; url?: string | null; caption?: string }
   | { kind: 'image'; id: string; png: string; caption?: string }
   | { kind: 'code'; id: string; code: string; stdout: string; error?: string | null; engine: string }
