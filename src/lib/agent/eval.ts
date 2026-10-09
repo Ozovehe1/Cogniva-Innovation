@@ -17,6 +17,7 @@ import { compute } from './compute'
 import { ensureIds, opsToSteps, sceneOf } from './board-scene'
 import { checkScene } from './board-review'
 import { boardSnapshotPng } from './board-render'
+import { checkSubstance, cleanSubstance, renderMathDiagram, type DiagramLibrary } from './math-diagram'
 import type { Step } from '../lesson-schema'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
@@ -88,7 +89,32 @@ export function staticCases(): CaseResult[] {
 export async function staticAsyncCases(): Promise<CaseResult[]> {
   const t0 = Date.now()
   const png = await boardSnapshotPng(ensureIds([{ type: 'write', text: 'Snapshot', x: 24, y: 24, size: 'lg' } as Step, { type: 'draw', shape: { kind: 'circle', center: [400, 250], r: 80 }, color: 'accent', fill: true } as Step]))
-  return [{ id: 'board-snapshot-png', group: 'static', pass: !!png && png.length > 1000, detail: png ? `${Math.round(png.length * 0.75 / 1024)} KB PNG` : 'resvg unavailable', ms: Date.now() - t0 }]
+  const out: CaseResult[] = [{ id: 'board-snapshot-png', group: 'static', pass: !!png && png.length > 1000, detail: png ? `${Math.round(png.length * 0.75 / 1024)} KB PNG` : 'resvg unavailable', ms: Date.now() - t0 }]
+  // Exact maths diagrams: every vetted library lays out its own example with no unmet constraint.
+  const MD: [string, DiagramLibrary, string][] = [
+    ['md-venn', 'sets', 'Set A, B\nIntersecting(A, B)\nElement x, y\nIn(x, A)\nNotIn(x, B)\nIn(y, A)\nIn(y, B)\nLabel A "Football"\nLabel B "Chess"'],
+    ['md-geometry', 'geometry', 'Point A, B, C, D\nTriangle(A, B, C)\nBisector(A, B, C, D)'],
+    ['md-geometry-right', 'geometry', 'Point A, B, C, M\nTriangle(A, B, C)\nRightAngle(A, B, C)\nMidpoint(M, A, C)\nSegment(B, M)'],
+    ['md-tree', 'graph', 'Node r, a, b, c\nParent(r, a)\nParent(r, b)\nParent(a, c)\nLabel r "root"'],
+    ['md-vectors', 'vectors', 'Vector u, v, w\nSum(w, u, v)\nLabel w "u + v"'],
+  ]
+  for (const [id, lib, sub] of MD) {
+    const t1 = Date.now()
+    try {
+      const d = await renderMathDiagram(lib, sub, { timeoutMs: 8_000 })
+      out.push({ id, group: 'static', pass: /^<svg[\s>]/.test(d.svg) && d.unmet === 0 && !/script|on\w+=/i.test(d.svg), detail: `${d.svg.length} chars, unmet ${d.unmet}, ${d.ms} ms`, ms: Date.now() - t1 })
+    } catch (err) { out.push({ id, group: 'static', pass: false, detail: String(err).slice(0, 160), ms: Date.now() - t1 }) }
+  }
+  const badPred = checkSubstance('sets', 'Set A\nOrbit(A, A)')
+  const badType = checkSubstance('geometry', 'Point A, B\nSet S\nTriangle(A, B, S)')
+  const notSub = cleanSubstance('Set A\nforall Set x { x.icon = Circle {} }')
+  out.push({ id: 'md-rejects-bad-substance', group: 'static', pass: badPred.length > 0 && badType.length > 0 && notSub.errors.length > 0, detail: [...badPred, ...badType, ...notSub.errors].join('; ').slice(0, 160) })
+  return out
+}
+
+/** Spec checks for tool calls whose arguments can be validated without running them. */
+const ARG_CHECKS: Record<string, (a: Record<string, unknown>) => string | null> = {
+  math_diagram: a => { const e = checkSubstance(String(a.library) as DiagramLibrary, cleanSubstance(String(a.substance ?? '').replace(/\\n/g, '\n').replace(/;\s*/g, '\n')).substance); return e.length ? e.join('; ') : null },
 }
 
 /* ───────────── Model-based ───────────── */
@@ -112,6 +138,8 @@ const TOOL_CASES: { id: string; msg: string; expect: string[] }[] = [
   { id: 'practice', msg: 'Give me a few practice questions on my current topic.', expect: ['make_practice_set', 'get_path_progress', 'get_learner_snapshot'] },
   { id: 'web', msg: 'Search the web: what is the tallest building in Lagos right now?', expect: ['web_search'] },
   { id: 'python', msg: 'Use Python to find the eigenvalues of the matrix [[2,1],[1,2]] and plot the vectors.', expect: ['run_python'] },
+  { id: 'venn', msg: 'Draw a Venn diagram: in a class, 20 students play football, 15 play chess and 6 play both.', expect: ['math_diagram'] },
+  { id: 'geometry', msg: 'Show me triangle ABC with the bisector of angle B meeting AC at D, with the equal angles marked exactly.', expect: ['math_diagram'] },
   { id: 'animate', msg: 'Make me a proper animated clip showing a 3D cube rotating to explain volume.', expect: ['animate_concept', 'draw_on_board'] },
 ]
 
@@ -127,7 +155,8 @@ export async function toolCases(admin: SupabaseClient, studentId: string, only?:
       out.push({ id: `tool-${c.id}`, group: 'tools', pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
       // Tool-arg validity: every call parsed as JSON with required fields present.
       const bad = r.toolCalls.filter(x => '__invalid' in x.args)
-      if (r.toolCalls.length) out.push({ id: `tool-args-${c.id}`, group: 'tools', pass: bad.length === 0, detail: bad.length ? 'invalid JSON args' : 'valid', model: r.model })
+      const specErr = r.toolCalls.map(x => ('__invalid' in x.args ? null : ARG_CHECKS[x.name]?.(x.args) ?? null)).find(Boolean)
+      if (r.toolCalls.length) out.push({ id: `tool-args-${c.id}`, group: 'tools', pass: bad.length === 0 && !specErr, detail: bad.length ? 'invalid JSON args' : specErr ? `spec: ${specErr.slice(0, 160)}` : 'valid', model: r.model })
     } catch (err) {
       out.push({ id: `tool-${c.id}`, group: 'tools', pass: false, detail: `error: ${err instanceof Error ? err.message.slice(0, 160) : err}`, ms: Date.now() - t0 })
     }

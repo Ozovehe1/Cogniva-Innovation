@@ -27,6 +27,7 @@ import { MAX_BOARD_STEPS, REGIONS, emptyDoc, ensureIds, idsInRegion, loadBoard, 
 import { reviewBoard } from './board-review'
 import { boardSnapshotSvg, svgToPng } from './board-render'
 import { visionJson } from './llm'
+import { LIBRARY, SubstanceError, renderMathDiagram, type DiagramLibrary } from './math-diagram'
 import type { Step } from '../lesson-schema'
 import { compute, type ComputeOp } from './compute'
 import { webSearch, fetchPage } from './web'
@@ -547,6 +548,53 @@ const VISUAL: ToolSpec[] = [
   },
   {
     def: {
+      name: 'math_diagram',
+      description: `An EXACT maths diagram laid out by a constraint solver (Penrose): Venn/Euler diagrams, geometry constructions (right angles, bisectors, midpoints, perpendicular feet), graphs and trees, vector sums. You write only a short Substance program in one library; layout, colours and labels are automatic. It goes on the chat whiteboard as a figure (annotatable later by id). Libraries:\n${(Object.keys(LIBRARY) as DiagramLibrary[]).map(k => `${k}: ${LIBRARY[k].help}\n  e.g. ${LIBRARY[k].example.replace(/\n/g, '; ')}`).join('\n')}\nOne statement per line; names are single words.`,
+      parameters: obj({
+        library: { type: 'string', enum: ['sets', 'geometry', 'graph', 'vectors'] },
+        substance: { type: 'string', description: 'the Substance program, one statement per line' },
+        title: { type: 'string', description: 'short heading for the board' },
+        alt: { type: 'string', description: 'one sentence saying what the diagram shows (the text fallback)' },
+        add_to_board: { type: 'boolean', description: 'true: place it beside what is already on the board instead of starting a new scene' },
+      }, ['library', 'substance', 'alt']),
+    },
+    tier: 'visual', modes: ['chat'], label: 'Drawing an exact diagram',
+    run: async (a, ctx) => {
+      const library = String(a.library) as DiagramLibrary
+      const sub = typeof a.substance === 'string' ? a.substance.slice(0, 2000).replace(/\\n/g, '\n').replace(/;\s*/g, '\n') : ''
+      const alt = s(a.alt, 280) || s(a.title, 60) || 'Diagram'
+      const title = s(a.title, 50) || alt.slice(0, 50)
+      let d: Awaited<ReturnType<typeof renderMathDiagram>>
+      try {
+        d = await renderMathDiagram(library, sub, { timeoutMs: 8_000 })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        // A wrong program goes back to the model to fix; a layout failure falls back to a drawn illustration.
+        if (err instanceof SubstanceError || !LIBRARY[library]) return { error: `Invalid Substance: ${msg}. ${LIBRARY[library] ? `Allowed in ${library}: ${LIBRARY[library].help}` : ''} Fix it and call again.` }
+        ctx.trace.push(`math_diagram fallback: ${msg.slice(0, 120)}`)
+        const r = await makeIllustration(`${alt}. Exact structure: ${sub.replace(/\n/g, '; ').slice(0, 500)}`, ctx.trace)
+        ctx.emit({ kind: 'svg', id: bid(), svg: r.svg, alt: r.alt })
+        return { shown: true, fallback: 'illustration', note: 'The exact layout failed, so a drawn illustration was shown instead.' }
+      }
+      const doc0 = await getBoard(ctx)
+      const append = a.add_to_board === true && doc0.steps.length > 0
+      // Fit the figure box to the diagram's aspect ratio inside the free area.
+      const area = append ? { x: 420, y: 70, w: 360, h: 410 } : { x: 30, y: 72, w: 740, h: 410 }
+      const k = Math.min(area.w / d.width, area.h / d.height)
+      const w = Math.round(d.width * k), h = Math.round(d.height * k)
+      const fig = { type: 'draw', shape: { kind: 'figure', x: Math.round(area.x + (area.w - w) / 2), y: Math.round(area.y + (area.h - h) / 2), w, h, svg: d.svg, alt }, say: alt } as unknown as Step
+      if (append) {
+        const from = doc0.steps.length
+        const out = await commitBoard(ctx, { ...doc0, steps: ensureIds([...doc0.steps, fig]) }, from, boardTitle(doc0), { vision: false })
+        return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined }
+      }
+      const steps = ensureIds([{ type: 'write', text: title, x: 24, y: 22, size: 'lg', say: title } as unknown as Step, fig])
+      const out = await commitBoard(ctx, { ...emptyDoc(), rev: doc0.rev, steps }, 0, title, { replace: true, vision: false })
+      return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined, note: 'Shown on the board. Explain it in 2-4 sentences; annotate parts with board_edit using the figure id if useful.' }
+    },
+  },
+  {
+    def: {
       name: 'simulate', description: 'An interactive simulation: sliders drive formulas, live readouts and curves; optional moving dot along (x(t), y(t)). Expressions use slider names, x in curves, t in motion; ^ for powers.',
       parameters: obj({
         title: { type: 'string' }, explain: { type: 'string' },
@@ -705,6 +753,7 @@ export async function savePlan(ctx: Pick<AgentCtx, 'admin' | 'studentId' | 'runI
 const ROUTES: [RegExp, string[]][] = [
   [/\b(graph|plot|chart|curve|axes|parabola|sketch y|y\s*=)/i, ['plot']],
   [/\b(diagram|label(l)?ed|illustrat|draw (me )?a|picture of|structure of|cell|circuit|anatomy|parts of)\b/i, ['illustrate']],
+  [/\b(venn|euler|sets\b|set notation|subset|union|intersection|complement|triangle|bisect|perpendicular|midpoint|right angle|angle [A-Z]{1,3}\b|construction|congruen|tree diagram|binary tree|graph theory|nodes?|vertices|edges|vector (sum|addition)|resultant|head to tail|orthogonal)/i, ['math_diagram']],
   [/\b(simulat|slider|drag|play with|what happens (if|when)|change the|interactive|experiment)/i, ['simulate']],
   [/\b(animat|clip|video|3d|rotate|rotating|movie)/i, ['animate_concept']],
   [/\b(python|code|program|matrix|matrices|eigen|dataset|data set|csv|statistic|regression|numpy|integrat|differentia|numerical|network graph)/i, ['run_python']],
