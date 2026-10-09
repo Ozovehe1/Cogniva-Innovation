@@ -14,7 +14,7 @@ reduced motion).
 | Free-text boxes | 3 (goal, why, barriers) | 1 (goal) |
 | Check length | 8–15 items | 6–10 items, first item an easy foundation ("first win") |
 | Dead time | "Mapping the skills" wait after the last question (~35 s measured in prod) | the map builds **while** the learner answers the optional last screen |
-| Measured, bot-speed (prod, 390px) | 18 intake screens in ~38 s of clicks + 37 s map wait before question 1 | see report in the PR / shots folder |
+| Measured end to end, scripted taps at 390px (so pure system time + minimal tap time) | 18 screens in 40 s, then a 75 s map wait: question 1 at 115 s, results at 126 s | question 1 at 21 s / 65 s, “Start your first lesson” ready at 40 s / 83 s, lesson open at 45 s / 89 s (two runs; the spread is LLM latency) |
 | Estimated human time to first lesson | ~5–7 min (17 questions × ~20–30 s, plus waits) | ~1.5–2.5 min |
 
 Nothing downstream lost a field: every v1 answer still loads, validates and maps (`legacy: true` items), and every
