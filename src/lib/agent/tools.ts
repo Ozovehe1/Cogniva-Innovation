@@ -609,10 +609,10 @@ const VISUAL: ToolSpec[] = [
         const steps = append ? ensureIds([...doc0.steps, fig]) : ensureIds([{ type: 'write', text: title, x: 24, y: 22, size: 'lg' } as unknown as Step, fig])
         const out = await commitBoard(ctx, append ? { ...doc0, steps } : { ...emptyDoc(), rev: doc0.rev, steps }, append ? doc0.steps.length : 0, append ? boardTitle(doc0) : title, { vision: false, replace: !append, diagram: true })
         const figure = sceneOf(ctx.board!).elements.filter(e => e.type === 'figure').pop()?.id
-        return { ...out, figure_id: figure, title: f.item.t, credit: f.creditText, labelled: f.labelled, alternatives: f.alternatives, note: `On the board as figure ${figure}; its credit line is part of the picture.${f.labelled ? '' : ' It has no labels: add the key ones with board_edit (arrows + text beside the parts).'}` }
+        return { ...out, figure_id: figure, title: f.item.t, credit: f.creditText, labelled: f.labelled, alternatives: f.alternatives, note: `On the board as figure ${figure}; its credit line is part of the picture, so do not repeat the credit or its link in your reply.${f.labelled ? '' : ' It has no labels: add the key ones with board_edit (arrows + text beside the parts).'}` }
       }
       ctx.emit({ kind: 'svg', id: bid(), svg: f.url ? '' : f.svg, url: f.url ?? undefined, alt: f.alt, credit: f.credit })
-      return { shown: true, title: f.item.t, source: f.credit.source, license: f.credit.license, credit: f.creditText, labelled: f.labelled, alternatives: f.alternatives, note: `Shown with its credit line.${f.labelled ? '' : ' It has no labels: name the parts in your explanation, or place it on the board and label it.'} If it does not fit, call again with alternative=1.` }
+      return { shown: true, title: f.item.t, source: f.credit.source, license: f.credit.license, credit: f.creditText, labelled: f.labelled, alternatives: f.alternatives, note: `Shown with its credit line under it, so do not repeat the credit or its link in your reply.${f.labelled ? '' : ' It has no labels: name the parts in your explanation, or place it on the board and label it.'} If it does not fit, call again with alternative=1.` }
     },
   },
   {
