@@ -1,4 +1,6 @@
 import { GeminiQuotaError, generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
+import { guardSteps, issueLines } from './correctness/steps'
+import { avoidLines } from './correctness/blocklist'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, type Step } from './lesson-schema'
 import { normalizeLessonMath } from './lesson-math'
 import { autoFixLayout, layoutIssues } from './lesson-layout'
@@ -125,6 +127,10 @@ export async function generateSteps(
   const done = (steps: Step[]) => {
     // Maths in narration, notes, maths elements and checks: delimited, repaired, KaTeX-validated.
     steps = normalizeLessonMath(steps).steps
+    // Correctness guard: wrong numbers corrected, answers said before a check removed, units evened (correctness/steps).
+    const guarded = guardSteps(steps)
+    steps = guarded.steps
+    if (guarded.issues.length) meta.trace?.push(...guarded.issues.slice(0, 6).map(i => `guard ${i.kind}${i.fixed ? ' fixed' : ''}: ${i.detail.slice(0, 120)}`))
     meta.ms = Date.now() - t0
     meta.model = answered ?? lastGeminiModel
     // Last resort: clear whatever a new element would be drawn on top of.
@@ -133,7 +139,9 @@ export async function generateSteps(
   meta.trace = []
   let answered: string | null = null
   // Library illustrations the writer asked for become credited figure steps before validation.
-  const genJson = async (p: string, g: GenerateOptions) => expandBoardDiagrams(await resolveIllustrationSteps(await generateStructuredJson(p, g), meta.trace))
+  // Confirmed past mistakes (admin-triaged reports) the writer must not repeat.
+  const avoid = (await avoidLines(['prompt_pattern']).catch(() => [] as string[])).join('\n')
+  const genJson = async (p: string, g: GenerateOptions) => expandBoardDiagrams(await resolveIllustrationSteps(await generateStructuredJson(avoid ? `${p}\n\n${avoid}` : p, g), meta.trace))
   const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace, deadline: opts.deadline, preferFast: opts.preferFast, onModel: (m: string) => { answered = m } }
   let raw: unknown
   try {
@@ -148,14 +156,16 @@ export async function generateSteps(
     const layout = opts.layoutRepair ? layoutIssues(result.steps, start, offset) : []
     // Maths the deterministic repair could not fix is re-asked once (it would otherwise show as plain text).
     const mathIssues = normalizeLessonMath(result.steps).issues
-    const issues = [...layout, ...mathIssues.slice(0, 8)]
+    // Wrong facts the guard cannot fix by itself (a triangle labelled 3, 4, 6; a ray bent the wrong way) are regenerated.
+    const factIssues = issueLines(guardSteps(normalizeLessonMath(result.steps).steps).issues)
+    const issues = [...layout, ...mathIssues.slice(0, 8), ...factIssues.slice(0, 6)]
     if (issues.length === 0) return done(result.steps)
     // One repair pass (layout and/or maths).
     meta.repaired = true
     try {
       const fixedRaw = await genJson(`${prompt}
 
-Your previous answer was valid but has these problems${layout.length ? ' (elements collide on the board)' : ''}${mathIssues.length ? ' (maths must be valid KaTeX LaTeX; inline maths in text inside $...$)' : ''}:
+Your previous answer was valid but has these problems${layout.length ? ' (elements collide on the board)' : ''}${mathIssues.length ? ' (maths must be valid KaTeX LaTeX; inline maths in text inside $...$)' : ''}${factIssues.length ? ' (some facts, numbers or drawings are wrong: fix them so everything on the board is correct)' : ''}:
 ${issues.map(i => `- ${i}`).join('\n')}
 
 Previous answer:
@@ -166,7 +176,8 @@ Return the full corrected JSON object {"steps": [...]} with the same teaching co
       if (fixed.ok) {
         const fl = opts.layoutRepair ? layoutIssues(fixed.steps, start, offset).length : 0
         const fm = normalizeLessonMath(fixed.steps).issues.length
-        if (fl <= layout.length && fm <= mathIssues.length && fl + fm < issues.length) return done(fixed.steps)
+        const ff = issueLines(guardSteps(normalizeLessonMath(fixed.steps).steps).issues).length
+        if (fl <= layout.length && fm <= mathIssues.length && ff <= factIssues.length && fl + fm + ff < issues.length) return done(fixed.steps)
       }
     } catch (err) {
       if (err instanceof GeminiQuotaError) return done(result.steps)
@@ -468,8 +479,11 @@ export async function nextTutorSteps(input: {
   // Keep the prompt small: the last ~25 steps carry the visible board.
   const recent = input.played.slice(-25)
   const attempts = (input.history ?? []).filter(h => h.reason !== 'continue').length
-  const situation =
-    input.reason === 'wrong_answer'
+  // "Report a mistake" → corrected retry: the learner's report leads, the tutor fixes the board before going on.
+  const report = input.history?.slice(-1)[0]?.reason === 'reported_mistake' ? input.history.slice(-1)[0].answer ?? 'something on the board is wrong' : null
+  const situation = report
+    ? `The learner reported a mistake in what was just shown (${report.slice(0, 300)}). Check every number, label and picture on the board against the facts. Clear or fade the wrong element, redraw that part correctly, and say in one warm line what was corrected (thank them for spotting it). Then carry on from the same point. No new ideas.`
+    : input.reason === 'wrong_answer'
       ? `The student answered the question "${input.check?.prompt}" with "${input.answer ?? ''}", which is wrong${
           input.check?.kind === 'choice' && input.check.options && input.check.answer !== undefined
             ? ` (correct: "${input.check.options[input.check.answer]}")`
