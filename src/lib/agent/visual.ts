@@ -130,7 +130,78 @@ export function buildPlot(spec: PlotSpec): { steps: Step[]; errors: string[]; ro
     yr = ys.length ? pad([Math.min(...ys), Math.max(...ys)]) : [-5, 5]
   }
   if (errors.length && !fns.length && !pts.length && !series.length) return { steps: [], errors }
-  // Exact real roots of each function in the view (sign changes + bisection), for the model to quote.
+  const roots = computeRoots(fns, xr)
+  // Marked points are checked against the curves, never trusted: a point that claims a root (y = 0) but is not on
+  // any curve moves to an unmarked computed root; any other point off every curve is reported (data points may be).
+  if (fns.length) {
+    const compiled = fns.map(f => compileExpr(f.expr)).filter(c => c.ok) as { ok: true; fn: (x: number) => number }[]
+    const tol = Math.max(1e-6, (yr[1] - yr[0]) * 0.01)
+    const onCurve = (x: number, y: number) => compiled.some(c => { const v = c.fn(x); return Number.isFinite(v) && Math.abs(v - y) <= tol })
+    const allRoots = Object.values(roots).flat()
+    for (const p of pts) {
+      if (onCurve(p.x, p.y)) continue
+      if (Math.abs(p.y) <= tol && allRoots.length) {
+        const free = allRoots.filter(r => !pts.some(q => q !== p && Math.abs(q.y) <= tol && Math.abs(q.x - r) < 1e-6))
+        const pick = (free.length ? free : allRoots).reduce((a, b) => (Math.abs(b - p.x) < Math.abs(a - p.x) ? b : a))
+        const old = `(${fmtNum(p.x)}, ${fmtNum(p.y)})`
+        p.x = pick; p.y = 0
+        if (p.label && /^\s*\(?\s*[-−\d.]+\s*,\s*[-−\d.]+\s*\)?\s*$/.test(String(p.label))) p.label = `(${fmtNum(pick)}, 0)`
+        errors.push(`point ${old} claimed a root but is not on the curve; moved to the computed root (${fmtNum(pick)}, 0)`)
+      } else {
+        const vals = compiled.map(c => c.fn(p.x)).filter(Number.isFinite).map(fmtNum)
+        errors.push(`point (${fmtNum(p.x)}, ${fmtNum(p.y)}) is not on the curve (there y = ${vals.join(' / ')}); call plot again if it should be`)
+      }
+    }
+    // Merge points that now coincide.
+    for (let i = pts.length - 1; i >= 0; i--) if (pts.findIndex(q => Math.abs(q.x - pts[i].x) < 1e-9 && Math.abs(q.y - pts[i].y) < 1e-9) !== i) pts.splice(i, 1)
+  }
+  // The y view always holds what the lesson is about: the marked points, the roots (y = 0) and each curve's turning
+  // points and y-intercept. A fitted view that lets a steep tail squash those into a sliver is tightened around them.
+  {
+    const key: number[] = [...pts.map(p => p.y), ...series.flatMap(s => s.points.map(q => Number(q[1])))]
+    for (const f of fns) {
+      const c = compileExpr(f.expr)
+      if (!c.ok) continue
+      if ((roots[f.expr] ?? []).length) key.push(0)
+      const y0 = c.fn(0); if (xr[0] <= 0 && xr[1] >= 0 && Number.isFinite(y0)) key.push(y0)
+      const N = 400; let prev = c.fn(xr[0]), cur = c.fn(xr[0] + (xr[1] - xr[0]) / N)
+      for (let i = 2; i <= N; i++) {
+        const next = c.fn(xr[0] + (xr[1] - xr[0]) * i / N)
+        if ([prev, cur, next].every(Number.isFinite) && ((cur < prev && cur <= next) || (cur > prev && cur >= next))) key.push(cur)
+        prev = cur; cur = next
+      }
+    }
+    if (key.length) {
+      const lo = Math.min(...key), hi = Math.max(...key), span = Math.max(hi - lo, 2)
+      if (spec.yRange && yr) {
+        // A given range is widened (never narrowed) to show every key value.
+        if (lo < yr[0] || hi > yr[1]) yr = pad([Math.min(lo, yr[0]), Math.max(hi, yr[1])])
+        else if (fns.length && (yr[1] - yr[0]) > 6 * span) yr = [round(lo - 0.6 * span), round(hi + 1.6 * span)]
+      } else if (fns.length && (yr[1] - yr[0]) > 3.5 * span) {
+        yr = [round(lo - 0.6 * span), round(hi + 1.6 * span)]
+      }
+    }
+  }
+  const title = (spec.title ?? 'Graph').slice(0, 34)
+  const steps: Step[] = [
+    { type: 'write', id: 'title', text: title, x: 24, y: 28, size: 'lg', say: spec.say?.slice(0, 300) || undefined } as Step,
+    // Tick numbers on both axes, so marked values (roots, vertex) can be read off the graph.
+    { type: 'draw', id: 'ax', shape: { kind: 'axes', frame: { x: 70, y: 100, w: 640, h: 360 }, xRange: xr, yRange: yr, xStep: tickStep(xr[1] - xr[0], 10), yStep: tickStep(yr[1] - yr[0], 6), xLabel: spec.xLabel?.slice(0, 16), yLabel: spec.yLabel?.slice(0, 16) } } as Step,
+  ]
+  fns.forEach((f, i) => {
+    steps.push({ type: 'draw', id: `f${i}`, on: 'ax', color: (INKS.includes(f.color ?? '') ? f.color : INKS[i % INKS.length]) as never, width: 3, shape: { kind: 'function', expr: f.expr, ...(Array.isArray(f.domain) && f.domain.length === 2 ? { domain: [Number(f.domain[0]), Number(f.domain[1])] } : {}) } } as Step)
+    steps.push({ type: 'write', id: `fl${i}`, text: (f.label || `y = ${f.expr}`).slice(0, 40), x: 470, y: 100 + i * 32, size: 'sm', color: (INKS.includes(f.color ?? '') ? f.color : INKS[i % INKS.length]) as never } as Step)
+  })
+  series.forEach((s, i) => {
+    steps.push({ type: 'draw', id: `s${i}`, on: 'ax', color: (INKS.includes(s.color ?? '') ? s.color : INKS[(i + 2) % INKS.length]) as never, width: 2.5, shape: { kind: 'polyline', points: s.points } } as Step)
+    if (s.label) steps.push({ type: 'write', id: `sl${i}`, text: s.label.slice(0, 40), x: 470, y: 100 + (fns.length + i) * 32, size: 'sm' } as Step)
+  })
+  pts.forEach((p, i) => steps.push({ type: 'draw', id: `p${i}`, on: 'ax', color: 'clay', shape: { kind: 'point', at: [Number(p.x), Number(p.y)], ...(p.label ? { label: String(p.label).slice(0, 20) } : {}) } } as Step))
+  const v = validateScript(steps, { maxSteps: 60 })
+  return { steps: v.steps, errors: [...errors, ...v.errors], roots, xRange: xr, yRange: yr }
+}
+/** Exact real roots of each function in the x view (sign changes + bisection), for the model to quote and the points to snap to. */
+function computeRoots(fns: { expr: string }[], xr: [number, number]): Record<string, number[]> {
   const roots: Record<string, number[]> = {}
   for (const f of fns) {
     const c = compileExpr(f.expr)
@@ -148,23 +219,16 @@ export function buildPlot(spec: PlotSpec): { steps: Step[]; errors: string[]; ro
     }
     roots[f.expr] = [...new Set(out.map(r => Number(r.toPrecision(8))))].slice(0, 10)
   }
-  const title = (spec.title ?? 'Graph').slice(0, 34)
-  const steps: Step[] = [
-    { type: 'write', id: 'title', text: title, x: 24, y: 28, size: 'lg', say: spec.say?.slice(0, 300) || undefined } as Step,
-    { type: 'draw', id: 'ax', shape: { kind: 'axes', frame: { x: 70, y: 100, w: 640, h: 360 }, xRange: xr, yRange: yr, xLabel: spec.xLabel?.slice(0, 16), yLabel: spec.yLabel?.slice(0, 16) } } as Step,
-  ]
-  fns.forEach((f, i) => {
-    steps.push({ type: 'draw', id: `f${i}`, on: 'ax', color: (INKS.includes(f.color ?? '') ? f.color : INKS[i % INKS.length]) as never, width: 3, shape: { kind: 'function', expr: f.expr, ...(Array.isArray(f.domain) && f.domain.length === 2 ? { domain: [Number(f.domain[0]), Number(f.domain[1])] } : {}) } } as Step)
-    steps.push({ type: 'write', id: `fl${i}`, text: (f.label || `y = ${f.expr}`).slice(0, 40), x: 470, y: 100 + i * 32, size: 'sm', color: (INKS.includes(f.color ?? '') ? f.color : INKS[i % INKS.length]) as never } as Step)
-  })
-  series.forEach((s, i) => {
-    steps.push({ type: 'draw', id: `s${i}`, on: 'ax', color: (INKS.includes(s.color ?? '') ? s.color : INKS[(i + 2) % INKS.length]) as never, width: 2.5, shape: { kind: 'polyline', points: s.points } } as Step)
-    if (s.label) steps.push({ type: 'write', id: `sl${i}`, text: s.label.slice(0, 40), x: 470, y: 100 + (fns.length + i) * 32, size: 'sm' } as Step)
-  })
-  pts.forEach((p, i) => steps.push({ type: 'draw', id: `p${i}`, on: 'ax', color: 'clay', shape: { kind: 'point', at: [Number(p.x), Number(p.y)], ...(p.label ? { label: String(p.label).slice(0, 20) } : {}) } } as Step))
-  const v = validateScript(steps, { maxSteps: 60 })
-  return { steps: v.steps, errors: [...errors, ...v.errors], roots, xRange: xr, yRange: yr }
+  return roots
 }
+/** A 1-2-5 step giving about `count` ticks over `span`. */
+export function tickStep(span: number, count: number): number {
+  const raw = span / count
+  if (!(raw > 0)) return 1
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p
+  return Number(((m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p).toPrecision(6))
+}
+const fmtNum = (v: number) => String(Number(v.toPrecision(6)))
 function pad([a, b]: [number, number]): [number, number] {
   if (a === b) { a -= 1; b += 1 }
   const d = (b - a) * 0.08
@@ -257,7 +321,7 @@ export interface SimSpec {
   /** Curves y = f(x; params) drawn on axes. */
   plot?: { xLabel?: string; yLabel?: string; xRange: [number, number]; yRange: [number, number]; curves: { expr: string; label?: string }[] }
   /** A dot that moves along a parametric path (x(t), y(t)) as time plays, for motion demos. */
-  motion?: { x: string; y: string; tMax: string; label?: string }
+  motion?: { x: string; y: string; tMax: string; label?: string; anchor?: [string, string] }
   explain?: string
 }
 
@@ -265,9 +329,20 @@ export interface SimSpec {
 export function validateSim(input: unknown): { spec: SimSpec | null; errors: string[] } {
   const errors: string[] = []
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  // Slider names with digits or underscores (theta0, v_0) are renamed to letters everywhere instead of rejected.
+  const renames = new Map<string, string>()
+  for (const p of Array.isArray(o.params) ? o.params : []) {
+    const n = String((p as Record<string, unknown> | null)?.name ?? '')
+    if (/^[a-zA-Z][a-zA-Z0-9_]{0,11}$/.test(n) && /[0-9_]/.test(n)) {
+      let alias = n.replace(/_/g, '').replace(/\d/g, d => 'abcdefghij'[Number(d)]).slice(0, 12)
+      while ([...renames.values()].includes(alias) || (Array.isArray(o.params) && o.params.some(q => String((q as Record<string, unknown> | null)?.name) === alias))) alias = `${alias.slice(0, 11)}z`
+      renames.set(n, alias)
+    }
+  }
+  const ren = (e: unknown) => (renames.size && typeof e === 'string' ? e.replace(/\b[a-zA-Z][a-zA-Z0-9_]*\b/g, w => renames.get(w) ?? w) : e)
   const params = (Array.isArray(o.params) ? o.params : []).slice(0, 5).flatMap((p, i) => {
     const q = (p ?? {}) as Record<string, unknown>
-    const name = String(q.name ?? '')
+    const name = String(ren(String(q.name ?? '')))
     if (!/^[a-zA-Z]{1,12}$/.test(name) || ['x', 'e', 'pi', 't'].includes(name)) { errors.push(`params[${i}].name "${name}" must be letters only (not x, e, pi or t)`); return [] }
     const min = num(q.min), max = num(q.max)
     if (min === null || max === null || min >= max) { errors.push(`params[${i}] needs min < max`); return [] }
@@ -278,7 +353,7 @@ export function validateSim(input: unknown): { spec: SimSpec | null; errors: str
   if (!params.length) errors.push('at least one slider param is required')
   const names = params.map(p => p.name)
   const check = (expr: unknown, at: string, extra: string[] = [], allowX = false) => {
-    const e = String(expr ?? '').replace(/\*\*/g, '^').trim()
+    const e = String(ren(expr) ?? '').replace(/\*\*/g, '^').trim()
     const c = compileExpr(e, [...names, ...extra], allowX)
     if (!c.ok) { errors.push(`${at} "${e}": ${c.error}`); return null }
     return e
@@ -296,7 +371,9 @@ export function validateSim(input: unknown): { spec: SimSpec | null; errors: str
     const curves = (Array.isArray(q.curves) ? q.curves : []).slice(0, 3).flatMap((c, i) => {
       const cc = (c ?? {}) as Record<string, unknown>
       const expr = check(cc.expr, `plot.curves[${i}].expr`, [], true)
-      return expr ? [{ expr, label: cc.label ? String(cc.label).slice(0, 30) : undefined }] : []
+      // A curve label that only repeats the y-axis title is dropped ("Angle (rad)" shown twice).
+      const lab = cc.label ? String(cc.label).slice(0, 30) : undefined
+      return expr ? [{ expr, label: lab && q.yLabel && lab.trim().toLowerCase() === String(q.yLabel).trim().toLowerCase() ? undefined : lab }] : []
     })
     if (xr.length === 2 && yr.length === 2 && xr.every(Number.isFinite) && yr.every(Number.isFinite) && xr[0] < xr[1] && yr[0] < yr[1] && curves.length) {
       plot = { xRange: [xr[0], xr[1]], yRange: [yr[0], yr[1]], curves, xLabel: q.xLabel ? String(q.xLabel).slice(0, 16) : undefined, yLabel: q.yLabel ? String(q.yLabel).slice(0, 16) : undefined }
@@ -306,7 +383,8 @@ export function validateSim(input: unknown): { spec: SimSpec | null; errors: str
   if (o.motion && typeof o.motion === 'object') {
     const q = o.motion as Record<string, unknown>
     const x = check(q.x, 'motion.x', ['t']), y = check(q.y, 'motion.y', ['t']), tMax = check(q.tMax, 'motion.tMax')
-    if (x && y && tMax) motion = { x, y, tMax, label: q.label ? String(q.label).slice(0, 20) : undefined }
+    const an = Array.isArray(q.anchor) && q.anchor.length === 2 ? [check(String(q.anchor[0]), 'motion.anchor[0]'), check(String(q.anchor[1]), 'motion.anchor[1]')] : null
+    if (x && y && tMax) motion = { x, y, tMax, label: q.label ? String(q.label).slice(0, 20) : undefined, ...(an && an[0] && an[1] ? { anchor: [an[0], an[1]] as [string, string] } : {}) }
     if (motion && !plot) errors.push('motion needs a plot (its axes)')
   }
   if (!outputs.length && !plot) errors.push('give at least one output or a plot')

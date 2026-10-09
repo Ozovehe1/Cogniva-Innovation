@@ -8,6 +8,7 @@
  *   visual     real board scene / SVG / web search / live sandbox: outputs valid and safe
  * Run with POST /api/agent/eval?group=… (Bearer AGENT_SECRET), or scripts/agent-eval.mjs for all groups.
  */
+import { exactTriangle } from './exact-triangle'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { detectDistress } from '../safety'
 import { asData, injectionHeuristic, screenInjection, unsafeQuery } from './guard'
@@ -68,6 +69,33 @@ export function staticCases(): CaseResult[] {
   add('sim-rejects-code', !badSim.spec, badSim.errors.join('; ').slice(0, 120))
   const plot = buildPlot({ title: 'Parabola', functions: [{ expr: 'y = x^2 - 4' }], points: [{ x: 2, y: 0, label: 'root' }] })
   add('plot-valid', plot.steps.length >= 3 && plot.errors.length === 0, plot.errors.join('; '))
+  // Regressions from the 2026-10-09 Ask visual check (shots/agent-tools-verify/REPORT.md).
+  {
+    const r = buildPlot({ functions: [{ expr: 'x^2 - 4' }], points: [{ x: 2, y: 0, label: '(2,0)' }, { x: 0, y: 0, label: '(0,0)' }] })
+    const at = r.steps.filter(st => st.type === 'draw' && (st as { shape: { kind: string } }).shape.kind === 'point').map(st => (st as unknown as { shape: { at: number[] } }).shape.at.join(','))
+    const ax = r.steps.find(st => st.type === 'draw' && (st as { shape: { kind: string } }).shape.kind === 'axes') as unknown as { shape: { xStep?: number; yStep?: number } } | undefined
+    const yr = r.yRange ?? [0, 0]
+    add('plot-roots-checked', at.includes('-2,0') && at.includes('2,0') && !at.includes('0,0'), `points ${at.join(' ')}; ${r.errors.join('; ').slice(0, 120)}`)
+    add('plot-view-holds-vertex', yr[0] <= -4 && yr[1] - yr[0] <= 16 && !!ax?.shape.xStep && !!ax?.shape.yStep, `y ${yr.join('..')}, steps ${ax?.shape.xStep}/${ax?.shape.yStep}`)
+  }
+  {
+    const t = exactTriangle('Point A, B, C, M1, M2, M3\nTriangle(A, B, C)\nRightAngle(A, B, C)\nMidpoint(M1, A, B)\nMidpoint(M2, B, C)\nMidpoint(M3, A, C)\nLabel M1 "3"\nLabel M2 "4"\nLabel M3 "5"')
+    const pts = t ? [...t.svg.matchAll(/<polygon points="([^"]+)"/g)][0]?.[1].split(' ').map(q => q.split(',').map(Number)) ?? [] : []
+    const d = (i: number, j: number) => Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])
+    const ratio = pts.length === 3 ? [d(0, 1), d(1, 2), d(2, 0)].map(v => v / d(0, 1) * 3) : []
+    // Each side label sits nearer its own side's midpoint than any other side's.
+    const texts = t ? [...t.svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)"[^>]*>(\d+)<\/text>/g)].map(m => ({ x: Number(m[1]), y: Number(m[2]), v: Number(m[3]) })) : []
+    const mids = pts.length === 3 ? [[0, 1], [1, 2], [2, 0]].map(([i, j]) => ({ x: (pts[i][0] + pts[j][0]) / 2, y: (pts[i][1] + pts[j][1]) / 2, len: Math.round(d(i, j) / d(0, 1) * 3) })) : []
+    const placed = texts.length === 3 && texts.every(tx => mids.reduce((a, b) => (Math.hypot(b.x - tx.x, b.y - tx.y) < Math.hypot(a.x - tx.x, a.y - tx.y) ? b : a)).len === tx.v)
+    add('diagram-triangle-to-scale', ratio.length === 3 && Math.abs(ratio[0] - 3) < 0.01 && Math.abs(ratio[1] - 4) < 0.01 && Math.abs(ratio[2] - 5) < 0.01, ratio.map(v => v.toFixed(2)).join(':'))
+    add('diagram-triangle-labels-on-sides', placed, texts.map(tx => tx.v).join(','))
+  }
+  {
+    const pend = validateSim({ title: 'Pendulum', params: [{ name: 'L', min: 0.5, max: 3, value: 1 }, { name: 'theta0', label: 'Start angle', min: 0.05, max: 0.5, value: 0.3 }], outputs: [{ label: 'Period', expr: '2*pi*sqrt(L/9.8)' }], plot: { yLabel: 'Angle (rad)', xRange: [-1, 1], yRange: [-3, 0.2], curves: [{ expr: '-sqrt(L^2 - x^2)', label: 'Angle (rad)' }] }, motion: { x: 'L*sin(theta0*cos(sqrt(9.8/L)*t))', y: '-L*cos(theta0*cos(sqrt(9.8/L)*t))', tMax: '10', anchor: ['0', '0'] } })
+    add('sim-digit-names-renamed', !!pend.spec && pend.spec.params.every(p => /^[a-zA-Z]+$/.test(p.name)) && !/theta0/.test(pend.spec.motion?.x ?? 'theta0'), pend.errors.join('; ').slice(0, 120))
+    add('sim-pendulum-rod', !!pend.spec?.motion?.anchor, JSON.stringify(pend.spec?.motion ?? null).slice(0, 120))
+    add('sim-no-duplicate-axis-label', !!pend.spec && !pend.spec.plot?.curves.some(c => c.label === 'Angle (rad)'), JSON.stringify(pend.spec?.plot?.curves ?? null).slice(0, 120))
+  }
   const c = compute({ op: 'solve', expression: 'x^2 - 5x + 6 = 0' })
   add('compute-solve', c.ok && /2/.test(c.result ?? '') && /3/.test(c.result ?? ''), c.result ?? c.error ?? '')
   add('compute-blocks-import', !compute({ op: 'evaluate', expression: 'import({x:1})' }).ok)

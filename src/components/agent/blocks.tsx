@@ -162,7 +162,7 @@ function SimBlock({ spec }: { spec: SimSpec }) {
     return {
       outputs: spec.outputs.map(o => ({ ...o, c: compileExpr(o.expr, names, false) })),
       curves: (spec.plot?.curves ?? []).map(c => ({ ...c, c: compileExpr(c.expr, names, true) })),
-      motion: spec.motion ? { x: compileExpr(spec.motion.x, [...names, 't'], false), y: compileExpr(spec.motion.y, [...names, 't'], false), tMax: compileExpr(spec.motion.tMax, names, false) } : null,
+      motion: spec.motion ? { x: compileExpr(spec.motion.x, [...names, 't'], false), y: compileExpr(spec.motion.y, [...names, 't'], false), tMax: compileExpr(spec.motion.tMax, names, false), anchor: spec.motion.anchor ? spec.motion.anchor.map(e => compileExpr(e, names, false)) : null } : null,
     }
   }, [spec])
   const { outputs, curves, motion } = compiled
@@ -202,6 +202,8 @@ function SimBlock({ spec }: { spec: SimSpec }) {
   }
   const ticks = (a: number, b: number) => { const step = niceStep((b - a) / 5); const out: number[] = []; for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(Number(v.toPrecision(6))); return out }
   const dot = motion && motion.x.ok && motion.y.ok ? { x: motion.x.fn(0, { ...vals, t }), y: motion.y.fn(0, { ...vals, t }) } : null
+  const pv = motion?.anchor
+  const pivot = pv && pv[0].ok && pv[1].ok ? { x: pv[0].fn(0, vals), y: pv[1].fn(0, vals) } : null
   return (
     <div className={cx(frame, 'p-4')}>
       <p className={label}>Simulation</p>
@@ -214,7 +216,8 @@ function SimBlock({ spec }: { spec: SimSpec }) {
           {plot.yRange[0] <= 0 && plot.yRange[1] >= 0 && <line x1={P} x2={W - P} y1={sy(0)} y2={sy(0)} stroke="#14141A" strokeWidth="1.2" />}
           {plot.xRange[0] <= 0 && plot.xRange[1] >= 0 && <line x1={sx(0)} x2={sx(0)} y1={P} y2={H - P} stroke="#14141A" strokeWidth="1.2" />}
           {curves.map((c, i) => c.c.ok ? <path key={i} d={path(c.c.fn)} fill="none" stroke={colors[i % 3]} strokeWidth="2.5" /> : null)}
-          {dot && Number.isFinite(dot.x) && Number.isFinite(dot.y) && <circle cx={sx(dot.x)} cy={sy(dot.y)} r="7" fill="#A4502A" />}
+          {dot && pivot && Number.isFinite(dot.x) && Number.isFinite(dot.y) && Number.isFinite(pivot.x) && Number.isFinite(pivot.y) && <g><line x1={sx(pivot.x)} y1={sy(pivot.y)} x2={sx(dot.x)} y2={sy(dot.y)} stroke="#14141A" strokeWidth="2" /><circle cx={sx(pivot.x)} cy={sy(pivot.y)} r="3.5" fill="#14141A" /></g>}
+          {dot && Number.isFinite(dot.x) && Number.isFinite(dot.y) && <circle cx={sx(dot.x)} cy={sy(dot.y)} r="9" fill="#A4502A" />}
           {plot.xLabel && <text x={W - P} y={H - 8} fontSize="12" textAnchor="end" fill="#3D3D47">{plot.xLabel}</text>}
           {plot.yLabel && <text x={8} y={P - 14} fontSize="12" fill="#3D3D47">{plot.yLabel}</text>}
           {curves.map((c, i) => c.label ? <text key={`l${i}`} x={W - P - 4} y={P + 14 + i * 16} fontSize="12" textAnchor="end" fill={colors[i % 3]}>{c.label}</text> : null)}

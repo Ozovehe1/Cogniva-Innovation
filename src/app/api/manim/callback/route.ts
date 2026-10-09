@@ -46,7 +46,9 @@ export async function POST(request: Request) {
       await admin.from('manim_jobs').update({ status: 'failed', verdict, error: `Blocked by the correctness verifier: ${why}`.slice(0, 3000), ...(code ? { code } : {}) }).eq('id', jobId)
       return NextResponse.json({ ok: true, blocked: true })
     }
-    await admin.from('manim_jobs').update({ status: 'done', error: null, ...(verdict ? { verdict } : {}), ...(code ? { code } : {}) }).eq('id', jobId)
+    // No verdict (free-form code, template composer) or ok: null means UNVERIFIED, recorded as such (never as a pass).
+    const stored = verdict && verdict.ok === true ? verdict : { ...(verdict ?? {}), ok: null, unverified: true }
+    await admin.from('manim_jobs').update({ status: 'done', error: null, verdict: stored, ...(code ? { code } : {}) }).eq('id', jobId)
     // AI lessons: the drafting worker places the finished clip into the next section it releases
     // (sections the learner may already be playing are never changed).
     return NextResponse.json({ ok: true })

@@ -8,6 +8,7 @@
  *   visual   renders inline in the chat; per-student daily caps where they cost compute
  * Not exposed to any model: mark mastered, delete anything, guardian or consent actions.
  */
+import { exactTriangle } from './exact-triangle'
 import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'
@@ -43,6 +44,17 @@ import { searchMemory, writeMemory, type MemoryKind } from './memory'
 import { dueReviews } from './learner-model'
 import { asData } from './guard'
 import { findAction, idemKey, logAction, remediationTarget, todayWAT } from './actions'
+
+/**
+ * The learner-facing line under a clip: the brief's first sentence (its learning objective), never the internal shot list,
+ * cut at a word boundary with an ellipsis.
+ */
+export function clipCaption(brief: string, max = 110): string {
+  const first = brief.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s/)[0].replace(/^(learning )?objective:\s*/i, '')
+  if (first.length <= max) return first
+  const cut = first.slice(0, max + 1).replace(/\s+\S*$/, '').replace(/[,;:\s]+$/, '')
+  return `${cut}…`
+}
 
 export type Tier = 'read' | 'write' | 'confirm' | 'visual'
 
@@ -622,6 +634,8 @@ const VISUAL: ToolSpec[] = [
       const alt = s(a.alt, 280) || s(a.title, 60) || 'Diagram'
       const title = s(a.title, 50) || alt.slice(0, 50)
       let d: Awaited<ReturnType<typeof renderMathDiagram>>
+      // A triangle with known side lengths is drawn exactly to scale (Penrose treats lengths and labels as free layout).
+      const exact = library === 'geometry' ? exactTriangle(sub) : null
       try {
         d = await renderMathDiagram(library, sub, { timeoutMs: 8_000 })
       } catch (err) {
@@ -643,11 +657,11 @@ const VISUAL: ToolSpec[] = [
       if (append) {
         const from = doc0.steps.length
         const out = await commitBoard(ctx, { ...doc0, steps: ensureIds([...doc0.steps, fig]) }, from, boardTitle(doc0), { vision: false, diagram: true })
-        return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined }
+        return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined, ...(exact ? { drawn_to_scale: exact.sides, warnings: exact.warnings.length ? exact.warnings : undefined } : {}) }
       }
       const steps = ensureIds([{ type: 'write', text: title, x: 24, y: 22, size: 'lg' } as unknown as Step, fig])
       const out = await commitBoard(ctx, { ...emptyDoc(), rev: doc0.rev, steps }, 0, title, { replace: true, vision: false, diagram: true })
-      return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined, note: 'Shown on the board. Explain it in 2-4 sentences; annotate parts with board_edit using the figure id if useful.' }
+      return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined, ...(exact ? { drawn_to_scale: exact.sides, warnings: exact.warnings.length ? exact.warnings : undefined } : {}), note: 'Shown on the board. Explain it in 2-4 sentences; annotate parts with board_edit using the figure id if useful.' }
     },
   },
   {
@@ -697,20 +711,20 @@ const VISUAL: ToolSpec[] = [
   },
   {
     def: {
-      name: 'simulate', description: 'A slider simulation of a formula (physics, finance, rates): sliders drive formulas, live readouts and curves; optional moving dot along (x(t), y(t)). To drag points or shapes on a graph use interactive instead. Expressions use slider names, x in curves, t in motion; ^ for powers.',
+      name: 'simulate', description: 'A slider simulation of a formula (physics, finance, rates): sliders drive formulas, live readouts and curves; optional moving dot along (x(t), y(t)) with an optional rod from a fixed anchor. When an OBJECT moves (a pendulum, a spring, a projectile, a planet) show the object itself moving in space, not only a graph of a quantity against time: plot its path as the curve (pendulum arc: y = -sqrt(L^2 - x^2)), a motion dot for the bob/ball, and for a pendulum anchor ["0","0"] so the rod swings; put period, speed etc. in outputs. To drag points or shapes on a graph use interactive instead. Slider names are letters only (theta, not theta0). Expressions use slider names, x in curves, t in motion; ^ for powers.',
       parameters: obj({
         title: { type: 'string' }, explain: { type: 'string' },
         params: { type: 'array', maxItems: 5, items: obj({ name: { type: 'string' }, label: { type: 'string' }, min: { type: 'number' }, max: { type: 'number' }, step: { type: 'number' }, value: { type: 'number' }, unit: { type: 'string' } }, ['name', 'label', 'min', 'max', 'value']) },
         outputs: { type: 'array', maxItems: 4, items: obj({ label: { type: 'string' }, expr: { type: 'string' }, unit: { type: 'string' } }, ['label', 'expr']) },
         plot: obj({ x_label: { type: 'string' }, y_label: { type: 'string' }, x_range: { type: 'array', items: { type: 'number' } }, y_range: { type: 'array', items: { type: 'number' } }, curves: { type: 'array', items: obj({ expr: { type: 'string' }, label: { type: 'string' } }, ['expr']) } }, ['x_range', 'y_range', 'curves']),
-        motion: obj({ x: { type: 'string' }, y: { type: 'string' }, t_max: { type: 'string' } }, ['x', 'y', 't_max']),
+        motion: obj({ x: { type: 'string' }, y: { type: 'string' }, t_max: { type: 'string' }, anchor: { type: 'array', items: { type: 'string' }, description: 'optional [x, y] of a fixed pivot: a rod is drawn from it to the moving dot (pendulum)' } }, ['x', 'y', 't_max']),
       }, ['title', 'params']),
     },
     tier: 'visual', modes: ['chat'], label: 'Building a simulation',
     run: async (a, ctx) => {
       const p = a.plot as Record<string, unknown> | undefined
       const m = a.motion as Record<string, unknown> | undefined
-      const v = validateSim({ ...a, plot: p ? { ...p, xLabel: p.x_label, yLabel: p.y_label, xRange: p.x_range, yRange: p.y_range } : undefined, motion: m ? { x: m.x, y: m.y, tMax: m.t_max } : undefined })
+      const v = validateSim({ ...a, plot: p ? { ...p, xLabel: p.x_label, yLabel: p.y_label, xRange: p.x_range, yRange: p.y_range } : undefined, motion: m ? { x: m.x, y: m.y, tMax: m.t_max, anchor: m.anchor } : undefined })
       if (!v.spec) return { error: `Invalid simulation: ${v.errors.join('; ')}. Fix and call again.` }
       ctx.emit({ kind: 'sim', id: bid(), spec: v.spec })
       return { shown: true, warnings: v.errors.length ? v.errors : undefined }
@@ -753,7 +767,7 @@ const VISUAL: ToolSpec[] = [
         }
       })
       await logAction(ctx.admin, { studentId: ctx.studentId, runId: ctx.runId, tool: 'animate_concept', args: { brief: s(a.brief, 400) }, result: { job_id: j.id }, summary: 'Animation requested' })
-      ctx.emit({ kind: 'clip', id: bid(), jobId: j.id, status: 'rendering', caption: s(a.brief, 200) })
+      ctx.emit({ kind: 'clip', id: bid(), jobId: j.id, status: 'rendering', caption: clipCaption(String(a.brief ?? '')) })
       return { started: true, note: 'The clip renders in the background and appears in the chat when ready (1-3 min). Keep explaining meanwhile.' }
     },
   },

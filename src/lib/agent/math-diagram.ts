@@ -8,6 +8,7 @@
  * Compiled and optimised on the server (Penrose needs a DOM for its SVG writer: a small linkedom shim with estimated
  * text metrics). The result is sanitised SVG + a PNG check. Server only.
  */
+import { exactTriangle } from './exact-triangle'
 import { createHash } from 'node:crypto'
 import { sanitizeSvg } from './visual'
 
@@ -99,7 +100,7 @@ forall Element e1; Element e2 {
 }`,
   },
   geometry: {
-    help: 'Point A, B, C, ... ; Triangle(A, B, C); Segment(A, B); RightAngle(A, B, C) (right angle at B); AngleMark(A, B, C) (arc at B); Bisector(A, B, C, D) (D on AC with BD bisecting angle ABC); Midpoint(M, A, B); Foot(D, A, B, C) (D on BC with AD perpendicular to BC); Label A "A".',
+    help: 'Point A, B, C, ... ; Triangle(A, B, C); Segment(A, B); RightAngle(A, B, C) (right angle at B); AngleMark(A, B, C) (arc at B); Bisector(A, B, C, D) (D on AC with BD bisecting angle ABC); Midpoint(M, A, B); Foot(D, A, B, C) (D on BC with AD perpendicular to BC); Label A "A"; Length(A, B, 3) (side AB is 3: a triangle with all side lengths known, or two legs + RightAngle, is drawn exactly to scale with each length beside its own side).',
     example: 'Point A, B, C, D\nTriangle(A, B, C)\nBisector(A, B, C, D)\nAngleMark(A, B, D)\nAngleMark(D, B, C)',
     domain: `type Point
 predicate Triangle(Point a, Point b, Point c)
@@ -553,8 +554,16 @@ export interface DiagramResult { svg: string; width: number; height: number; ms:
 export async function renderMathDiagram(library: DiagramLibrary, substanceSrc: string, opts: { timeoutMs?: number } = {}): Promise<DiagramResult> {
   const lib = LIBRARY[library]
   if (!lib) throw new Error(`unknown library "${library}" (sets, geometry, graph, vectors)`)
-  const { substance, errors } = cleanSubstance(substanceSrc)
-  if (!substance) throw new Error(errors.join('; '))
+  const { substance: cleaned, errors } = cleanSubstance(substanceSrc)
+  if (!cleaned) throw new Error(errors.join('; '))
+  // A triangle with known side lengths is drawn exactly to scale (lessons and Ask alike): see exact-triangle.ts.
+  if (library === 'geometry') {
+    const ex = exactTriangle(cleaned)
+    const svg = ex ? sanitizeSvg(ex.svg).svg : null
+    if (ex && svg) return { svg, width: ex.width, height: ex.height, ms: 0, library, unmet: 0 }
+  }
+  const substance = cleaned.split('\n').filter(l => !/^Length\(/.test(l.trim())).join('\n')
+  if (!substance) throw new Error('Length(...) lines need a Triangle(...) with all three sides known')
   const fixed = repairSubstance(library, substance)
   const bad = checkSubstance(library, fixed)
   if (bad.length) throw new SubstanceError(bad.slice(0, 6).join('; '))
@@ -590,9 +599,10 @@ export async function renderMathDiagram(library: DiagramLibrary, substanceSrc: s
       if (crop && crop.length === 4 && crop.every(Number.isFinite) && crop[2] > 40 && crop[3] > 40) {
         const m = 22
         vb = [crop[0] - m, crop[1] - m, crop[2] + 2 * m, crop[3] + 2 * m]
-        // Never zoom a small layout up: keep at least 560x340 so label sizes match across diagrams.
-        if (vb[2] < 560) { vb[0] -= (560 - vb[2]) / 2; vb[2] = 560 }
-        if (vb[3] < 340) { vb[1] -= (340 - vb[3]) / 2; vb[3] = 340 }
+        // The view is cropped to the drawing (a small layout no longer sits in a 560x340 frame filling ~15% of the board);
+        // a floor of 300x200 keeps labels from being zoomed up past a readable size.
+        if (vb[2] < 300) { vb[0] -= (300 - vb[2]) / 2; vb[2] = 300 }
+        if (vb[3] < 200) { vb[1] -= (200 - vb[3]) / 2; vb[3] = 200 }
       }
       const body = safe.replace(/<penrose>[\s\S]*?<\/penrose>/, '').replace(/<title>[\s\S]*?<\/title>/g, '').replace(/<svg[^>]*>/, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.map(v => Math.round(v * 10) / 10).join(' ')}">`)
       const clean = sanitizeSvg(withTextFonts(body))

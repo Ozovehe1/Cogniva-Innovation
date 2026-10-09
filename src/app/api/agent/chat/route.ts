@@ -182,7 +182,7 @@ export async function POST(request: Request) {
       const b: Block = { kind: 'sources', id: 'src', items }
       blocks.push(b); send({ t: 'block', block: b })
     }
-    await admin.from('chat_messages').insert({ session_id: sessionId, student_id: studentId, role: 'assistant', content: text.slice(0, 12000), blocks, meta: { model, run: ctx.runId, tools: ctx.trace.length ? ctx.trace.slice(-6) : undefined } })
+    await admin.from('chat_messages').insert({ session_id: sessionId, student_id: studentId, role: 'assistant', content: text.slice(0, 12000), blocks, meta: { model, run: ctx.runId, tools: ctx.trace.some(t => t.startsWith('tool ')) ? ctx.trace.filter(t => t.startsWith('tool ')).slice(0, 20) : undefined, trace: ctx.trace.length ? ctx.trace.filter(t => !t.startsWith('tool ')).slice(-12).map(t => t.slice(0, 200)) : undefined } })
     await admin.from('chat_sessions').update({ updated_at: new Date().toISOString() }).eq('id', sessionId)
     send({ t: 'done', model: model ?? undefined, remaining: typeof n === 'number' ? Math.max(0, DAILY_MESSAGES() - n) : undefined })
 
