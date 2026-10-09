@@ -140,7 +140,8 @@ function evalCtx(admin: SupabaseClient, studentId: string, restricted = false): 
   }
 }
 
-const TOOL_CASES: { id: string; msg: string; expect: string[] }[] = [
+interface ToolCase { id: string; msg: string; expect: string[]; board?: string }
+const TOOL_CASES: ToolCase[] = [
   { id: 'board', msg: 'Can you explain on the whiteboard how a lever lets you lift heavy things?', expect: ['draw_on_board', 'animate_concept'] },
   { id: 'plot', msg: 'Graph y = x^2 - 4 and show me where it crosses the x-axis.', expect: ['plot', 'compute', 'run_python'] },
   { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['illustrate', 'draw_on_board'] },
@@ -157,22 +158,42 @@ const TOOL_CASES: { id: string; msg: string; expect: string[] }[] = [
   { id: 'animate', msg: 'Make me a proper animated clip showing a 3D cube rotating to explain volume.', expect: ['animate_concept', 'draw_on_board'] },
 ]
 
-export async function toolCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
+/** Routing policy: which visual tool fits which need (one model step each), and whether its spec is valid. */
+const BOARD_CTX = 'Earlier in this chat you drew a whiteboard scene "Solve 2x + 3 = -7". On the board now: t1 write "Solve 2x + 3 = -7" (step 1), m1 math "2x + 3 - 3 = -7 - 3" (step 2), m2 math "2x = -10" (step 3), m3 math "x = -5" (step 4).'
+const ROUTING_CASES: ToolCase[] = [
+  { id: 'venn-sets', msg: 'Show A = {1,2,3,4} and B = {3,4,5} in a diagram so I can see the union and the intersection.', expect: ['math_diagram'] },
+  { id: 'geometry-altitude', msg: 'Draw triangle PQR with the altitude from P meeting QR at a right angle, marked properly.', expect: ['math_diagram'] },
+  { id: 'binary-tree', msg: 'Draw a binary tree with root 8, children 3 and 10, where 3 has children 1 and 6.', expect: ['math_diagram'] },
+  { id: 'vector-sum', msg: 'Show me how to add two vectors a and b head to tail to get the resultant.', expect: ['math_diagram', 'interactive'] },
+  { id: 'drag-circle', msg: 'Let me drag a point around the unit circle and watch its x and y coordinates (cos and sin) change.', expect: ['interactive'] },
+  { id: 'surface-3d', msg: 'I want to turn the 3D surface z = x^2 + y^2 around myself and see its shape.', expect: ['interactive'] },
+  { id: 'derivation', msg: 'Walk me step by step through solving 3(x - 2) = 2x + 5.', expect: ['draw_on_board'] },
+  { id: 'motion', msg: 'Show me a ball rolling down a ramp and speeding up as it goes.', expect: ['draw_on_board', 'animate_concept', 'simulate'] },
+  { id: 'cinematic', msg: 'Make a cinematic 3D animation of the Earth orbiting the Sun, tilted, to show why we get seasons.', expect: ['animate_concept'] },
+  { id: 'board-circle', msg: 'Circle the -5 from the last step on the board and say what it means.', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX },
+  { id: 'board-revise', msg: 'On the board, can you rewrite 2x = -10 as x = -10/2 before the last line?', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX },
+]
+
+export async function routingCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
+  return toolCases(admin, studentId, only, ROUTING_CASES, 'routing')
+}
+
+export async function toolCases(admin: SupabaseClient, studentId: string, only?: string[], cases: ToolCase[] = TOOL_CASES, group = 'tools'): Promise<CaseResult[]> {
   const ctx = evalCtx(admin, studentId)
   const out: CaseResult[] = []
-  for (const c of TOOL_CASES.filter(x => !only || only.includes(x.id))) {
+  for (const c of cases.filter(x => !only || only.includes(x.id))) {
     const t0 = Date.now()
-    const tools = selectTools({ ...ctx, lessonId: null }, c.msg).map(t => t.def)
+    const tools = selectTools({ ...ctx, lessonId: null, hasBoard: !!c.board }, c.msg).map(t => t.def)
     try {
-      const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, messages: [{ role: 'system', content: CHAT_SYSTEM }, { role: 'user', content: c.msg }] })
+      const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, { role: 'user', content: c.msg }] })
       const names = r.toolCalls.map(x => x.name)
-      out.push({ id: `tool-${c.id}`, group: 'tools', pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
+      out.push({ id: `${group === 'tools' ? 'tool' : 'route'}-${c.id}`, group, pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
       // Tool-arg validity: every call parsed as JSON with required fields present.
       const bad = r.toolCalls.filter(x => '__invalid' in x.args)
       const specErr = r.toolCalls.map(x => ('__invalid' in x.args ? null : ARG_CHECKS[x.name]?.(x.args) ?? null)).find(Boolean)
-      if (r.toolCalls.length) out.push({ id: `tool-args-${c.id}`, group: 'tools', pass: bad.length === 0 && !specErr, detail: bad.length ? 'invalid JSON args' : specErr ? `spec: ${specErr.slice(0, 160)}` : 'valid', model: r.model })
+      if (r.toolCalls.length) out.push({ id: `${group === 'tools' ? 'tool' : 'route'}-args-${c.id}`, group, pass: bad.length === 0 && !specErr, detail: bad.length ? 'invalid JSON args' : specErr ? `spec: ${specErr.slice(0, 160)}` : 'valid', model: r.model })
     } catch (err) {
-      out.push({ id: `tool-${c.id}`, group: 'tools', pass: false, detail: `error: ${err instanceof Error ? err.message.slice(0, 160) : err}`, ms: Date.now() - t0 })
+      out.push({ id: `${group === 'tools' ? 'tool' : 'route'}-${c.id}`, group, pass: false, detail: `error: ${err instanceof Error ? err.message.slice(0, 160) : err}`, ms: Date.now() - t0 })
     }
   }
   return out

@@ -540,7 +540,7 @@ const VISUAL: ToolSpec[] = [
     },
   },
   {
-    def: { name: 'illustrate', description: 'Draw a clean labelled diagram (SVG) of a structure, setup or process, e.g. a cell, a circuit, forces on a block.', parameters: obj({ brief: { type: 'string' } }, ['brief']) },
+    def: { name: 'illustrate', description: 'Draw a clean labelled diagram (SVG) of a real-world structure, setup or process, e.g. a cell, a circuit, forces on a block. For exact maths structure (sets, geometry constructions, trees, vectors) use math_diagram.', parameters: obj({ brief: { type: 'string' } }, ['brief']) },
     tier: 'visual', modes: ['chat'], label: 'Illustrating',
     run: async (a, ctx) => {
       const r = await makeIllustration(s(a.brief, 800), ctx.trace)
@@ -642,7 +642,7 @@ const VISUAL: ToolSpec[] = [
   },
   {
     def: {
-      name: 'simulate', description: 'An interactive simulation: sliders drive formulas, live readouts and curves; optional moving dot along (x(t), y(t)). Expressions use slider names, x in curves, t in motion; ^ for powers.',
+      name: 'simulate', description: 'A slider simulation of a formula (physics, finance, rates): sliders drive formulas, live readouts and curves; optional moving dot along (x(t), y(t)). To drag points or shapes on a graph use interactive instead. Expressions use slider names, x in curves, t in motion; ^ for powers.',
       parameters: obj({
         title: { type: 'string' }, explain: { type: 'string' },
         params: { type: 'array', maxItems: 5, items: obj({ name: { type: 'string' }, label: { type: 'string' }, min: { type: 'number' }, max: { type: 'number' }, step: { type: 'number' }, value: { type: 'number' }, unit: { type: 'string' } }, ['name', 'label', 'min', 'max', 'value']) },
