@@ -6,7 +6,8 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { generateStructuredJson } from './gemini'
-import { levelLine, type Answers } from './intake'
+import { inferStatus, levelLine, type Answers } from './intake'
+import { inferSignals, type DiagSignals } from './onboarding-signals'
 import { cleanGraph, descendants, ancestors, topoOrder, type DiagGraph, type DiagState, type DiagItem } from './diagnostic-core'
 import type { StudentProfileLite } from './lesson-ai'
 import { QUESTION_RULES, checkItem, feedbackFor, rawItems, type RawItem } from './question-quality'
@@ -47,7 +48,7 @@ export interface PathRow {
   status: 'diagnosing' | 'ready' | 'archived'
   graph: DiagGraph
   /** fresh: the learner said they are completely new to the topic, so the check was skipped (see priorKnowledge). */
-  diagnostic: { state?: DiagState; extra?: Record<string, DiagItem[]>; fresh?: boolean; freshReason?: string | null; skipped?: boolean }
+  diagnostic: { state?: DiagState; extra?: Record<string, DiagItem[]>; fresh?: boolean; freshReason?: string | null; skipped?: boolean; signals?: DiagSignals }
   known: string[]
   ready: string[]
   plan: PathPlan
@@ -92,6 +93,7 @@ export function answersToColumns(a: Answers): Partial<LearnerRow> {
   const str = (id: string, n = 300) => { const v = val(id); return typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null }
   const out: Partial<LearnerRow> = {}
   if ('status' in a) out.learner_status = str('status')
+  else if ('level' in a || 'age' in a) out.learner_status = inferStatus(a)
   if ('age' in a) out.age_band = str('age')
   if ('level' in a) out.level = str('level')
   if ('system' in a) out.school_system = str('system')
@@ -109,13 +111,19 @@ export function answersToColumns(a: Answers): Partial<LearnerRow> {
   if ('efficacy' in a) { const e = num(val('efficacy')); out.efficacy = e && e >= 1 && e <= 5 ? Math.round(e) : null }
   if ('orientation' in a) out.goal_orientation = str('orientation')
   if ('anxiety' in a) {
-    const v = val('anxiety') as Record<string, unknown> | undefined
-    out.anxiety = v ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, num(x)]).filter(([, x]) => x !== null && (x as number) >= 1 && (x as number) <= 5)) as Record<string, number> : null
+    const raw = val('anxiety')
+    // v2: one single-item rating (SIMA-style, 1-5); v1: three situation ratings.
+    const v = (typeof raw === 'number' ? { sima: raw } : raw) as Record<string, unknown> | undefined
+    out.anxiety = v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, num(x)]).filter(([, x]) => x !== null && (x as number) >= 1 && (x as number) <= 5)) as Record<string, number> : null
   }
   if ('example_pref' in a) out.example_pref = str('example_pref')
   if ('interests' in a) {
     const v = val('interests')
     out.interests = Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map(x => x.slice(0, 60)).slice(0, 8) : []
+  } else if ('goal_pick' in a) {
+    // Not asked yet: contexts the learner named in their own goal (e.g. "for my solar project") stand in.
+    const c = (val('goal_pick') as { contexts?: unknown } | undefined)?.contexts
+    if (Array.isArray(c)) out.interests = c.filter((x): x is string => typeof x === 'string' && !!x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 2)
   }
   if ('barriers' in a) out.barriers = str('barriers', 600)
   return out
@@ -191,13 +199,15 @@ export function learnerLite(l: LearnerRow | null, mood?: number | null): Student
 
 /* ───────────── Intake AI: narrow the goal, reflect the why ───────────── */
 
-export async function suggestGoals(input: { goal: string; level: string }): Promise<{ goals: { goal: string; subject: string; stem: boolean }[]; reflection: string; prior: 'none' | 'some' | 'unclear' }> {
+export async function suggestGoals(input: { goal: string; level: string }): Promise<{ goals: { goal: string; subject: string; stem: boolean }[]; reflection: string; prior: 'none' | 'some' | 'unclear'; contexts: string[]; purpose: string | null }> {
   const prompt = `A learner (${input.level || 'level unknown'}) told an AI tutor what they want to learn, in their own words:
 """${input.goal.slice(0, 600)}"""
 Suggest 3 or 4 specific, achievable learning goals that are closest to what they meant, from narrow to broader. Each goal is one plain sentence starting with a verb ("Solve…", "Size…", "Explain…"), under 90 characters, at a level that suits them. Use neutral wording: do not assume an exam unless they said so.
 Also give "reflection": one warm sentence (under 25 words) reflecting back what they want, without praise or emoji.
 Also give "prior": what their words say about how much they already know of this topic: "none" ONLY when they clearly say they know nothing about it yet (e.g. "I have no idea about…", "never studied it", "complete beginner", "from scratch"); "some" when they say they know some of it or are studying it; otherwise "unclear".
-Return JSON: {"reflection": string, "prior": string, "goals": [{"goal": string, "subject": string (the school or field subject in 1-3 words, e.g. "Mathematics", "Solar PV", "Chemistry"), "stem": boolean (true for maths, physics, chemistry, engineering, computing, statistics)}]}`
+Also "contexts": 0 to 2 short real-life settings the learner THEMSELVES mentioned that examples could be set in (e.g. "solar installations", "football", "their family shop"); [] when they mention none. Never invent one.
+Also "purpose": what it seems to be for, only when their words make it clear: "exam" (a test, class or course), "project" (building or making something), "career" (a job), "helping" (teaching someone else) or "curiosity"; otherwise null.
+Return JSON: {"reflection": string, "prior": string, "contexts": [string], "purpose": string|null, "goals": [{"goal": string, "subject": string (the school or field subject in 1-3 words, e.g. "Mathematics", "Solar PV", "Chemistry"), "stem": boolean (true for maths, physics, chemistry, engineering, computing, statistics)}]}`
   const raw = await generateStructuredJson(prompt, { timeoutMs: 25_000, primaryTimeoutMs: 15_000, thinking: 'minimal' }) as Record<string, unknown>
   const goals = (Array.isArray(raw?.goals) ? raw.goals : []).flatMap(g => {
     if (!g || typeof g !== 'object') return []
@@ -205,7 +215,9 @@ Return JSON: {"reflection": string, "prior": string, "goals": [{"goal": string, 
     return typeof o.goal === 'string' && o.goal.trim() ? [{ goal: o.goal.trim().slice(0, 140), subject: typeof o.subject === 'string' ? o.subject.trim().slice(0, 60) : '', stem: o.stem === true }] : []
   }).slice(0, 4)
   const prior = raw?.prior === 'none' || raw?.prior === 'some' ? raw.prior : 'unclear'
-  return { goals, reflection: typeof raw?.reflection === 'string' ? raw.reflection.slice(0, 220) : '', prior }
+  const contexts = (Array.isArray(raw?.contexts) ? raw.contexts : []).filter((x): x is string => typeof x === 'string' && !!x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 2)
+  const purpose = typeof raw?.purpose === 'string' && ['exam', 'project', 'career', 'helping', 'curiosity'].includes(raw.purpose) ? raw.purpose : null
+  return { goals, reflection: typeof raw?.reflection === 'string' ? raw.reflection.slice(0, 220) : '', prior, contexts, purpose }
 }
 
 export async function reflectWhy(input: { why: string; goal: string }): Promise<{ reflection: string; valueType: string }> {
@@ -367,9 +379,14 @@ export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 
   const prereqs = node?.prereqs ?? []
   const prereqKnown = prereqs.filter(p => known.has(p))
   const novice = prereqs.length > 0 ? prereqKnown.length < prereqs.length : node?.level !== 'below'
+  // Stated answers (v1 intake, or the later micro-question) drive scaffolding as before. Signals inferred from the
+  // check's confidence taps (v2, docs/design/onboarding.md) only change tone: knowledge decides scaffolding.
+  const sig: DiagSignals | null | undefined = path.diagnostic?.signals ?? inferSignals(path.diagnostic?.state, { stem: !!g.stem })
   const lowEfficacy = (l.efficacy ?? 3) <= 2
   const anxious = (anxietyScore(l) ?? 0) >= 3.5
-  const strong = !novice && (l.efficacy ?? 3) >= 4 && path.known.length >= Math.ceil(g.nodes.length / 2)
+  const toneLowConfidence = !lowEfficacy && l.efficacy == null && !!sig && sig.efficacy <= 2
+  const toneAnxious = !anxious && anxietyScore(l) == null && !!sig?.anxious
+  const strong = !novice && (l.efficacy ?? sig?.efficacy ?? 3) >= 4 && path.known.length >= Math.ceil(g.nodes.length / 2)
   const minor = l.age_band === 'under13' || l.age_band === '13to17'
   const lines = [
     `Learner: ${levelLine(l) || 'level unknown'}. ${minor ? 'Teenager or child: friendly, simple sentences, concrete examples.' : 'Adult: direct, respectful, no talking down.'}`,
@@ -383,9 +400,13 @@ export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 
       : strong
         ? 'Scaffolding: LOW. They are ready for more: brief worked example, then let them try problems with only hints; avoid over-explaining what they already know (expertise reversal).'
         : 'Scaffolding: MEDIUM. One worked example, then guided practice with fading support.',
-    l.example_pref === 'try' && !novice ? 'They like to try first: pose a problem before showing the method, then explain.' : l.example_pref === 'try' ? 'They like to try first, but this skill is new to them: show ONE short worked example first, then let them try.' : 'They prefer to see a worked example before trying.',
+    l.example_pref === 'try' && !novice ? 'They like to try first: pose a problem before showing the method, then explain.' : l.example_pref === 'try' ? 'They like to try first, but this skill is new to them: show ONE short worked example first, then let them try.'
+      : l.example_pref === 'worked' ? 'They prefer to see a worked example before trying.'
+      : strong ? 'Examples vs trying: they showed this ground is familiar, so pose a problem first and explain after (expertise reversal).' : 'Examples vs trying: this is new ground for them, so show a worked example before they try.',
+    toneLowConfidence ? 'In the check they were often unsure of answers (even some they got right): name what they did well, start with a quick win, and build their confidence step by step.' : '',
+    toneAnxious ? 'In the check they hesitated a lot and often said "I don\'t know": calm, unhurried tone; mistakes are normal; never mention speed or time limits.' : '',
     anxious ? 'They feel tense about this subject: calm, unhurried tone; say mistakes are normal; never mention speed or time limits.' : '',
-    l.goal_orientation === 'performance_avoid' ? 'Feedback framing: mistakes are private information about what to practise next; never compare with others.' : 'Feedback framing: focus on understanding and progress.',
+    l.goal_orientation === 'performance_avoid' ? 'Feedback framing: mistakes are private information about what to practise next; never compare with others.' : 'Feedback framing: focus on understanding and progress; mistakes are private information about what to practise next, never compared with others.',
     l.purpose === 'exam' ? 'Scope: full coverage of this skill and exam-style practice questions in the checks (without naming an exam board).'
       : l.purpose === 'project' ? `Scope: only what their project needs; apply each idea directly to their project${l.why_text ? ` (they said: "${l.why_text.slice(0, 160)}")` : ''}.`
       : l.purpose === 'career' ? 'Scope: practical, workplace-style applications.'

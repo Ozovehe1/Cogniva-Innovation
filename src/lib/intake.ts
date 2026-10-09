@@ -1,9 +1,7 @@
 /**
- * The GeniusMap intake: a short conversation (about 12-14 items, under ~5 minutes)
- * that finds the learner's level, goal, reasons, constraints and current state.
- * Evidence base (see the intake research brief): open-then-narrow goal questions,
- * expectancy-value "why", PALS-style efficacy and goal-orientation items, AMAS-style
- * maths anxiety items asked only after rapport, and no learning-styles test.
+ * The GeniusMap intake (v2): four short screens before the adaptive check, then progressive profiling.
+ * Evidence base: docs/design/onboarding.md (survey length vs drop-off, time-to-value, stealth assessment,
+ * single-item anxiety measures, implementation intentions, expertise reversal, interest personalisation, CAT).
  *
  * Pure data and helpers: safe on the server and in the browser.
  */
@@ -27,17 +25,23 @@ export interface IntakeItem {
   optional?: boolean
   /** Shown only when this returns true for the answers so far. */
   when?: (a: Answers) => boolean
+  /** Asked later as a micro-question, not during onboarding. */
+  deferred?: boolean
+  /** A v1 item that is no longer asked (answers still accepted). */
+  legacy?: boolean
 }
 
 export interface Answer {
   v?: unknown
   skipped?: boolean
   notSure?: boolean
+  /** Set when the value was inferred from behaviour rather than answered (e.g. 'diagnostic', 'goal-text'). */
+  inferred?: string
+  /** When it was answered (micro-questions). */
+  at?: string
 }
 export type Answers = Record<string, Answer>
 
-const MOOD = ['😣', '🙁', '😐', '🙂', '😄']
-const ENERGY = ['🪫', '😪', '😐', '⚡', '🔋']
 
 export const LEVELS: Choice[] = [
   { value: 'Primary 4-6', label: 'Primary 4–6' },
@@ -47,6 +51,7 @@ export const LEVELS: Choice[] = [
   { value: 'University 100L', label: '100L' }, { value: 'University 200L', label: '200L' }, { value: 'University 300L', label: '300L' },
   { value: 'University 400L', label: '400L' }, { value: 'University 500L', label: '500L' },
   { value: 'Postgraduate', label: 'Postgraduate' },
+  { value: 'Finished school', label: 'Finished school / working' },
   { value: 'Other', label: 'Something else' },
 ]
 
@@ -78,52 +83,88 @@ export const isStem = (a: Answers) => {
   return !!g?.stem
 }
 
+/**
+ * Onboarding v2 (docs/design/onboarding.md). Four explicit screens before the check (five for under-18s, who
+ * need a guardian's okay): the goal in their own words, age + class on one screen, the goal narrowed (with how
+ * familiar it is), then an optional "what for / by when" shown while the skill map is being built. Everything
+ * else is inferred from behaviour (efficacy and anxiety from the check's confidence taps, examples-first vs
+ * try-first from the diagnostic's expertise, interests from the goal's own words) or asked once later, in
+ * context, as a one-tap micro-question at the end of a lesson (MICRO_QUESTIONS). Items no longer asked stay
+ * here (legacy: true) so older learners' answers keep loading, saving and mapping onto the profile.
+ */
 export const INTAKE: IntakeItem[] = [
-  { id: 'status', kind: 'choice', ask: 'First, a little about you. Are you in school right now, or have you finished?', choices: [
-    { value: 'in_school', label: 'In school' }, { value: 'finished', label: 'Finished' }, { value: 'break', label: 'Taking a break' },
+  { id: 'goal', kind: 'text', ask: 'What do you want to learn?', sub: 'In your own words. A few words is plenty.', placeholder: 'e.g. Solve quadratic equations without getting stuck' },
+  { id: 'age', kind: 'choice', ask: 'How old are you?', choices: [
+    { value: 'under13', label: 'Under 13' }, { value: '13to17', label: '13–17' }, { value: '18plus', label: '18+' },
   ] },
-  { id: 'age', kind: 'choice', ask: 'How old are you?', sub: 'This decides how we talk with you and whether we need a parent or guardian’s okay.', choices: [
-    { value: 'under13', label: 'Under 13' }, { value: '13to17', label: '13 to 17' }, { value: '18plus', label: '18 or over' },
-  ] },
-  { id: 'consent', kind: 'consent', ask: 'Because you’re under 18, we need a parent or guardian to agree before we save your answers.', sub: 'Nigeria’s Data Protection Act (2023, s.31) asks for this. We only keep what helps us teach you.', when: isMinor },
-  { id: 'level', kind: 'choice', ask: 'Which class or year are you in, or did you last finish?', choices: LEVELS },
-  { id: 'system', kind: 'choice', ask: 'Which school system is that?', choices: [
-    { value: 'Nigerian curriculum (public)', label: 'Nigerian, public' }, { value: 'Nigerian curriculum (private)', label: 'Nigerian, private' },
-    { value: 'British (IGCSE / A-level)', label: 'British (IGCSE / A-level)' }, { value: 'American', label: 'American' },
-    { value: 'Homeschool', label: 'Homeschool' }, { value: 'Other', label: 'Other' },
-  ] },
-  { id: 'goal', kind: 'text', ask: 'What do you want to learn, or be able to do?', sub: 'In your own words. A sentence is plenty.', placeholder: 'e.g. Solve quadratic equations without getting stuck' },
+  { id: 'level', kind: 'choice', ask: 'Which class or year are you in?', sub: 'Or the last one you finished.', choices: LEVELS },
+  { id: 'consent', kind: 'consent', ask: 'One thing before we save anything: a parent or guardian’s okay.', sub: 'Nigeria’s Data Protection Act (2023, s.31) asks for this for anyone under 18. We only keep what helps us teach you.', when: isMinor },
   { id: 'goal_pick', kind: 'goal', ask: 'Which of these is closest?', sub: 'Pick one, or keep your own words.' },
-  { id: 'last_studied', kind: 'choice', ask: 'When did you last study {subject}?', choices: [
-    { value: 'now', label: 'I’m studying it now' }, { value: 'this_year', label: 'Earlier this year' },
-    { value: '1-2y', label: '1–2 years ago' }, { value: 'longer', label: 'Longer ago' },
-    { value: 'never', label: 'I’m completely new to this', hint: 'Never studied it, no idea yet' },
+  { id: 'last_studied', kind: 'choice', ask: 'How well do you know it already?', optional: true, choices: [
+    { value: 'never', label: 'It’s new to me', hint: 'Never studied it' },
+    { value: 'some', label: 'I know a bit' },
+    { value: 'now', label: 'I’m studying it now' },
+    // Older answers (the v1 question had five choices).
+    { value: 'this_year', label: 'Earlier this year' }, { value: '1-2y', label: '1–2 years ago' }, { value: 'longer', label: 'Longer ago' },
   ] },
-  { id: 'why', kind: 'text', ask: 'Why does this matter to you?', sub: 'There’s no right answer.', placeholder: 'e.g. I want to understand it properly, not just pass' },
-  { id: 'purpose', kind: 'choice', ask: 'What is it for, mainly?', choices: PURPOSES },
-  { id: 'deadline', kind: 'date', ask: 'Is there a deadline?', sub: 'An exam date, a project hand-in, a start date.' },
-  { id: 'hours', kind: 'choice', ask: 'How much time can you give it each week?', choices: [
+  { id: 'purpose', kind: 'choice', ask: 'What’s it for?', optional: true, choices: PURPOSES },
+  { id: 'deadline', kind: 'date', ask: 'Is there a date you need it by?', optional: true },
+  // Asked later, one at a time, at the end of a lesson (see MICRO_QUESTIONS).
+  { id: 'interests', kind: 'multi', ask: 'What should your examples be about?', sub: 'Pick any. Problems set in things you care about are easier to think through.', choices: INTERESTS, optional: true, deferred: true },
+  { id: 'hours', kind: 'choice', ask: 'How much time can you give this each week?', optional: true, deferred: true, choices: [
     { value: '1', label: 'About an hour' }, { value: '2', label: '1–2 hours' }, { value: '4', label: '3–5 hours' },
     { value: '8', label: '6–10 hours' }, { value: '12', label: 'More than 10' },
   ] },
-  { id: 'efficacy', kind: 'scale', ask: 'How sure are you that you can learn this if you keep at it?', anchors: ['Not sure at all', 'A little', 'Somewhat', 'Fairly sure', 'Very sure'] },
-  { id: 'orientation', kind: 'choice', ask: 'When you’re learning, which matters more to you?', sub: 'Pick the one that’s closer, even if both are a bit true.', choices: [
-    { value: 'mastery', label: 'Really understanding it' }, { value: 'performance_avoid', label: 'Not looking bad in front of others' },
+  { id: 'next_session', kind: 'choice', ask: 'When will you do your next lesson?', sub: 'People who pick a time are far more likely to show up. We’ll keep your place ready.', optional: true, deferred: true, choices: [
+    { value: 'today_later', label: 'Later today' }, { value: 'tomorrow_same', label: 'Tomorrow, same time' },
+    { value: 'tomorrow_morning', label: 'Tomorrow morning' }, { value: 'tomorrow_evening', label: 'Tomorrow evening' }, { value: 'weekend', label: 'At the weekend' },
   ] },
-  { id: 'feeling', kind: 'pair', ask: 'How are you feeling right now?', sub: 'Only you see this, and we delete it after two weeks.', rows: [
-    { id: 'mood', label: 'Mood', anchors: MOOD }, { id: 'energy', label: 'Energy', anchors: ENERGY },
+  { id: 'anxiety', kind: 'scale', ask: 'How anxious does {subject} make you?', sub: 'Honest is best. It only changes how calmly I pace things.', anchors: ['Not at all', 'A little', 'Somewhat', 'Quite', 'Very'], optional: true, deferred: true, when: isStem },
+  { id: 'why', kind: 'text', ask: 'How could this help you, in your own life?', sub: 'One sentence. Connecting it to your life makes it stick.', placeholder: 'e.g. So I can size the solar panels for my family’s shop', optional: true, deferred: true },
+  // Legacy (v1) items: never asked now; kept so stored answers still validate and map.
+  { id: 'status', kind: 'choice', ask: 'Are you in school right now?', legacy: true, choices: [
+    { value: 'in_school', label: 'In school' }, { value: 'finished', label: 'Finished' }, { value: 'break', label: 'Taking a break' },
   ] },
-  { id: 'anxiety', kind: 'pair', ask: 'A few honest ones about {subject}. How tense would you feel…', sub: '1 is calm, 5 is very tense.', when: isStem, rows: [
-    { id: 'test', label: '…taking a test on it?', anchors: ['1', '2', '3', '4', '5'] },
-    { id: 'problems', label: '…being handed a page of problems?', anchors: ['1', '2', '3', '4', '5'] },
-    { id: 'new_topic', label: '…hearing a new topic explained?', anchors: ['1', '2', '3', '4', '5'] },
-  ] },
-  { id: 'example_pref', kind: 'choice', ask: 'When something is new, do you like to see a worked example first, or try it first?', choices: [
-    { value: 'worked', label: 'Show me an example first' }, { value: 'try', label: 'Let me try first' },
-  ] },
-  { id: 'interests', kind: 'multi', ask: 'What should your examples be about?', sub: 'Pick any. We’ll use them to make problems feel real.', choices: INTERESTS },
-  { id: 'barriers', kind: 'text', ask: 'Anything that’s made learning hard before?', sub: 'Optional. Anything you share helps us pace things.', placeholder: 'e.g. Teachers moved too fast; I get lost when there are many steps', optional: true },
+  { id: 'system', kind: 'choice', ask: 'Which school system is that?', legacy: true },
+  { id: 'efficacy', kind: 'scale', ask: 'How sure are you that you can learn this if you keep at it?', legacy: true, anchors: ['Not sure at all', 'A little', 'Somewhat', 'Fairly sure', 'Very sure'] },
+  { id: 'orientation', kind: 'choice', ask: 'When you’re learning, which matters more to you?', legacy: true },
+  { id: 'feeling', kind: 'pair', ask: 'How are you feeling right now?', legacy: true },
+  { id: 'example_pref', kind: 'choice', ask: 'Worked example first, or try first?', legacy: true },
+  { id: 'barriers', kind: 'text', ask: 'Anything that’s made learning hard before?', legacy: true, optional: true },
 ]
+
+/** The onboarding screens, in order. Each holds one or more items answered together. */
+export interface IntakeScreen { id: string; items: string[]; when?: (a: Answers) => boolean; optional?: boolean }
+export const SCREENS: IntakeScreen[] = [
+  { id: 'goal', items: ['goal'] },
+  { id: 'about', items: ['age', 'level'] },
+  { id: 'consent', items: ['consent'], when: isMinor },
+  { id: 'goal_pick', items: ['goal_pick', 'last_studied'] },
+  // Shown after the intake is complete, while the skill map builds; all optional.
+  { id: 'purpose', items: ['purpose', 'deadline'], optional: true },
+]
+/** Screens that belong to one goal (asked again when the learner adds another goal). */
+export const GOAL_SCREENS = ['goal', 'goal_pick', 'purpose']
+export const GOAL_ITEMS = ['goal', 'goal_pick', 'last_studied', 'why', 'purpose', 'deadline', 'efficacy', 'anxiety', 'next_session']
+
+export function visibleScreens(a: Answers): IntakeScreen[] {
+  return SCREENS.filter(s => !s.when || s.when(a))
+}
+
+/**
+ * One-tap micro-questions asked later, in context, at the end of a lesson (at most one per lesson end and one
+ * every 12 hours), in this order. Each is asked once; skipping counts as asked.
+ */
+export const MICRO_QUESTIONS = ['interests', 'next_session', 'hours', 'anxiety', 'why'] as const
+export type MicroId = typeof MICRO_QUESTIONS[number]
+
+/** Status is no longer asked: from the class (school classes for under-18s are "in school"). */
+export function inferStatus(a: Answers): string | null {
+  const lv = a.level?.v; const age = a.age?.v
+  if (lv === 'Finished school') return 'finished'
+  if (typeof lv === 'string' && /^(Primary|JSS|SS|University|ND)/.test(lv) && (age === 'under13' || age === '13to17')) return 'in_school'
+  return null
+}
 
 /**
  * Free-text signs that the learner knows nothing about the topic yet ("no idea", "never studied it",
@@ -146,7 +187,7 @@ export function priorKnowledge(a: Answers): PriorKnowledge {
   const ls = a.last_studied
   const lsv = ls && !ls.skipped && !ls.notSure ? ls.v : undefined
   if (lsv === 'never') return { none: true, reason: 'choice' }
-  if (lsv === 'now' || lsv === 'this_year' || lsv === '1-2y') return { none: false, reason: null }
+  if (lsv === 'now' || lsv === 'some' || lsv === 'this_year' || lsv === '1-2y') return { none: false, reason: null }
   const pick = a.goal_pick?.v as { prior?: unknown } | undefined
   if (pick && typeof pick === 'object' && pick.prior === 'none') return { none: true, reason: 'ai' }
   for (const id of ['goal', 'why']) {
@@ -156,9 +197,11 @@ export function priorKnowledge(a: Answers): PriorKnowledge {
   return { none: false, reason: null }
 }
 
+/** Items asked during onboarding (not deferred, not legacy) and visible for these answers. */
 export function visibleItems(a: Answers): IntakeItem[] {
-  return INTAKE.filter(i => !i.when || i.when(a))
+  return INTAKE.filter(i => !i.deferred && !i.legacy && (!i.when || i.when(a)))
 }
+export const itemById = (id: string) => INTAKE.find(i => i.id === id)
 
 export function fill(text: string, a: Answers): string {
   const g = a.goal_pick?.v as { subject?: string; goal?: string } | undefined

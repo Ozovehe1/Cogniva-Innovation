@@ -29,7 +29,7 @@ export interface DiagNode {
 export interface DiagGraph { nodes: DiagNode[]; goalNode: string; subject: string; stem: boolean }
 
 export type Confidence = 'guess' | 'fairly' | 'sure'
-export interface DiagAnswer { node: string; item: number; choice: number | null; correct: boolean; confidence: Confidence | null; at: string }
+export interface DiagAnswer { node: string; item: number; choice: number | null; correct: boolean; confidence: Confidence | null; at: string; /** Time on the question (client-measured), for hesitation signals. */ ms?: number }
 export type NodeState = 'known' | 'unknown'
 export interface DiagState {
   asked: DiagAnswer[]
@@ -40,8 +40,10 @@ export interface DiagState {
   done: boolean
 }
 
-export const MIN_ITEMS = 8
-export const MAX_ITEMS = 15
+// v2 (docs/design/onboarding.md): adaptive testing reaches the same precision with roughly half the items, and the
+// splitting rule below resolves most of an 8-10 skill map in 5-7 answers; extra confirmations were mostly padding.
+export const MIN_ITEMS = 6
+export const MAX_ITEMS = 10
 
 export function emptyState(): DiagState {
   return { asked: [], state: {}, current: null, done: false }
@@ -145,6 +147,17 @@ export function nextItem(g: DiagGraph, st: DiagState): { node: string; item: num
   }
 
   const unresolved = order.filter(n => !st.state[n.id])
+  // A fast first win: open with a foundation skill (just below their level) that also splits the map well, so
+  // the first answer is usually a confident success (lower threat, competence signal) without wasting a question.
+  if (st.asked.length === 0) {
+    const below = unresolved.filter(n => n.level === 'below' && itemsLeft(g, st, n.id).length)
+    let first: DiagNode | null = null; let best = -Infinity
+    for (const n of below) {
+      const score = [...descendants(g, n.id)].length - (pos.get(n.id) ?? 0) * 0.01
+      if (score > best) { best = score; first = n }
+    }
+    if (first) return { node: first.id, item: itemsLeft(g, st, first.id)[0] }
+  }
   if (unresolved.length) {
     // Prefer the skill that splits the remaining graph best, nudged toward the stated level.
     const prior = (n: DiagNode) => (n.level === 'below' ? 0.7 : n.level === 'at' ? 0.5 : 0.3)

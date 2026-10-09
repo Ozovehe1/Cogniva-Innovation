@@ -1,13 +1,21 @@
 'use client'
+/**
+ * Onboarding v2 (docs/design/onboarding.md): four short screens, then a short adaptive check, then the first
+ * lesson. Psychology applied on purpose and cited in the doc: Hick's law (few choices per decision, the class
+ * picker is two small steps), endowed progress (the bar starts with "Account" already done), commitment via the
+ * goal in their own words, a curiosity gap while the skill map builds, a fast first win (the check opens on a
+ * foundation skill), reduced threat (no score, no timer, "I don't know" is welcome), autonomy (everything after
+ * the goal can be skipped), warm relatedness (the tutor speaks in the first person) and a peak-end results screen.
+ */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
-import { fill, isMinor, reflect, visibleItems, type Answer, type Answers, type IntakeItem } from '@/lib/intake'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { ArrowLeft, ArrowRight, Check, Lock, Sparkles } from 'lucide-react'
+import { LEVELS, PURPOSES, isMinor, visibleScreens, type Answers, type IntakeScreen } from '@/lib/intake'
 import { detectDistress } from '@/lib/safety'
 import { RichText } from './rich-text'
 import { SafetyPause } from './safety-pause'
-import { Alert, Spinner, buttonClass, cx, inputClass, textareaClass } from './ui'
+import { Alert, Spinner, buttonClass, cx, inputClass } from './ui'
 
 type Phase = 'intake' | 'ready' | 'building' | 'diag' | 'finishing' | 'result'
 
@@ -21,32 +29,35 @@ interface DiagView {
   max: number
   item: { node: string; topic: string; item: number; q: string; options: string[]; number: number } | null
   done: boolean
-  /** New to the topic: no check was taken. */
   fresh?: boolean
   known?: string[]
   next?: string[]
 }
+type Signals = { efficacy: number; anxious: boolean; underconfident?: boolean } | null
+interface Suggestions { goals: { goal: string; subject: string; stem: boolean }[]; reflection?: string; prior?: string; contexts?: string[]; purpose?: string | null }
 
 const STEM_GUESS = /\b(math|maths|algebra|equation|quadratic|calculus|geometry|trigonometr|statistic|physics|chemistr|solar|pv|circuit|electric|engineer|coding|code|program|python|java|data|science|biology)\b/i
+const STARTERS = ['Quadratic equations', 'How electricity works', 'Python for beginners', 'Size solar panels for a home', 'Chemistry basics', 'Statistics for data']
+const STAGES: { id: string; label: string; match: (v: string) => boolean }[] = [
+  { id: 'primary', label: 'Primary', match: v => v.startsWith('Primary') },
+  { id: 'secondary', label: 'Secondary', match: v => /^(JSS|SS)\d/.test(v) },
+  { id: 'tertiary', label: 'Tertiary', match: v => /^(University|ND|Postgraduate)/.test(v) },
+  { id: 'done', label: 'Not in school', match: v => v === 'Finished school' || v === 'Other' },
+]
 
-async function post<T>(url: string, body: unknown): Promise<{ ok: boolean; status: number; data: T }> {
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null)
+async function post<T>(url: string, body: unknown, method = 'POST'): Promise<{ ok: boolean; status: number; data: T }> {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null)
   if (!res) return { ok: false, status: 0, data: {} as T }
   const data = await res.json().catch(() => ({})) as T
   return { ok: res.ok, status: res.status, data }
 }
 
 const ease = [0.2, 0, 0, 1] as const
+const clock = () => Date.now()
+const firstWords = (s: string, n = 9) => { const w = s.trim().replace(/[.!?]+$/, '').split(/\s+/); return w.length > n ? w.slice(0, n).join(' ') + '…' : w.join(' ') }
 
 export function IntakeFlow({
-  firstName,
-  initialAnswers,
-  initialItem,
-  completed,
-  initialPath,
-  edit,
-  startAt,
-  startFresh = false,
+  firstName, initialAnswers, initialItem, completed, initialPath, edit, startAt, startFresh = false,
 }: {
   firstName: string
   initialAnswers: Answers
@@ -54,22 +65,21 @@ export function IntakeFlow({
   completed: boolean
   initialPath: DiagView | null
   edit: boolean
-  /** Item to open on (e.g. 'goal' when adding a new path). */
+  /** Screen (or item) to open on (e.g. 'goal' when adding a new goal). */
   startAt?: string
-  /** The finished intake says the learner is new to the topic: skip the check, build the path from the basics. */
   startFresh?: boolean
 }) {
+  const reduce = useReducedMotion()
   const [answers, setAnswers] = useState<Answers>(initialAnswers)
-  const items = useMemo(() => visibleItems(answers), [answers])
-  const startIndex = useMemo(() => {
-    if (edit) { const at = startAt ? items.findIndex(i => i.id === startAt) : -1; return at >= 0 ? at : 0 }
-    const at = initialItem ? items.findIndex(i => i.id === initialItem) : -1
-    if (at >= 0) return at
-    const firstOpen = items.findIndex(i => !initialAnswers[i.id])
-    return firstOpen >= 0 ? firstOpen : 0
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  const [idx, setIdx] = useState(startIndex)
+  const screens = useMemo(() => visibleScreens(answers), [answers])
+  const screenFor = (id: string | null | undefined, list: IntakeScreen[]) => (id ? list.findIndex(s => s.id === id || s.items.includes(id)) : -1)
+  const [idx, setIdx] = useState(() => {
+    const list = visibleScreens(initialAnswers)
+    if (edit) return Math.max(0, screenFor(startAt, list))
+    const at = screenFor(initialItem, list)
+    const open = list.findIndex(s => !s.optional && s.items.some(i => i !== 'last_studied' && !initialAnswers[i]))
+    return open >= 0 ? open : Math.max(0, at)
+  })
   const initialPhase: Phase = edit ? 'intake'
     : initialPath?.status === 'ready' ? 'result'
     : initialPath?.status === 'diagnosing' && initialPath.item ? 'diag'
@@ -81,280 +91,216 @@ export function IntakeFlow({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [safety, setSafety] = useState(false)
-  const [aiReflection, setAiReflection] = useState<string | null>(null)
-  const [prevItem, setPrevItem] = useState<IntakeItem | null>(null)
   const [fresh, setFresh] = useState(startFresh)
+  const [signals, setSignals] = useState<Signals>(null)
+  const [sugg, setSugg] = useState<Suggestions | 'loading' | 'failed' | null>(null)
+  const [mapState, setMapState] = useState<'idle' | 'building' | 'ready' | 'failed'>('idle')
+  const suggFor = useRef<string>('')
+  const pendingPurpose = useRef<Record<string, unknown> | null>(null)
+  const leftPurpose = useRef(false)
   const autoStarted = useRef(false)
 
-  const item = items[Math.min(idx, items.length - 1)]
+  const screen = screens[Math.min(idx, screens.length - 1)]
   const minor = isMinor(answers)
 
-  // A new learner's first lesson is drafted and voiced during the check: wake the voice and the
-  // animation render containers now, so neither cold-starts on the critical path.
+  // The first lesson is drafted and voiced during the check: wake the voice and render containers now.
   useEffect(() => {
     if (initialPhase === 'result') return
     void fetch('/api/tts/warm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ manim: true }), keepalive: true }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  /** Save one answer, move on, and show a reflection of it. */
-  const answer = useCallback(async (it: IntakeItem, a: Answer, extra: Record<string, unknown> = {}) => {
+  /** Narrowed goal suggestions, asked as soon as the goal is typed so they are ready two screens later. */
+  const fetchSuggestions = useCallback((goal: string) => {
+    if (!goal || suggFor.current === goal) return
+    suggFor.current = goal
+    setSugg('loading')
+    void post<Suggestions & { safety?: boolean }>('/api/intake/ai', { kind: 'goals', goal }).then(r => {
+      if (suggFor.current !== goal) return
+      if (r.data.safety) { setSafety(true); setSugg('failed'); return }
+      setSugg(r.ok && r.data.goals?.length ? r.data : 'failed')
+    })
+  }, [])
+  useEffect(() => {
+    const g = typeof answers.goal?.v === 'string' ? answers.goal.v : ''
+    if (phase === 'intake' && screen?.id === 'goal_pick' && g && suggFor.current !== g) fetchSuggestions(g)
+  }, [phase, screen, answers.goal, fetchSuggestions])
+
+  /* ── The skill map / check (built in the background while the last screen is answered) ── */
+  const applyPurpose = useCallback(async (pathId: string) => {
+    const p = pendingPurpose.current
+    if (!p) return
+    pendingPurpose.current = null
+    await post(`/api/paths/${pathId}`, p, 'PATCH')
+  }, [])
+
+  const finish = useCallback(async (inPlace = false, skip = false) => {
+    if (!inPlace) setPhase('finishing')
+    setError(null); setFinishing(true)
+    const r = await post<{ path?: DiagView; firstLessonId?: string | null; signals?: Signals; error?: string }>('/api/diagnostic', { action: 'finish', skip })
+    setFinishing(false)
+    if (!r.ok || !r.data.path) { if (inPlace) setPhase('finishing'); setError(r.data.error ?? 'Could not build your path. Please try again.'); return }
+    setDiag(r.data.path); setFirstLessonId(r.data.firstLessonId ?? null); setSignals(r.data.signals ?? null); setPhase('result')
+  }, [])
+
+  /** Where to go once the map exists (called when the learner leaves the last screen, or when the map lands after). */
+  const enterCheck = useCallback((view: DiagView | null, lessonId?: string | null) => {
+    if (!view) { setPhase('building'); return }
+    if (view.status === 'ready') { setFirstLessonId(lessonId ?? null); setPhase('result'); if (!lessonId) void finish(true); return }
+    setPhase(view.done ? 'finishing' : 'diag')
+  }, [finish])
+
+  const startDiag = useCallback(async (restart = false, skip = false, background = false) => {
+    setError(null); setMapState('building')
+    if (!background) setPhase('building')
+    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'start', restart, skip })
+    if (!r.ok || !r.data.path) {
+      setMapState('failed')
+      setError(r.data.error ?? 'Could not prepare your check. Please try again.')
+      if (!background || leftPurpose.current) setPhase('ready')
+      return
+    }
+    setMapState('ready')
+    setDiag(r.data.path)
+    void applyPurpose(r.data.path.pathId)
+    if (r.data.path.status === 'ready') setFirstLessonId(r.data.firstLessonId ?? null)
+    if (!background || leftPurpose.current) enterCheck(r.data.path, r.data.firstLessonId)
+  }, [applyPurpose, enterCheck])
+
+  useEffect(() => {
+    if (phase !== 'ready' || autoStarted.current || error) return
+    autoStarted.current = true
+    void startDiag(false)
+  }, [phase, error, startDiag])
+
+  /** Save a screen's answers together; then move on (or complete the intake and start the map in the background). */
+  const submitScreen = useCallback(async (patch: Answers, extra: Record<string, unknown> = {}) => {
     setError(null)
-    if (typeof a.v === 'string' && detectDistress(a.v)) { setSafety(true); return }
-    const nextAnswers = { ...answers, [it.id]: a }
-    const list = visibleItems(nextAnswers)
-    const pos = list.findIndex(i => i.id === it.id)
-    const nextItem = list[pos + 1]
+    for (const a of Object.values(patch)) if (typeof a.v === 'string' && detectDistress(a.v)) { setSafety(true); return }
+    const nextAnswers = { ...answers, ...patch }
+    const list = visibleScreens(nextAnswers)
+    const pos = list.findIndex(s => s.id === screen.id)
+    const next = list[pos + 1]
+    const completing = next?.id === 'purpose' || (!next && screen.id !== 'purpose')
     setBusy(true)
-    const r = await post<{ ok?: boolean; safety?: boolean; error?: string }>('/api/intake', { answers: { [it.id]: a }, currentItem: nextItem?.id ?? it.id, ...extra })
+    const r = await post<{ ok?: boolean; safety?: boolean; error?: string; startFresh?: boolean }>('/api/intake', { answers: patch, currentItem: (next ?? screen).items[0], ...extra, ...(completing ? { complete: true } : {}) })
     setBusy(false)
     if (r.data.safety) { setSafety(true); return }
     if (!r.ok) { setError(r.data.error ?? 'That didn’t save. Check your connection and try again.'); return }
     setAnswers(nextAnswers)
-    setPrevItem(it)
-    setAiReflection(null)
-    // The "why" gets an AI reflection (motivational-interviewing style); the rest use short written reflections.
-    if (it.id === 'why' && typeof a.v === 'string' && a.v.trim().length > 2) {
-      const goal = (nextAnswers.goal_pick?.v as { goal?: string } | undefined)?.goal ?? (nextAnswers.goal?.v as string) ?? ''
-      void post<{ reflection?: string; safety?: boolean }>('/api/intake/ai', { kind: 'why', why: a.v, goal }).then(x => {
-        if (x.data.safety) setSafety(true)
-        else if (x.data.reflection) setAiReflection(x.data.reflection)
-      })
+    if (screen.id === 'goal' && typeof patch.goal?.v === 'string') fetchSuggestions(patch.goal.v)
+    if (completing) {
+      setFresh(!!r.data.startFresh)
+      leftPurpose.current = false
+      autoStarted.current = true
+      void startDiag(false, false, true)
     }
-    if (nextItem) setIdx(pos + 1)
-    else {
-      setBusy(true)
-      const done = await post<{ error?: string; startFresh?: boolean }>('/api/intake', { complete: true })
-      setBusy(false)
-      if (!done.ok) { setError(done.data.error ?? 'Could not finish. Try again.'); return }
-      // New to the topic: no check. The path (and its first lesson's draft) is built straight away.
-      setFresh(!!done.data.startFresh)
-      autoStarted.current = false
-      setPhase('ready')
-    }
-  }, [answers])
-
-  const back = () => { setError(null); setPrevItem(null); setAiReflection(null); setIdx(i => Math.max(0, i - 1)) }
-
-  /* ── Diagnostic ── */
-  /** Builds the path. With `inPlace` the results screen is already showing (it has what it needs) and only the Start button waits. */
-  const finish = useCallback(async (inPlace = false, skip = false) => {
-    if (!inPlace) setPhase('finishing')
-    setError(null); setFinishing(true)
-    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'finish', skip })
-    setFinishing(false)
-    if (!r.ok || !r.data.path) { if (inPlace) setPhase('finishing'); setError(r.data.error ?? 'Could not build your path. Please try again.'); return }
-    setDiag(r.data.path); setFirstLessonId(r.data.firstLessonId ?? null); setPhase('result')
-  }, [])
-  const startDiag = useCallback(async (restart = false, skip = false) => {
-    setError(null); setPhase('building')
-    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'start', restart, skip })
-    if (!r.ok || !r.data.path) { setError(r.data.error ?? (restart || !fresh ? 'Could not prepare your check. Please try again.' : 'Could not plan your path. Please try again.')); setPhase('ready'); return }
-    setDiag(r.data.path)
-    if (r.data.path.status === 'ready') {
-      // A path built in this request (new to the topic) or already there for this goal: straight to the results.
-      setFirstLessonId(r.data.firstLessonId ?? null)
-      setPhase('result')
-      if (!r.data.firstLessonId) void finish(true)
+    if (screen.id === 'purpose') {
+      leftPurpose.current = true
+      if (mapState === 'ready') enterCheck(diag, firstLessonId)
+      else if (mapState === 'failed') setPhase('ready')
+      else setPhase('building')
       return
     }
-    setPhase(r.data.path.done ? 'finishing' : 'diag')
-  }, [fresh, finish])
+    if (next) setIdx(pos + 1)
+  }, [answers, screen, fetchSuggestions, startDiag, mapState, diag, firstLessonId, enterCheck])
 
-  useEffect(() => {
-    if (phase !== 'ready' || !fresh || autoStarted.current) return
-    autoStarted.current = true
-    void startDiag(false)
-  }, [phase, fresh, startDiag])
+  const back = () => { setError(null); setIdx(i => Math.max(0, i - 1)) }
 
-
-  const answerDiag = useCallback(async (choice: number | null, confidence: string | null) => {
+  const answerDiag = useCallback(async (choice: number | null, confidence: string | null, ms: number) => {
     if (!diag?.item) return
     setBusy(true); setError(null)
-    const r = await post<{ path?: DiagView; firstLessonId?: string | null; error?: string }>('/api/diagnostic', { action: 'answer', node: diag.item.node, item: diag.item.item, choice, confidence })
+    const r = await post<{ path?: DiagView; firstLessonId?: string | null; signals?: Signals; error?: string }>('/api/diagnostic', { action: 'answer', node: diag.item.node, item: diag.item.item, choice, confidence, ms })
     setBusy(false)
     if (!r.ok || !r.data.path) { setError(r.data.error ?? 'That didn’t save. Try again.'); return }
     setDiag(r.data.path)
     if (!r.data.path.done) return
-    // The last answer comes back with the path built and the first lesson (drafted during the check) attached.
+    setSignals(r.data.signals ?? null)
     setPhase('result')
     if (r.data.firstLessonId) setFirstLessonId(r.data.firstLessonId)
     else if (r.data.path.status !== 'ready') void finish(true)
   }, [diag, finish])
 
-  useEffect(() => { if (phase === 'finishing' && diag?.done && diag.status !== 'ready') setTimeout(() => void finish(), 0) // resume
+  useEffect(() => { if (phase === 'finishing' && diag?.done && diag.status !== 'ready') setTimeout(() => void finish(), 0)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const progress = phase === 'intake' ? (idx / Math.max(1, items.length)) * 0.6
-    : phase === 'diag' && diag ? 0.6 + Math.min(1, diag.asked / Math.max(diag.min, 1)) * 0.38
-    : phase === 'result' ? 1 : 0.6
-
-  const reflection = prevItem ? (aiReflection ?? reflect(prevItem, answers)) : null
+  // Endowed progress: "Account" is already done, so the learner starts one step in.
+  const steps = ['Account', 'Goal', 'You', 'Path', 'Check']
+  const stepOf = (id?: string) => (id === 'goal' ? 1 : id === 'about' || id === 'consent' ? 2 : 3)
+  const step = phase === 'intake' ? stepOf(screen?.id) + (screen?.id === 'purpose' ? 0.5 : 0) : phase === 'diag' && diag ? 4 + Math.min(0.9, diag.asked / Math.max(diag.min, 1)) : phase === 'result' ? 5 : 3.8
 
   return (
     <div className="flex min-h-dvh flex-col bg-canvas">
-      <header className="pt-safe sticky top-0 z-30 border-b border-line bg-canvas/95 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-[680px] items-center justify-between px-4 sm:px-6">
-          <Link href="/" className="inline-flex items-center gap-2 font-display text-[18px] text-ink">
+      <header className="pt-safe sticky top-0 z-30 bg-canvas/90 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-[640px] items-center justify-between px-5 sm:px-6">
+          <Link href="/" className="inline-flex items-center gap-2 font-display text-[18px] text-ink" aria-label="GeniusMap home">
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] bg-accent text-[15px] text-white">G</span>GeniusMap
           </Link>
-          <Link href="/dashboard" className="text-[13px] font-medium text-muted hover:text-ink">Save and exit</Link>
+          <Link href="/dashboard" className="-mr-2 inline-flex h-11 items-center px-2 text-[13px] font-medium text-muted hover:text-ink">Save and exit</Link>
         </div>
-        <div className="h-[3px] w-full bg-sunken" aria-hidden>
-          <motion.div className="h-full bg-accent" initial={false} animate={{ width: `${Math.round(progress * 100)}%` }} transition={{ duration: 0.4, ease }} />
+        <div className="mx-auto max-w-[640px] px-5 pb-3 sm:px-6">
+          <div className="flex gap-1.5" role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={5} aria-valuenow={Math.floor(step)}>
+            {steps.map((s, i) => {
+              const f = Math.max(0, Math.min(1, step - i))
+              return (
+                <div key={s} className="h-[5px] flex-1 overflow-hidden rounded-full bg-sunken" title={s}>
+                  <motion.div className="h-full rounded-full bg-accent" initial={false} animate={{ width: `${Math.round(f * 100)}%` }} transition={{ duration: reduce ? 0 : 0.5, ease }} />
+                </div>
+              )
+            })}
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[680px] flex-1 flex-col px-4 pb-[calc(32px+env(safe-area-inset-bottom))] pt-6 sm:px-6 sm:pt-10">
-        {phase === 'intake' && item && (
-          <AnimatePresence mode="wait">
-            <motion.section key={item.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22, ease }} className="flex flex-1 flex-col">
-              <div className="mb-5 flex items-center justify-between text-[13px] text-muted">
-                {idx > 0 ? (
-                  <button type="button" onClick={back} className="-ml-2 inline-flex h-9 items-center gap-1 rounded-md px-2 hover:text-ink"><ArrowLeft className="h-4 w-4" strokeWidth={1.75} />Back</button>
-                ) : <span>{idx === 0 && !Object.keys(answers).length ? `Hi ${firstName}. About 4 minutes.` : ''}</span>}
-                <span className="tnum">{idx + 1} of {items.length}</span>
+      <main className="mx-auto flex w-full max-w-[640px] flex-1 flex-col px-5 pt-4 sm:px-6 sm:pt-8">
+        <AnimatePresence mode="wait" initial={false}>
+          {phase === 'intake' && screen && (
+            <motion.section key={screen.id} initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? { opacity: 0 } : { opacity: 0, x: -24 }}
+              transition={{ duration: reduce ? 0.01 : 0.28, ease }} className="flex flex-1 flex-col">
+              <div className="mb-3 flex h-11 items-center">
+                {idx > 0 && screen.id !== 'purpose'
+                  ? <button type="button" onClick={back} className="-ml-3 inline-flex h-11 items-center gap-1 rounded-[10px] px-3 text-[14px] text-muted hover:bg-sunken hover:text-ink"><ArrowLeft className="h-4 w-4" strokeWidth={1.75} />Back</button>
+                  : null}
               </div>
-
-              {reflection && (
-                <p className="mb-4 max-w-[34rem] border-l-2 border-accent-line pl-3 text-[15px] leading-relaxed text-muted">{reflection}</p>
+              {screen.id === 'goal' && <GoalScreen firstName={firstName} answers={answers} busy={busy} isNewGoal={edit && startAt === 'goal' && !!answers.age} onSubmit={p => submitScreen(p)} />}
+              {screen.id === 'about' && <AboutScreen answers={answers} busy={busy} onSubmit={p => submitScreen(p)} />}
+              {screen.id === 'consent' && <ConsentScreen busy={busy} onSubmit={email => submitScreen({ consent: { v: true }, age: answers.age, ...(answers.level ? { level: answers.level } : {}) }, { consent: { guardianEmail: email } })} />}
+              {screen.id === 'goal_pick' && <GoalPickScreen answers={answers} sugg={sugg} busy={busy} onRetry={() => { suggFor.current = ''; fetchSuggestions(String(answers.goal?.v ?? '')) }} onSubmit={p => submitScreen(p)} />}
+              {screen.id === 'purpose' && (
+                <PurposeScreen answers={answers} guess={sugg && typeof sugg === 'object' ? sugg.purpose ?? null : null} mapState={mapState} fresh={fresh} busy={busy}
+                  onSubmit={(p, pathPatch) => { pendingPurpose.current = pathPatch; if (diag?.pathId && pathPatch) void applyPurpose(diag.pathId); void submitScreen(p) }} />
               )}
-              {!prevItem && idx === 0 && (
-                <p className="mb-4 max-w-[34rem] text-[15px] leading-relaxed text-muted">
-                  I’m your AI tutor. Before we start, I’d like to understand what you want to learn and why, so lessons start at the right
-                  level. Skip anything you’d rather not answer.
-                </p>
-              )}
-
-              <h1 className="font-display text-[28px] leading-[1.15] text-ink sm:text-[34px]">{fill(item.ask, answers)}</h1>
-              {item.sub && <p className="mt-2 text-[15px] leading-relaxed text-muted">{fill(item.sub, answers)}</p>}
-
-              <div className="mt-6">
-                <ItemControl key={item.id} item={item} answers={answers} busy={busy} onAnswer={(a, extra) => answer(item, a, extra)} onSafety={() => setSafety(true)} />
-              </div>
-
               {error && <Alert tone="danger" className="mt-4">{error}</Alert>}
+            </motion.section>
+          )}
 
-              {item.kind !== 'consent' && (
-                <div className="mt-auto flex items-center gap-2 pt-8">
-                  <button type="button" disabled={busy} onClick={() => answer(item, { skipped: true })} className={buttonClass('ghost', 'md')}>Skip</button>
-                  <button type="button" disabled={busy} onClick={() => answer(item, { notSure: true })} className={buttonClass('ghost', 'md')}>Not sure</button>
-                  {busy && <Spinner className="ml-auto text-muted" />}
+          {(phase === 'ready' || phase === 'building' || phase === 'finishing') && (
+            <motion.section key="building" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-1 flex-col pt-6">
+              <TutorLine>{phase === 'finishing' ? 'Picking where you start and writing your first lesson…' : fresh ? 'Laying out the ideas from the very first one up to your goal.' : 'Mapping the skills between where you are and your goal.'}</TutorLine>
+              <MapSkeleton reduce={!!reduce} />
+              <p className="mt-6 text-[14px] leading-relaxed text-muted" aria-live="polite">{error ? '' : 'Usually well under a minute. In a moment you’ll see what you already know.'}</p>
+              {error && (
+                <div className="mt-4">
+                  <Alert tone="danger">{error}</Alert>
+                  <button type="button" onClick={() => (phase === 'finishing' ? finish() : startDiag(false))} className={buttonClass('primary', 'lg', 'mt-4 w-full sm:w-auto')}>Try again</button>
                 </div>
               )}
             </motion.section>
-          </AnimatePresence>
-        )}
+          )}
 
-        {phase === 'ready' && (
-          <section className="flex flex-1 flex-col">
-            <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">Thanks, {firstName}</p>
-            {fresh ? (<>
-            <h1 className="mt-3 font-display text-[30px] leading-[1.12] text-ink sm:text-[38px]">We’ll start from the basics.</h1>
-            <p className="mt-4 text-[15px] leading-relaxed text-ink-2">
-              You said this is new to you, so there’s no check to take. I’ll lay out the ideas from the very first one up to your goal
-              and write your first lesson.
-            </p>
-            {error && <Alert tone="danger" className="mt-5">{error}</Alert>}
-            <div className="mt-auto flex flex-col gap-2 pt-10 sm:flex-row">
-              <button type="button" onClick={() => startDiag(false)} className={buttonClass('primary', 'lg', 'sm:flex-1')}>Build my path<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
-              <button type="button" onClick={() => { setPhase('intake'); setIdx(0); setPrevItem(null) }} className={buttonClass('secondary', 'lg')}>Change my answers</button>
-            </div>
-            </>) : (<>
-            <h1 className="mt-3 font-display text-[30px] leading-[1.12] text-ink sm:text-[38px]">Now a short check, so we start in the right place.</h1>
-            <p className="mt-4 text-[15px] leading-relaxed text-ink-2">
-              It isn’t a test and there’s no score. I’ll map the skills between where you are and your goal, then ask 8 to 15 quick
-              questions. Each answer decides the next question. After each one, tap how sure you were. “I don’t know” is a useful answer.
-            </p>
-            <ul className="mt-6 space-y-2 text-[15px] text-ink-2">
-              <li className="flex gap-3"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} />No timer. Take the time you need.</li>
-              <li className="flex gap-3"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} />You’ll see what you know now and what to learn next.</li>
-            </ul>
-            {error && <Alert tone="danger" className="mt-5">{error}</Alert>}
-            <div className="mt-auto flex flex-col gap-2 pt-10 sm:flex-row">
-              <button type="button" onClick={() => startDiag(false)} className={buttonClass('primary', 'lg', 'sm:flex-1')}>Start the check<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
-              <button type="button" onClick={() => startDiag(false, true)} className={buttonClass('secondary', 'lg')}>Skip the check</button>
-              <button type="button" onClick={() => { setPhase('intake'); setIdx(0); setPrevItem(null) }} className={buttonClass('ghost', 'lg')}>Change my answers</button>
-            </div>
-            <p className="mt-3 text-[13px] text-muted">Skipping starts you at the entry level of your goal, from your answers. You can retake the check later.</p>
-            </>)}
-          </section>
-        )}
+          {phase === 'diag' && diag?.item && (
+            <motion.div key="diag" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-1 flex-col">
+              <AnimatePresence mode="wait" initial={false}>
+                <DiagQuestion key={`${diag.item.node}:${diag.item.item}`} view={diag} busy={busy} error={error} reduce={!!reduce} onAnswer={answerDiag} onSkipRest={() => void finish(false, true)} />
+              </AnimatePresence>
+            </motion.div>
+          )}
 
-        {(phase === 'building' || phase === 'finishing') && (
-          <section className="flex flex-1 flex-col items-start justify-center py-16">
-            <Spinner className="h-6 w-6 text-accent" />
-            <h1 className="mt-6 font-display text-[28px] leading-tight text-ink">
-              {phase === 'building' ? (fresh ? 'Planning your path from the basics…' : 'Mapping the skills to your goal…') : 'Building your learning path…'}
-            </h1>
-            <p className="mt-3 max-w-[32rem] text-[15px] leading-relaxed text-muted">
-              {phase === 'building' && fresh
-                ? 'No check needed, since this is new to you. I’m laying out the ideas from the very first one up to your goal, and starting your first lesson.'
-                : phase === 'building'
-                ? 'I’m working out which ideas lead to your goal, starting just below your level. This usually takes under a minute.'
-                : 'Picking where to start, sizing lessons to your week, and writing your first lesson.'}
-            </p>
-            {error && (
-              <div className="mt-6 w-full">
-                <Alert tone="danger">{error}</Alert>
-                <button type="button" onClick={() => (phase === 'building' ? startDiag(false) : finish())} className={buttonClass('primary', 'md', 'mt-4')}>Try again</button>
-              </div>
-            )}
-          </section>
-        )}
-
-        {phase === 'diag' && diag?.item && (
-          <>
-            <DiagQuestion key={`${diag.item.node}:${diag.item.item}`} view={diag} busy={busy} error={error} onAnswer={answerDiag} />
-            <p className="mt-6 text-[14px] text-muted">
-              Rather not finish?{' '}
-              <button type="button" disabled={busy} onClick={() => void finish(false, true)} className="font-medium text-accent hover:underline underline-offset-4">Skip the rest of the check</button>
-              {' '}and I’ll build your path from your answers so far.
-            </p>
-          </>
-        )}
-
-        {phase === 'result' && diag && (
-          <section>
-            <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">Your starting point</p>
-            <h1 className="mt-3 font-display text-[30px] leading-[1.12] text-ink sm:text-[38px]"><RichText text={diag.goal} /></h1>
-            <div className="mt-8 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-[14px] border border-line bg-surface p-5">
-                <h2 className="text-[13px] font-medium uppercase tracking-[0.08em] text-muted">What you know now</h2>
-                {diag.fresh && !diag.known?.length ? (
-                  <>
-                    <p className="mt-3 font-display text-[20px] leading-snug text-ink">Starting fresh</p>
-                    <p className="mt-1.5 text-[15px] leading-relaxed text-muted">You said this is new to you, so there was no check. We start from the basics and build up one idea at a time.</p>
-                  </>
-                ) : diag.known?.length ? (
-                  <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{diag.known.map(k => <li key={k} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
-                ) : <p className="mt-3 text-[15px] leading-relaxed text-muted">We’ll build the foundations together, from the first step.</p>}
-              </div>
-              <div className="rounded-[14px] border border-accent-line bg-accent-soft p-5">
-                <h2 className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">What’s next</h2>
-                {diag.fresh && !diag.known?.length && <p className="mt-3 text-[15px] font-medium text-ink">Starting from the basics:</p>}
-                <ul className="mt-3 space-y-2 text-[15px] leading-snug text-ink">{(diag.next ?? []).map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
-              </div>
-            </div>
-            <p className="mt-5 text-[14px] leading-relaxed text-muted">This is a starting point, not a label. It updates as you learn, and a quick re-check runs if something isn’t sticking.</p>
-            <div className="mt-8 flex flex-col gap-2 sm:flex-row">
-              {firstLessonId
-                ? <Link href={`/learn/${firstLessonId}`} prefetch className={buttonClass('primary', 'lg', 'sm:flex-1')}>Start your first lesson<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
-                : finishing
-                  ? <span aria-live="polite" className={buttonClass('primary', 'lg', 'sm:flex-1 pointer-events-none opacity-80')}><Spinner className="h-4 w-4" />Setting up your first lesson…</span>
-                  : <Link href="/learn" className={buttonClass('primary', 'lg', 'sm:flex-1')}>See your path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
-              <Link href="/dashboard" className={buttonClass('secondary', 'lg')}>Go to your dashboard</Link>
-            </div>
-            <div className="mt-8 border-t border-line pt-5 text-[14px] text-muted">
-              Want to learn something else too? <Link href="/start?new=1" className="font-medium text-accent hover:underline underline-offset-4">Add another goal</Link>
-              {' · '}
-              {diag.fresh
-                ? <>Know some of this already? <button type="button" onClick={() => startDiag(true)} className="font-medium text-accent hover:underline underline-offset-4">Take the check</button></>
-                : <button type="button" onClick={() => startDiag(true)} className="font-medium text-accent hover:underline underline-offset-4">Retake the check</button>}
-            </div>
-          </section>
-        )}
+          {phase === 'result' && diag && (
+            <ResultScreen key="result" diag={diag} firstLessonId={firstLessonId} finishing={finishing} signals={signals} reduce={!!reduce} onRetake={() => startDiag(true)} />
+          )}
+        </AnimatePresence>
       </main>
 
       <SafetyPause open={safety} minor={answers.age ? minor : null} onContinue={() => setSafety(false)} />
@@ -362,240 +308,382 @@ export function IntakeFlow({
   )
 }
 
-/* ───────────── One intake control per item kind ───────────── */
+/* ───────────── Shared pieces ───────────── */
 
-function ItemControl({ item, answers, busy, onAnswer, onSafety }: {
-  item: IntakeItem; answers: Answers; busy: boolean
-  onAnswer: (a: Answer, extra?: Record<string, unknown>) => void
-  onSafety: () => void
-}) {
-  const prev = answers[item.id]?.v
-  const [text, setText] = useState(typeof prev === 'string' ? prev : '')
-  const [multi, setMulti] = useState<string[]>(Array.isArray(prev) ? (prev as string[]) : [])
-  const [pair, setPair] = useState<Record<string, number>>(prev && typeof prev === 'object' && !Array.isArray(prev) ? prev as Record<string, number> : {})
-  const [other, setOther] = useState('')
-
-  if (item.kind === 'choice') {
-    return (
-      <div className={cx('grid gap-2', (item.choices?.length ?? 0) > 6 && 'grid-cols-2 sm:grid-cols-3')}>
-        {item.choices!.map(c => (
-          <button key={c.value} type="button" disabled={busy} onClick={() => onAnswer({ v: c.value })}
-            className={cx('flex min-h-12 flex-col items-start justify-center rounded-[12px] border bg-surface px-4 py-3 text-left transition-colors duration-150 hover:border-line-strong',
-              prev === c.value ? 'border-accent ring-1 ring-accent' : 'border-line')}>
-            <span className="text-[15px] font-medium text-ink">{c.label}</span>
-            {c.hint && <span className="mt-0.5 text-[13px] leading-snug text-muted">{c.hint}</span>}
-          </button>
-        ))}
-      </div>
-    )
-  }
-
-  if (item.kind === 'text') {
-    const submit = () => {
-      const t = text.trim()
-      if (detectDistress(t)) { onSafety(); return }
-      if (t.length < 2) return
-      onAnswer({ v: t.slice(0, 600) })
-    }
-    return (
-      <div>
-        <textarea className={cx(textareaClass, 'min-h-[112px] text-[16px]')} value={text} maxLength={600} placeholder={item.placeholder} onChange={e => setText(e.target.value)} autoFocus
-          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit() }} />
-        <button type="button" disabled={busy || text.trim().length < 2} onClick={submit} className={buttonClass('primary', 'lg', 'mt-3 w-full sm:w-auto')}>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
-      </div>
-    )
-  }
-
-  if (item.kind === 'goal') return <GoalPick answers={answers} busy={busy} onAnswer={onAnswer} onSafety={onSafety} />
-
-  if (item.kind === 'scale') {
-    return (
-      <div className="grid grid-cols-5 gap-2">
-        {item.anchors!.map((a, i) => (
-          <button key={a} type="button" disabled={busy} onClick={() => onAnswer({ v: i + 1 })}
-            className={cx('flex min-h-[76px] flex-col items-center justify-center gap-1 rounded-[12px] border bg-surface px-1 py-2 text-center transition-colors hover:border-line-strong', prev === i + 1 ? 'border-accent ring-1 ring-accent' : 'border-line')}>
-            <span className="tnum font-display text-[22px] text-ink">{i + 1}</span>
-            <span className="text-[11px] leading-tight text-muted">{a}</span>
-          </button>
-        ))}
-      </div>
-    )
-  }
-
-  if (item.kind === 'pair') {
-    const rows = item.rows!
-    const complete = rows.every(r => pair[r.id])
-    return (
-      <div>
-        <div className="space-y-5">
-          {rows.map(r => (
-            <div key={r.id}>
-              <p className="mb-2 text-[14px] font-medium text-ink-2">{r.label}</p>
-              <div className="grid grid-cols-5 gap-2" role="radiogroup" aria-label={r.label}>
-                {r.anchors.map((a, i) => (
-                  <button key={i} type="button" role="radio" aria-checked={pair[r.id] === i + 1} aria-label={`${r.label} ${i + 1} of 5`}
-                    onClick={() => setPair(p => ({ ...p, [r.id]: i + 1 }))}
-                    className={cx('flex h-14 items-center justify-center rounded-[12px] border bg-surface text-[22px] transition-colors hover:border-line-strong', pair[r.id] === i + 1 ? 'border-accent bg-accent-soft ring-1 ring-accent' : 'border-line')}>
-                    {/^\d$/.test(a) ? <span className="tnum font-display text-[20px] text-ink">{a}</span> : a}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-        <button type="button" disabled={busy || !complete} onClick={() => onAnswer({ v: pair })} className={buttonClass('primary', 'lg', 'mt-5 w-full sm:w-auto')}>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
-      </div>
-    )
-  }
-
-  if (item.kind === 'multi') {
-    const toggle = (v: string) => setMulti(m => (m.includes(v) ? m.filter(x => x !== v) : [...m, v].slice(0, 6)))
-    const custom = multi.filter(m => !item.choices!.some(c => c.value === m))
-    return (
-      <div>
-        <div className="flex flex-wrap gap-2">
-          {[...item.choices!, ...custom.map(c => ({ value: c, label: c }))].map(c => {
-            const on = multi.includes(c.value)
-            return (
-              <button key={c.value} type="button" aria-pressed={on} onClick={() => toggle(c.value)}
-                className={cx('inline-flex h-10 items-center gap-1.5 rounded-full border px-4 text-[14px] transition-colors', on ? 'border-accent bg-accent text-white' : 'border-line bg-surface text-ink-2 hover:border-line-strong')}>
-                {on && <Check className="h-3.5 w-3.5" strokeWidth={2.25} />}{c.label}
-              </button>
-            )
-          })}
-        </div>
-        <div className="mt-4 flex gap-2">
-          <input className={inputClass} value={other} maxLength={40} placeholder="Something else…" onChange={e => setOther(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && other.trim()) { e.preventDefault(); toggle(other.trim().toLowerCase()); setOther('') } }} />
-          <button type="button" disabled={!other.trim()} onClick={() => { toggle(other.trim().toLowerCase()); setOther('') }} className={buttonClass('secondary', 'md', 'h-11')}>Add</button>
-        </div>
-        <button type="button" disabled={busy || multi.length === 0} onClick={() => onAnswer({ v: multi })} className={buttonClass('primary', 'lg', 'mt-5 w-full sm:w-auto')}>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
-      </div>
-    )
-  }
-
-  if (item.kind === 'date') {
-    const today = new Date().toISOString().slice(0, 10)
-    return (
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <input type="date" min={today} className={cx(inputClass, 'sm:max-w-[220px]')} value={text} onChange={e => setText(e.target.value)} aria-label="Deadline" />
-        <button type="button" disabled={busy || !text} onClick={() => onAnswer({ v: text })} className={buttonClass('primary', 'lg')}>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></button>
-        <button type="button" disabled={busy} onClick={() => onAnswer({ v: '' })} className={buttonClass('secondary', 'lg')}>No deadline</button>
-      </div>
-    )
-  }
-
-  if (item.kind === 'consent') return <Consent busy={busy} onAnswer={onAnswer} />
-  return null
-}
-
-function GoalPick({ answers, busy, onAnswer, onSafety }: { answers: Answers; busy: boolean; onAnswer: (a: Answer) => void; onSafety: () => void }) {
-  const own = typeof answers.goal?.v === 'string' ? (answers.goal.v as string) : ''
-  const [goals, setGoals] = useState<{ goal: string; subject: string; stem: boolean }[] | null>(null)
-  const [failed, setFailed] = useState(false)
-  // What their own words say about prior knowledge ('none' skips the check; see priorKnowledge).
-  const [prior, setPrior] = useState<string>('unclear')
-  const asked = useRef(false)
-  useEffect(() => {
-    if (asked.current) return
-    asked.current = true
-    const level = answers.level?.v ? String(answers.level.v) : ''
-    const goal = own || `I'm not sure what to learn yet. Suggest useful next goals for someone at ${level || 'my'} level.`
-    post<{ goals?: { goal: string; subject: string; stem: boolean }[]; prior?: string; safety?: boolean }>('/api/intake/ai', { kind: 'goals', goal }).then(r => {
-      if (r.data.safety) { onSafety(); return }
-      if (own && r.data.prior) setPrior(r.data.prior)
-      if (r.ok && r.data.goals?.length) setGoals(r.data.goals)
-      else setFailed(true)
-    })
-  }, [answers, own, onSafety])
-
-  const ownChoice = { goal: own, subject: '', stem: STEM_GUESS.test(own), prior }
-  if (!goals && !failed) {
-    return <div className="flex items-center gap-3 rounded-[12px] border border-line bg-surface px-4 py-4 text-[15px] text-muted"><Spinner className="text-accent" />Thinking about your goal…</div>
-  }
+/** The tutor speaking in the first person: warm relatedness, kept short. */
+function TutorLine({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="grid gap-2">
-      {(goals ?? []).map(g => (
-        <button key={g.goal} type="button" disabled={busy} onClick={() => onAnswer({ v: { ...g, prior } })}
-          className="rounded-[12px] border border-line bg-surface px-4 py-3.5 text-left text-[15px] font-medium leading-snug text-ink transition-colors hover:border-accent">
-          <RichText text={g.goal} />
-          {g.subject && <span className="mt-0.5 block text-[12px] font-normal uppercase tracking-[0.06em] text-muted">{g.subject}</span>}
-        </button>
-      ))}
-      {own && (
-        <button type="button" disabled={busy} onClick={() => onAnswer({ v: ownChoice })}
-          className="rounded-[12px] border border-dashed border-line-strong bg-transparent px-4 py-3.5 text-left text-[15px] leading-snug text-ink-2 hover:border-accent">
-          Keep my own words: <span className="italic">“{own}”</span>
-        </button>
-      )}
-      {failed && !own && <p className="text-[14px] text-muted">I couldn’t suggest goals just now. Go back and describe what you’d like to learn.</p>}
+    <div className={cx('flex items-start gap-3', className)}>
+      <span aria-hidden className="mt-0.5 inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent font-display text-[15px] text-white shadow-[var(--shadow-card)]">G</span>
+      <p className="min-w-0 rounded-[14px] rounded-tl-[4px] bg-surface px-3.5 py-2.5 text-[15px] leading-relaxed text-ink-2 shadow-[var(--shadow-card)] ring-1 ring-line">{children}</p>
     </div>
   )
 }
 
-function Consent({ busy, onAnswer }: { busy: boolean; onAnswer: (a: Answer, extra?: Record<string, unknown>) => void }) {
+function Title({ children, sub }: { children: React.ReactNode; sub?: React.ReactNode }) {
+  return (
+    <div className="mt-6">
+      <h1 className="font-display text-[30px] leading-[1.12] tracking-[-0.01em] text-ink sm:text-[36px]">{children}</h1>
+      {sub && <p className="mt-2 text-[15px] leading-relaxed text-muted">{sub}</p>}
+    </div>
+  )
+}
+
+/** Bottom-anchored action bar (thumb zone): one primary action, an optional quiet secondary. */
+function ActionBar({ children, note }: { children: React.ReactNode; note?: React.ReactNode }) {
+  return (
+    <div className="sticky bottom-0 -mx-5 mt-auto bg-gradient-to-t from-canvas via-canvas to-canvas/0 px-5 pb-[calc(16px+env(safe-area-inset-bottom))] pt-6 sm:-mx-6 sm:px-6">
+      {note && <p className="mb-3 text-center text-[12px] leading-snug text-faint">{note}</p>}
+      <div className="flex items-center gap-2">{children}</div>
+    </div>
+  )
+}
+
+function Chip({ on, onClick, children, className, ...rest }: { on?: boolean; onClick?: () => void; children: React.ReactNode; className?: string } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={on}
+      className={cx('inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border px-4 text-[15px] transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.97]',
+        on ? 'border-accent bg-accent text-white' : 'border-line bg-surface text-ink-2 hover:border-line-strong', className)} {...rest}>
+      {on && <Check className="h-4 w-4" strokeWidth={2.25} />}{children}
+    </button>
+  )
+}
+
+/* ───────────── Screen 1: the goal, in their own words ───────────── */
+
+function GoalScreen({ firstName, answers, busy, isNewGoal, onSubmit }: { firstName: string; answers: Answers; busy: boolean; isNewGoal: boolean; onSubmit: (p: Answers) => void }) {
+  const [text, setText] = useState(typeof answers.goal?.v === 'string' ? answers.goal.v : '')
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const ok = text.trim().length >= 2
+  const submit = () => { if (ok && !busy) onSubmit({ goal: { v: text.trim().slice(0, 600) } }) }
+  return (
+    <>
+      <TutorLine>{isNewGoal ? 'Something new? Great. Tell me what, and I’ll map a path for it.' : <>Hi {firstName}, I’m your tutor. Four quick steps, then we start learning. You can skip anything after this one.</>}</TutorLine>
+      <Title sub="In your own words. A few words is plenty.">What do you want to learn?</Title>
+      <textarea ref={ref} value={text} maxLength={600} rows={3} autoFocus aria-label="What you want to learn"
+        placeholder="e.g. Solve quadratic equations without getting stuck" onChange={e => setText(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
+        className="mt-6 block w-full resize-none rounded-[14px] border border-line bg-surface px-4 py-3.5 font-display text-[20px] leading-snug text-ink shadow-[var(--shadow-card)] placeholder:text-faint focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/10" />
+      <p className="mt-5 text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Or start from one of these</p>
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {STARTERS.map(s => <Chip key={s} on={text === s} onClick={() => { setText(s); ref.current?.focus() }} className="text-[14px]">{s}</Chip>)}
+      </div>
+      <ActionBar note={<span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" strokeWidth={2} />Private to you. About a minute to set up.</span>}>
+        <button type="button" disabled={!ok || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+      </ActionBar>
+    </>
+  )
+}
+
+/* ───────────── Screen 2: age + class, one compact screen ───────────── */
+
+function AboutScreen({ answers, busy, onSubmit }: { answers: Answers; busy: boolean; onSubmit: (p: Answers) => void }) {
+  const [age, setAge] = useState<string | null>(typeof answers.age?.v === 'string' ? answers.age.v : null)
+  const [level, setLevel] = useState<string | null>(typeof answers.level?.v === 'string' ? answers.level.v : null)
+  const [stage, setStage] = useState<string | null>(() => (level ? STAGES.find(s => s.match(level))?.id ?? null : null))
+  const goal = typeof answers.goal?.v === 'string' ? answers.goal.v : ''
+  const options = stage ? LEVELS.filter(l => STAGES.find(s => s.id === stage)!.match(l.value)) : []
+  return (
+    <>
+      <TutorLine>{goal ? <>“{firstWords(goal)}”. Good choice. Two taps so I pitch it at the right level.</> : 'Two taps so I pitch things at the right level.'}</TutorLine>
+      <Title>A little about you</Title>
+      <fieldset className="mt-7">
+        <legend className="text-[13px] font-medium text-ink-2">Your age</legend>
+        <div className="mt-2.5 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Age">
+          {[['under13', 'Under 13'], ['13to17', '13–17'], ['18plus', '18+']].map(([v, l]) => (
+            <button key={v} type="button" role="radio" aria-checked={age === v} onClick={() => setAge(v)}
+              className={cx('h-12 rounded-[12px] border text-[16px] font-medium transition-colors active:scale-[0.98]', age === v ? 'border-accent bg-accent-soft text-accent ring-1 ring-accent' : 'border-line bg-surface text-ink hover:border-line-strong')}>{l}</button>
+          ))}
+        </div>
+      </fieldset>
+      <fieldset className="mt-7">
+        <legend className="text-[13px] font-medium text-ink-2">Your class or year <span className="font-normal text-muted">(or the last one you finished)</span></legend>
+        <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {STAGES.map(s => (
+            <button key={s.id} type="button" aria-pressed={stage === s.id} onClick={() => { setStage(s.id); if (level && !s.match(level)) setLevel(null) }}
+              className={cx('h-11 rounded-[12px] border text-[15px] transition-colors', stage === s.id ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-ink-2 hover:border-line-strong')}>{s.label}</button>
+          ))}
+        </div>
+        <AnimatePresence initial={false}>
+          {stage && (
+            <motion.div key={stage} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22, ease }} className="overflow-hidden">
+              <div className="flex flex-wrap gap-2 pt-3" role="radiogroup" aria-label="Class or year">
+                {options.map(o => <Chip key={o.value} on={level === o.value} role="radio" aria-checked={level === o.value} onClick={() => setLevel(o.value)}>{o.label}</Chip>)}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </fieldset>
+      <ActionBar note="Only used to pitch your lessons. Never shown to anyone.">
+        <button type="button" disabled={!age || !level || busy} onClick={() => onSubmit({ age: { v: age }, level: { v: level } })} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+      </ActionBar>
+    </>
+  )
+}
+
+/* ───────────── Screen 2b: guardian consent (under-18s; NDPA 2023 s.31) ───────────── */
+
+function ConsentScreen({ busy, onSubmit }: { busy: boolean; onSubmit: (email: string) => void }) {
   const [agree, setAgree] = useState(false)
   const [email, setEmail] = useState('')
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())
   return (
-    <div className="rounded-[14px] border border-line bg-surface p-5">
-      <p className="text-[15px] leading-relaxed text-ink-2">
-        Please show this to your parent or guardian. We use your answers only to choose your lessons, keep your mood answers
-        private and delete them after two weeks, and never show your answers to other people.
-      </p>
-      <label className="mt-5 flex cursor-pointer items-start gap-3 text-[15px] leading-snug text-ink">
-        <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} className="mt-0.5 h-5 w-5 flex-shrink-0 accent-[#1F4D3A]" />
-        My parent or guardian has read this and agrees to GeniusMap saving my answers to personalise my lessons.
-      </label>
-      <label htmlFor="guardian-email" className="mt-5 block text-[13px] font-medium text-ink-2">Parent or guardian’s email</label>
-      <input id="guardian-email" type="email" inputMode="email" autoComplete="off" className={cx(inputClass, 'mt-1.5')} value={email} onChange={e => setEmail(e.target.value)} placeholder="parent@example.com" />
-      <button type="button" disabled={busy || !agree || !valid} onClick={() => onAnswer({ v: true }, { consent: { guardianEmail: email.trim() } })} className={buttonClass('primary', 'lg', 'mt-5 w-full sm:w-auto')}>
-        We agree, continue<ArrowRight className="h-4 w-4" strokeWidth={2} />
-      </button>
-      <p className="mt-4 text-[13px] text-muted">Not now? <Link href="/dashboard" className="font-medium text-accent hover:underline underline-offset-4">Come back later</Link>. Nothing beyond your age is saved until a parent or guardian agrees.</p>
+    <>
+      <TutorLine>Because you’re under 18, I need a parent or guardian’s okay before I save your answers.</TutorLine>
+      <Title sub="Nigeria’s Data Protection Act (2023, s.31) asks for this. Please show this screen to them.">A grown-up’s okay</Title>
+      <div className="mt-6 rounded-[14px] border border-line bg-surface p-5 shadow-[var(--shadow-card)]">
+        <ul className="space-y-2.5 text-[15px] leading-relaxed text-ink-2">
+          {['We use the answers only to choose and pace lessons.', 'Check-ins about mood are private and deleted after two weeks.', 'Answers are never shown to other people.'].map(t => (
+            <li key={t} className="flex gap-2.5"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2.25} />{t}</li>
+          ))}
+        </ul>
+        <label className="mt-5 flex min-h-11 cursor-pointer items-start gap-3 text-[15px] leading-snug text-ink">
+          <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} className="mt-0.5 h-5 w-5 flex-shrink-0 accent-[#1F4D3A]" />
+          My parent or guardian has read this and agrees to GeniusMap saving my answers to personalise my lessons.
+        </label>
+        <label htmlFor="guardian-email" className="mt-4 block text-[13px] font-medium text-ink-2">Parent or guardian’s email</label>
+        <input id="guardian-email" type="email" inputMode="email" autoComplete="off" className={cx(inputClass, 'mt-1.5 h-12 text-[16px]')} value={email} onChange={e => setEmail(e.target.value)} placeholder="parent@example.com" />
+      </div>
+      <p className="mt-4 text-[13px] text-muted">Not now? <Link href="/dashboard" className="font-medium text-accent underline-offset-4 hover:underline">Come back later</Link>. Nothing beyond your age is saved until they agree.</p>
+      <ActionBar>
+        <button type="button" disabled={busy || !agree || !valid} onClick={() => onSubmit(email.trim())} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>We agree, continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+      </ActionBar>
+    </>
+  )
+}
+
+/* ───────────── Screen 3: narrow the goal + how familiar it is ───────────── */
+
+function GoalPickScreen({ answers, sugg, busy, onRetry, onSubmit }: { answers: Answers; sugg: Suggestions | 'loading' | 'failed' | null; busy: boolean; onRetry: () => void; onSubmit: (p: Answers) => void }) {
+  const own = typeof answers.goal?.v === 'string' ? answers.goal.v : ''
+  const prev = answers.goal_pick?.v as { goal?: string } | undefined
+  const [pick, setPick] = useState<string | null>(prev?.goal ?? null)
+  const [fam, setFam] = useState<string | null>(typeof answers.last_studied?.v === 'string' && ['never', 'some', 'now'].includes(answers.last_studied.v) ? answers.last_studied.v : null)
+  const data = sugg && typeof sugg === 'object' ? sugg : null
+  const loading = sugg === 'loading' || sugg === null
+  const goals = data?.goals ?? []
+  const submit = () => {
+    const g = goals.find(x => x.goal === pick)
+    const prior = data?.prior ?? 'unclear'
+    const v = g ? { ...g, prior, contexts: data?.contexts ?? [] } : { goal: own, subject: '', stem: STEM_GUESS.test(own), prior, contexts: data?.contexts ?? [] }
+    onSubmit({ goal_pick: { v }, last_studied: fam ? { v: fam } : { skipped: true } })
+  }
+  return (
+    <>
+      <TutorLine>{data?.reflection || 'Let’s make the goal specific, so the path ends exactly where you want.'}</TutorLine>
+      <Title>Which is closest?</Title>
+      <div className="mt-5 grid gap-2" role="radiogroup" aria-label="Goal">
+        {loading && [0, 1, 2].map(i => (
+          <div key={i} className="h-[68px] animate-pulse rounded-[14px] border border-line bg-surface p-4 motion-reduce:animate-none"><div className="h-3.5 w-4/5 rounded bg-sunken" /><div className="mt-2.5 h-2.5 w-1/4 rounded bg-sunken" /></div>
+        ))}
+        {goals.map((g, i) => (
+          <motion.button key={g.goal} type="button" role="radio" aria-checked={pick === g.goal} disabled={busy} onClick={() => setPick(g.goal)}
+            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, duration: 0.22, ease }}
+            className={cx('flex min-h-[64px] items-center gap-3 rounded-[14px] border bg-surface px-4 py-3 text-left transition-colors', pick === g.goal ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-line-strong')}>
+            <span className={cx('flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border', pick === g.goal ? 'border-accent bg-accent' : 'border-line-strong')}>{pick === g.goal && <Check className="h-3 w-3 text-white" strokeWidth={3} />}</span>
+            <span className="min-w-0">
+              <span className="block text-[15px] font-medium leading-snug text-ink"><RichText text={g.goal} /></span>
+              {g.subject && <span className="mt-0.5 block text-[11px] font-medium uppercase tracking-[0.08em] text-muted">{g.subject}</span>}
+            </span>
+          </motion.button>
+        ))}
+        {own && (
+          <button type="button" role="radio" aria-checked={pick === own} disabled={busy} onClick={() => setPick(own)}
+            className={cx('flex min-h-[56px] items-center gap-3 rounded-[14px] border border-dashed px-4 py-3 text-left text-[15px] transition-colors', pick === own ? 'border-accent bg-accent-soft' : 'border-line-strong hover:border-accent')}>
+            <span className={cx('flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border', pick === own ? 'border-accent bg-accent' : 'border-line-strong')}>{pick === own && <Check className="h-3 w-3 text-white" strokeWidth={3} />}</span>
+            <span className="min-w-0 text-ink-2">Keep my words: <span className="italic text-ink">“{own}”</span></span>
+          </button>
+        )}
+        {sugg === 'failed' && <p className="text-[14px] text-muted">I couldn’t suggest goals just now. <button type="button" onClick={onRetry} className="font-medium text-accent underline-offset-4 hover:underline">Try again</button>, or keep your own words.</p>}
+      </div>
+      <fieldset className="mt-7">
+        <legend className="text-[13px] font-medium text-ink-2">How well do you know it already? <span className="font-normal text-muted">Optional</span></legend>
+        <div className="mt-2.5 grid grid-cols-3 gap-2" role="radiogroup" aria-label="How well you know it">
+          {[['never', 'It’s new to me'], ['some', 'I know a bit'], ['now', 'Studying it now']].map(([v, l]) => (
+            <button key={v} type="button" role="radio" aria-checked={fam === v} onClick={() => setFam(f => (f === v ? null : v))}
+              className={cx('min-h-12 rounded-[12px] border px-2 text-[14px] leading-tight transition-colors', fam === v ? 'border-accent bg-accent-soft font-medium text-accent ring-1 ring-accent' : 'border-line bg-surface text-ink-2 hover:border-line-strong')}>{l}</button>
+          ))}
+        </div>
+        {fam === 'never' && <p className="mt-2 text-[13px] text-muted">Then there’s no check: we start from the very first idea.</p>}
+      </fieldset>
+      <ActionBar>
+        <button type="button" disabled={!pick || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>Build my path<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+      </ActionBar>
+    </>
+  )
+}
+
+/* ───────────── Screen 4 (optional): what for / by when, shown while the map builds ───────────── */
+
+function PurposeScreen({ answers, guess, mapState, fresh, busy, onSubmit }: {
+  answers: Answers; guess: string | null; mapState: string; fresh: boolean; busy: boolean
+  onSubmit: (p: Answers, pathPatch: Record<string, unknown> | null) => void
+}) {
+  const [purpose, setPurpose] = useState<string | null>(typeof answers.purpose?.v === 'string' ? answers.purpose.v : guess)
+  const [dated, setDated] = useState(typeof answers.deadline?.v === 'string' && !!answers.deadline.v)
+  const [date, setDate] = useState(typeof answers.deadline?.v === 'string' ? answers.deadline.v : '')
+  const today = new Date().toISOString().slice(0, 10)
+  const ready = mapState === 'ready'
+  return (
+    <>
+      <div className="flex items-center gap-2 self-start rounded-full border border-line bg-surface px-3 py-1.5 text-[13px] text-ink-2 shadow-[var(--shadow-card)]" role="status" aria-live="polite">
+        {ready ? <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2.5} /> : <Spinner className="h-3.5 w-3.5 text-accent" />}
+        {ready ? (fresh ? 'Your path is ready' : 'Your check is ready') : fresh ? 'Laying out your path…' : 'Mapping the skills to your goal…'}
+      </div>
+      <Title sub="Optional, but it shapes the examples and the pace.">While I map it out: what’s it for?</Title>
+      <div className="mt-5 grid gap-2" role="radiogroup" aria-label="What it’s for">
+        {PURPOSES.map(p => (
+          <button key={p.value} type="button" role="radio" aria-checked={purpose === p.value} onClick={() => setPurpose(x => (x === p.value ? null : p.value))}
+            className={cx('flex min-h-[52px] items-center justify-between gap-3 rounded-[12px] border bg-surface px-4 py-2.5 text-left transition-colors', purpose === p.value ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-line-strong')}>
+            <span><span className="block text-[15px] font-medium text-ink">{p.label}</span>{p.hint && <span className="block text-[13px] leading-snug text-muted">{p.hint}</span>}</span>
+            {guess === p.value && purpose === p.value && <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent"><Sparkles className="h-3 w-3" strokeWidth={2} />My guess</span>}
+          </button>
+        ))}
+      </div>
+      <fieldset className="mt-6">
+        <legend className="text-[13px] font-medium text-ink-2">Need it by a date?</legend>
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          <Chip on={!dated} onClick={() => setDated(false)}>No date</Chip>
+          <Chip on={dated} onClick={() => setDated(true)}>Pick a date</Chip>
+          {dated && <input type="date" min={today} value={date} onChange={e => setDate(e.target.value)} aria-label="Date you need it by" className={cx(inputClass, 'h-11 w-auto min-w-[170px]')} />}
+        </div>
+      </fieldset>
+      <ActionBar>
+        <button type="button" disabled={busy} onClick={() => onSubmit({ purpose: { skipped: true }, deadline: { skipped: true } }, null)} className={buttonClass('ghost', 'lg', 'px-4')}>Skip</button>
+        <button type="button" disabled={busy || (dated && !date)} onClick={() => {
+          const d = dated && date ? date : ''
+          onSubmit({ purpose: purpose ? { v: purpose } : { skipped: true }, deadline: { v: d } }, { ...(purpose ? { purpose } : {}), deadline: d || null })
+        }} className={buttonClass('primary', 'lg', 'flex-1')}>{busy ? <Spinner /> : <>{ready ? (fresh ? 'See my path' : 'Start the check') : 'Continue'}<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
+      </ActionBar>
+    </>
+  )
+}
+
+/* ───────────── While the map builds: a skeleton of the map itself (curiosity, not a spinner) ───────────── */
+
+function MapSkeleton({ reduce }: { reduce: boolean }) {
+  const rows = [0.62, 0.48, 0.7, 0.4, 0.56]
+  return (
+    <div className="mt-8 rounded-[14px] border border-line bg-surface p-5 shadow-[var(--shadow-card)]" aria-hidden>
+      {rows.map((w, i) => (
+        <motion.div key={i} className="flex items-center gap-3 py-2.5" initial={{ opacity: 0.25 }} animate={reduce ? { opacity: 0.6 } : { opacity: [0.25, 0.85, 0.25] }}
+          transition={reduce ? { duration: 0 } : { duration: 1.8, repeat: Infinity, delay: i * 0.18, ease: 'easeInOut' }}>
+          <span className="relative flex h-6 w-6 flex-shrink-0 items-center justify-center">
+            {i < rows.length - 1 && <span className="absolute top-6 h-5 w-px bg-line-strong" />}
+            <span className="h-3.5 w-3.5 rounded-full border-2 border-accent-line bg-accent-soft" />
+          </span>
+          <span className="h-3 rounded bg-sunken" style={{ width: `${w * 100}%` }} />
+        </motion.div>
+      ))}
     </div>
   )
 }
 
-/* ───────────── Diagnostic question with a confidence tap ───────────── */
+/* ───────────── The check: one question at a time, with a confidence tap (measures it implicitly) ───────────── */
 
-function DiagQuestion({ view, busy, error, onAnswer }: { view: DiagView; busy: boolean; error: string | null; onAnswer: (choice: number | null, confidence: string | null) => void }) {
+function DiagQuestion({ view, busy, error, reduce, onAnswer, onSkipRest }: { view: DiagView; busy: boolean; error: string | null; reduce: boolean; onAnswer: (choice: number | null, confidence: string | null, ms: number) => void; onSkipRest: () => void }) {
   const it = view.item!
   const [choice, setChoice] = useState<number | null>(null)
+  const shownAt = useRef(0)
+  useEffect(() => { shownAt.current = clock() }, [])
+  // Read in event handlers only (time on the question, for the hesitation signal).
+  const ms = () => Math.max(0, clock() - shownAt.current)
+  const first = it.number === 1 || view.asked === 0
   return (
-    <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease }} className="flex flex-1 flex-col">
-      <div className="mb-5 flex items-center justify-between text-[13px] text-muted">
-        <span className="min-w-0 truncate pr-3"><RichText text={it.topic} /></span>
-        <span className="tnum flex-shrink-0">Question {it.number}</span>
-      </div>
-      <h1 className="font-display text-[24px] leading-[1.25] text-ink sm:text-[28px]"><RichText text={it.q} /></h1>
+    <motion.section initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? { opacity: 0 } : { opacity: 0, x: -24 }} transition={{ duration: reduce ? 0.01 : 0.26, ease }} className="flex flex-1 flex-col">
+      {first ? (
+        <TutorLine className="mt-1">A quick check so we start in the right place. Not a test: no score, no timer, and “I don’t know” helps me too.</TutorLine>
+      ) : (
+        <div className="mt-1 flex h-8 items-center justify-between text-[13px] text-muted">
+          <span className="min-w-0 truncate pr-3"><RichText text={it.topic} /></span>
+          <span className="tnum flex-shrink-0">Question {it.number} · about {view.min}</span>
+        </div>
+      )}
+      <h1 className="mt-5 font-display text-[25px] leading-[1.25] text-ink sm:text-[29px]"><RichText text={it.q} /></h1>
       <div className="mt-6 grid gap-2" role="radiogroup" aria-label="Answer options">
         {it.options.map((o, i) => (
           <button key={i} type="button" role="radio" aria-checked={choice === i} disabled={busy} onClick={() => setChoice(i)}
-            className={cx('flex min-h-12 items-center gap-3 rounded-[12px] border bg-surface px-4 py-3 text-left text-[16px] text-ink transition-colors hover:border-line-strong', choice === i ? 'border-accent ring-1 ring-accent' : 'border-line')}>
-            <span className={cx('flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border text-[12px] font-medium', choice === i ? 'border-accent bg-accent text-white' : 'border-line-strong text-muted')}>{String.fromCharCode(65 + i)}</span>
+            className={cx('flex min-h-[52px] items-center gap-3 rounded-[12px] border bg-surface px-4 py-3 text-left text-[16px] text-ink transition-colors active:scale-[0.99]', choice === i ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-line-strong')}>
+            <span className={cx('flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border text-[12px] font-semibold', choice === i ? 'border-accent bg-accent text-white' : 'border-line-strong text-muted')}>{String.fromCharCode(65 + i)}</span>
             <span className="min-w-0"><RichText text={o} /></span>
           </button>
         ))}
       </div>
-      <AnimatePresence>
-        {choice !== null && (
-          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-5 rounded-[12px] border border-line bg-surface p-4">
-            <p className="text-[14px] font-medium text-ink-2">How sure are you?</p>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {[['guess', 'Guessing'], ['fairly', 'Fairly sure'], ['sure', 'Sure']].map(([v, l]) => (
-                <button key={v} type="button" disabled={busy} onClick={() => onAnswer(choice, v)} className={buttonClass('secondary', 'md', 'h-11')}>{l}</button>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
       {error && <Alert tone="danger" className="mt-4">{error}</Alert>}
-      <div className="mt-auto flex items-center gap-2 pt-8">
-        <button type="button" disabled={busy} onClick={() => onAnswer(null, null)} className={buttonClass('ghost', 'md')}>I don’t know</button>
-        <button type="button" disabled={busy} onClick={() => onAnswer(null, null)} className={buttonClass('ghost', 'md')}>Skip</button>
-        {busy ? <Spinner className="ml-auto text-muted" /> : <span className="ml-auto text-[13px] text-faint">No timer</span>}
-      </div>
+      <p className="mt-6 text-[13px] text-muted">
+        Rather not finish? <button type="button" disabled={busy} onClick={onSkipRest} className="inline-flex min-h-11 items-center font-medium text-accent underline-offset-4 hover:underline">Skip the rest</button> and I’ll build your path from what I’ve seen.
+      </p>
+      <ActionBar>
+        <AnimatePresence mode="wait" initial={false}>
+          {choice === null ? (
+            <motion.div key="idk" className="flex w-full items-center gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <button type="button" disabled={busy} onClick={() => onAnswer(null, null, ms())} className={buttonClass('secondary', 'lg', 'w-full')}>{busy ? <Spinner /> : 'I don’t know yet'}</button>
+            </motion.div>
+          ) : (
+            <motion.div key="conf" className="w-full" initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, ease }}>
+              <p className="mb-2 text-center text-[13px] font-medium text-ink-2">How sure are you?</p>
+              <div className="grid grid-cols-3 gap-2">
+                {[['guess', 'Guessing'], ['fairly', 'Fairly sure'], ['sure', 'Sure']].map(([v, l]) => (
+                  <button key={v} type="button" disabled={busy} onClick={() => onAnswer(choice, v, ms())} className={buttonClass(v === 'sure' ? 'primary' : 'secondary', 'lg', 'px-2')}>{busy ? <Spinner /> : l}</button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </ActionBar>
     </motion.section>
   )
 }
+
+/* ───────────── Results: the peak and the end (competence, growth framing, one clear next step) ───────────── */
+
+function ResultScreen({ diag, firstLessonId, finishing, signals, reduce, onRetake }: { diag: DiagView; firstLessonId: string | null; finishing: boolean; signals: Signals; reduce: boolean; onRetake: () => void }) {
+  const known = diag.known ?? []
+  const next = diag.next ?? []
+  const items: { t: string; s: 'known' | 'start' | 'next' }[] = [...known.map(t => ({ t, s: 'known' as const })), ...next.slice(0, 3).map((t, i) => ({ t, s: i === 0 ? 'start' as const : 'next' as const }))]
+  const headline = diag.fresh && !known.length ? 'A fresh start, from the first idea.'
+    : known.length ? `You already know ${known.length} ${known.length === 1 ? 'skill' : 'skills'} on the way.` : 'We’ll build it from the foundations.'
+  const encouragement = signals?.underconfident ? 'You got more right than you expected, including some you weren’t sure about. You know more than you think.'
+    : diag.fresh && !known.length ? 'You said this is new to you, so there was no check. One idea at a time, each one building on the last.'
+    : 'This is a starting point, not a label. It updates as you learn.'
+  return (
+    <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} className="flex flex-1 flex-col">
+      <p className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[0.08em] text-accent"><Sparkles className="h-3.5 w-3.5" strokeWidth={2} />Your map is ready</p>
+      <h1 className="mt-2 font-display text-[30px] leading-[1.12] text-ink sm:text-[36px]">{headline}</h1>
+      <p className="mt-2 text-[15px] leading-relaxed text-muted"><RichText text={diag.goal} /></p>
+      <ol className="relative mt-6 rounded-[14px] border border-line bg-surface p-4 shadow-[var(--shadow-card)] sm:p-5">
+        {items.map((x, i) => (
+          <motion.li key={x.t + i} className="relative flex gap-3 py-2" initial={reduce ? { opacity: 0 } : { opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: reduce ? 0 : 0.15 + i * 0.09, duration: 0.3, ease }}>
+            <span className="relative flex w-6 flex-shrink-0 justify-center">
+              {i < items.length - 1 && <span className={cx('absolute top-7 bottom-[-12px] w-px', x.s === 'known' ? 'bg-accent-line' : 'bg-line-strong [background:repeating-linear-gradient(to_bottom,var(--color-line-strong)_0_4px,transparent_4px_8px)]')} />}
+              {x.s === 'known'
+                ? <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white"><Check className="h-3.5 w-3.5" strokeWidth={3} /></span>
+                : x.s === 'start'
+                  ? <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-clay bg-clay-soft"><span className="h-2 w-2 rounded-full bg-clay" /></span>
+                  : <span className="mt-1.5 h-3.5 w-3.5 rounded-full border-2 border-line-strong bg-surface" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={cx('block text-[15px] leading-snug', x.s === 'known' ? 'text-ink-2' : x.s === 'start' ? 'font-medium text-ink' : 'text-muted')}><RichText text={x.t} /></span>
+              {x.s === 'start' && <span className="mt-1 inline-block rounded-full bg-clay-soft px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.06em] text-clay">Start here</span>}
+            </span>
+          </motion.li>
+        ))}
+      </ol>
+      <p className="mt-4 text-[14px] leading-relaxed text-ink-2">{encouragement}</p>
+      <div className="mt-4 text-[13px] text-muted">
+        {diag.fresh
+          ? <>Know some of this already? <button type="button" onClick={onRetake} className="inline-flex min-h-11 items-center font-medium text-accent underline-offset-4 hover:underline">Take the check</button></>
+          : <>Not right? <button type="button" onClick={onRetake} className="inline-flex min-h-11 items-center font-medium text-accent underline-offset-4 hover:underline">Retake the check</button></>}
+        {' · '}<Link href="/start?new=1" className="font-medium text-accent underline-offset-4 hover:underline">Add another goal</Link>
+      </div>
+      <ActionBar>
+        {firstLessonId
+          ? <Link href={`/learn/${firstLessonId}`} prefetch className={buttonClass('primary', 'lg', 'w-full')}>Start your first lesson<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
+          : finishing
+            ? <span aria-live="polite" className={buttonClass('primary', 'lg', 'pointer-events-none w-full opacity-80')}><Spinner className="h-4 w-4" />Setting up your first lesson…</span>
+            : <Link href="/learn" className={buttonClass('primary', 'lg', 'w-full')}>See your path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}
+      </ActionBar>
+    </motion.section>
+  )
+}
+

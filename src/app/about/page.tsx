@@ -19,7 +19,7 @@ const stages = [
   },
   {
     title: 'A short adaptive check',
-    body: 'The AI maps the skills between where you are and your goal, starting just below your stated level, then asks 8 to 15 multiple-choice questions. A confident right answer counts the skills beneath it as known; a miss marks what depends on it as still to learn. You tap how sure you were after each answer. The result is two lists: what you know now, and what you are ready to learn next.',
+    body: 'The AI maps the skills between where you are and your goal, starting just below your stated level, then asks about 6 to 10 multiple-choice questions, opening with an easy one. A confident right answer counts the skills beneath it as known; a miss marks what depends on it as still to learn. You tap how sure you were after each answer. The result is two lists: what you know now, and what you are ready to learn next.',
   },
   {
     title: 'Lessons written for you',

@@ -31,7 +31,7 @@ const steps = [
   {
     n: '02',
     title: 'It finds where to start',
-    desc: 'A quick adaptive check of 8 to 15 questions. Each answer decides the next, and you tap how sure you were. You see what you know now and what is next. No score, no label.',
+    desc: 'A quick adaptive check of about 6 to 10 questions. Each answer decides the next, and you tap how sure you were. You see what you know now and what is next. No score, no label.',
   },
   {
     n: '03',

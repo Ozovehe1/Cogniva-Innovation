@@ -1,12 +1,10 @@
 import { redirect } from 'next/navigation'
 import { getSessionProfile } from '@/lib/auth'
 import { diagnosticPath, loadLearner } from '@/lib/learner'
-import { priorKnowledge } from '@/lib/intake'
+import { GOAL_ITEMS, priorKnowledge } from '@/lib/intake'
 import { emptyState, firstSkills, knownSkills, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type DiagState } from '@/lib/diagnostic-core'
 import { IntakeFlow } from '@/components/intake-flow'
 
-/** Intake questions that belong to one goal (asked again for each new path). */
-const GOAL_ITEMS = ['goal', 'goal_pick', 'last_studied', 'why', 'purpose', 'deadline', 'efficacy', 'anxiety']
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Get started · GeniusMap', robots: { index: false } }

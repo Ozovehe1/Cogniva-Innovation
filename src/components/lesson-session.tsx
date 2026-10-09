@@ -6,6 +6,7 @@ import { WhiteboardPlayer, type NeedStepsRequest, type PlayerControl, type Playe
 import { detectDistress } from '@/lib/safety'
 import { SafetyPause } from './safety-pause'
 import { UpNextCard } from './up-next'
+import { MicroQuestion } from './micro-question'
 import { Spinner, buttonClass, cx } from './ui'
 import type { TranscriptAside } from '@/components/whiteboard/player'
 import type { Step } from '@/lib/lesson-schema'
@@ -263,6 +264,7 @@ export function LessonSession({
         <span>Your tutor is finishing the next part. It will carry on here by itself as soon as it’s ready.</span>
       </div>
     )}
+    {finished && mode === 'student' && <MicroQuestion />}
     {(finished || (waitingForMore && !partial)) && upNext && mode === 'student' && <UpNextCard {...upNext} />}
     {basicsOffer && checkHref && (
       <div className="mt-4 flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-4 sm:flex-row sm:items-center">

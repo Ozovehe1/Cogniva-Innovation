@@ -8,6 +8,7 @@ import { dropSpeculativeLesson, planSpeculation, type Speculation } from '@/lib/
 import { runDraftWork, selfOrigin } from '@/lib/lesson-drafting'
 import { warmServices } from '@/lib/warm'
 import { priorKnowledge } from '@/lib/intake'
+import { inferSignals } from '@/lib/onboarding-signals'
 import { applyAnswer, emptyState, firstSkills, knownSkills, nextItem, publicItem, readyToLearn, MAX_ITEMS, MIN_ITEMS, type Confidence, type DiagState } from '@/lib/diagnostic-core'
 
 export const maxDuration = 300
@@ -43,7 +44,9 @@ function view(path: PathRow) {
  */
 async function finishPath(db: ReturnType<typeof createAdminClient>, request: Request, learner: NonNullable<Awaited<ReturnType<typeof loadLearner>>>, path: PathRow, st: DiagState) {
   if (!st.done) { st.done = true; st.current = null }
-  path.diagnostic = { ...path.diagnostic, state: st }
+  // Stealth assessment: confidence and hesitation read from the check stand in for the old efficacy/anxiety questions.
+  const signals = inferSignals(st, { stem: !!path.graph?.stem }) ?? undefined
+  path.diagnostic = { ...path.diagnostic, state: st, ...(signals ? { signals } : {}) }
   const t0 = Date.now()
   const r = await buildPath(db, learnerForPath(learner, path), path)
   console.log(`Path ${path.id} built in ${Date.now() - t0} ms; first lesson ${r.firstLessonId ?? 'none'} (speculative draft: ${r.speculation ?? 'n/a'})`)
@@ -52,7 +55,7 @@ async function finishPath(db: ReturnType<typeof createAdminClient>, request: Req
     const origin = selfOrigin(request)
     after(() => runDraftWork(r.firstLessonId!, { origin }).then(() => undefined).catch(err => console.error('First lesson draft failed:', err)))
   }
-  return { path: view({ ...r.path, diagnostic: { ...path.diagnostic, state: st } }), firstLessonId: r.firstLessonId, speculation: r.speculation }
+  return { path: view({ ...r.path, diagnostic: { ...path.diagnostic, state: st } }), signals: signals ? { efficacy: signals.efficacy, anxious: signals.anxious, underconfident: signals.calibrationGap >= 0.2 && signals.accuracy >= 0.5 } : null, firstLessonId: r.firstLessonId, speculation: r.speculation }
 }
 
 /** GET /api/diagnostic — the current diagnostic (resume) without answers. */
@@ -75,7 +78,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const { profile } = await getSessionProfile()
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const body = await request.json().catch(() => ({})) as { action?: string; restart?: boolean; skip?: boolean; pathId?: string; node?: string; item?: number; choice?: number | null; confidence?: string | null }
+  const body = await request.json().catch(() => ({})) as { action?: string; restart?: boolean; skip?: boolean; pathId?: string; node?: string; item?: number; choice?: number | null; confidence?: string | null; ms?: number }
   const db = createAdminClient()
   // Independent reads in parallel (every answer waits on them).
   const [learner, found] = await Promise.all([loadLearner(db, profile.id), diagnosticPath(db, profile.id, body.pathId)])
@@ -158,7 +161,8 @@ export async function POST(request: Request) {
     const it = node.items[st.current.item]
     const choice = typeof body.choice === 'number' && body.choice >= 0 && body.choice < it.options.length ? Math.floor(body.choice) : null
     const confidence = (['guess', 'fairly', 'sure'] as const).includes(body.confidence as Confidence) ? (body.confidence as Confidence) : null
-    const next = applyAnswer(path.graph, st, { node: node.id, item: st.current.item, choice, correct: choice === it.answer, confidence })
+    const ms = typeof body.ms === 'number' && body.ms > 0 && body.ms < 3_600_000 ? Math.round(body.ms) : undefined
+    const next = applyAnswer(path.graph, st, { node: node.id, item: st.current.item, choice, correct: choice === it.answer, confidence, ...(ms ? { ms } : {}) })
     warmServices({ everyMs: 60_000 })
     // Draft the likely first lesson ahead once the starting topic is fairly clear (saved with the answer).
     let spec: Awaited<ReturnType<typeof planSpeculation>> | null = null
