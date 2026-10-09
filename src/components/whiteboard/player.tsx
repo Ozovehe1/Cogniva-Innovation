@@ -1043,7 +1043,7 @@ export function WhiteboardPlayer({
           aria-hidden={stage ? true : undefined}
           className={cx(
             'wb-board relative w-full overflow-hidden rounded-[14px] border border-line bg-[#FDFCF9] shadow-[var(--shadow-card)]',
-            stage && 'pointer-events-none !absolute inset-x-0 top-0 invisible',
+            stage && 'pointer-events-none !absolute inset-x-0 top-0 -z-[1] invisible opacity-0',
             layout && 'min-h-[220px]',
             layout && clip && 'min-h-[260px]',
           )}

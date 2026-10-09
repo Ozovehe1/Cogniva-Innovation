@@ -309,7 +309,31 @@ function niceStep(raw: number) {
   return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p
 }
 
-export function interactiveSvg(spec: IxSpec): string {
+/** Widen the shorter range so one unit is as long across as up in a frame of the given width/height (circles stay round). */
+export function equalUnits(spec: IxSpec, aspect: number): IxSpec {
+  let [x0, x1] = spec.x, [y0, y1] = spec.y
+  const w = x1 - x0, h = y1 - y0
+  if (w / h > aspect) { const nh = w / aspect, c = (y0 + y1) / 2; y0 = c - nh / 2; y1 = c + nh / 2 }
+  else if (w / h < aspect) { const nw = h * aspect, c = (x0 + x1) / 2; x0 = c - nw / 2; x1 = c + nw / 2 }
+  return { ...spec, x: [x0, x1], y: [y0, y1] }
+}
+
+/**
+ * The figure's frame and bounding box. Figures with circles (the unit circle, geometry) keep 1:1 units so a circle is
+ * never drawn as an ellipse: the frame takes the ranges' own aspect (clamped to 1–1.6 so it suits a phone) and the
+ * shorter range widens symmetrically when the clamp bites. Other figures keep the 3:2 frame and their own ranges.
+ */
+export function figureGeom(spec: IxSpec): { aspect: number; bbox: [number, number, number, number] } {
+  if (spec.surface) return { aspect: 1 / 0.9, bbox: [-8, 8, 8, -8] }
+  if (!spec.circles.length) return { aspect: 1.5, bbox: [spec.x[0], spec.y[1], spec.x[1], spec.y[0]] }
+  const aspect = Math.min(1.6, Math.max(1, (spec.x[1] - spec.x[0]) / (spec.y[1] - spec.y[0])))
+  const e = equalUnits(spec, aspect)
+  return { aspect, bbox: [e.x[0], e.y[1], e.x[1], e.y[0]] }
+}
+
+export function interactiveSvg(spec0: IxSpec): string {
+  // Circles stay round in the still too (its plot area is (640-72) x (420-72)).
+  const spec = spec0.circles.length && !spec0.surface ? equalUnits(spec0, (640 - 72) / (420 - 72)) : spec0
   const k = compileSpec(spec)
   const { env, pos } = initialEnv(spec, k)
   const W = 640, H = 420, P = 36

@@ -36,7 +36,10 @@ export function markGeometry(mark: AnnotateStep['mark'], box: MarkBox, seed: str
   const cx = box.x + box.w / 2, cy = box.y + box.h / 2
   if (mark === 'circle') {
     // An ellipse a little bigger than the box, starting at the upper left and overshooting its start.
-    const rx = Math.max(24, box.w / 2 + 14), ry = Math.max(20, box.h / 2 + 12)
+    // Kept inside the board's left/right/top edges (a big figure's ring would otherwise be clipped by the frame).
+    const OVER = 1.12
+    const rx = Math.max(24, Math.min(box.w / 2 + 14, (Math.min(cx, BOARD_W - cx) - 4) / OVER))
+    const ry = Math.max(20, Math.min(box.h / 2 + 12, (cy - 4) / OVER))
     const pts: Pt[] = []
     const a0 = 2.4 + r(1) * 0.3
     for (let i = 0; i <= 44; i++) {

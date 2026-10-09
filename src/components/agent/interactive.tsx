@@ -11,7 +11,7 @@ import './jsxgraph.css'
 import { Hand, Pause, Play, RotateCcw } from 'lucide-react'
 import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
-import { IX_HEX, compileSpec, initialEnv, odeCurve, type IxEnv, type IxSpec } from '@/lib/agent/interactive'
+import { IX_HEX, compileSpec, figureGeom, initialEnv, odeCurve, type IxEnv, type IxSpec } from '@/lib/agent/interactive'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Board = any
@@ -21,7 +21,7 @@ const fmt = (v: number) => (!Number.isFinite(v) ? '—' : Math.abs(v) >= 1e5 || 
 /** Skeleton shaped like the coming figure: the frame at its final aspect ratio with faint axes (no spinner). */
 export function FigureSkeleton({ aspect = '3 / 2' }: { aspect?: string }) {
   return (
-    <div className="relative mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: aspect, maxHeight: 440 }} aria-hidden="true">
+    <div className="relative mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: aspect, maxWidth: Math.round(440 * (Number(aspect) || 1.5)), marginInline: 'auto' }} aria-hidden="true">
       <div className="absolute inset-x-4 top-1/2 h-px bg-line-strong/70" />
       <div className="absolute inset-y-4 left-1/2 w-px bg-line-strong/70" />
       <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/60 to-transparent" />
@@ -42,6 +42,7 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
   onHandOver?: () => void
 }) {
   const k = useMemo(() => compileSpec(spec), [spec])
+  const geom = useMemo(() => figureGeom(spec), [spec])
   const boxRef = useRef<HTMLDivElement>(null)
   const boardRef = useRef<Board>(null)
   const sliders = useRef<IxEnv>(Object.fromEntries(spec.sliders.map(s => [s.name.toLowerCase(), s.value])))
@@ -68,7 +69,7 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
         if (cancelled || !boxRef.current) return
         const is3d = !!spec.surface
         board = JXG.JSXGraph.initBoard(boxRef.current.id, {
-          boundingbox: is3d ? [-8, 8, 8, -8] : [spec.x[0], spec.y[1], spec.x[1], spec.y[0]],
+          boundingbox: geom.bbox,
           axis: !is3d, grid: false, keepAspectRatio: false, showCopyright: false, showNavigation: false, showInfobox: false,
           pan: { enabled: true, needTwoFingers: true }, browserPan: true, zoom: { enabled: false },
           defaultAxes: { x: { ticks: { label: { fontSize: 11, color: '#66666F' } } }, y: { ticks: { label: { fontSize: 11, color: '#66666F' } } } },
@@ -137,7 +138,7 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
       try { if (board && jxg) jxg.JSXGraph.freeBoard(board) } catch { /* already gone */ }
       boardRef.current = null
     }
-  }, [spec, k, nonce])
+  }, [spec, k, geom, nonce])
 
   const setSlider = (name: string, v: number) => {
     sliders.current = { ...sliders.current, [name.toLowerCase()]: v }
@@ -180,8 +181,8 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
         <p className="rounded-[10px] bg-sunken px-3 py-2 text-[13px] text-muted">The live figure could not load here. {alt}</p>
       ) : (
         <div className="relative">
-          {!ready && <div className="pointer-events-none absolute inset-0 z-[1] -mt-3"><FigureSkeleton aspect={spec.surface ? '1 / 0.9' : '3 / 2'} /></div>}
-          <div id={`${ids}-${nonce}`} ref={boxRef} onPointerDown={() => setTouched(true)} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: spec.surface ? '1 / 0.9' : '3 / 2', maxHeight: 440 }} role="img" aria-label={alt} />
+          {!ready && <div className="pointer-events-none absolute inset-0 z-[1] -mt-3"><FigureSkeleton aspect={String(geom.aspect)} /></div>}
+          <div id={`${ids}-${nonce}`} ref={boxRef} onPointerDown={() => setTouched(true)} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: String(geom.aspect), maxWidth: Math.round(440 * geom.aspect), marginInline: "auto" }} role="img" aria-label={alt} />
           {/* Drag affordance: a hint chip that fades after the first touch. */}
           {ready && !touched && !spec.surface && dragNames.length > 0 && (
             <div className={cx('pointer-events-none absolute bottom-2 left-2 z-[2] inline-flex items-center gap-1.5 rounded-full bg-ink/85 px-2.5 py-1 text-[12px] font-medium text-white shadow-[var(--shadow-raised)]', !reducedMotion() && 'animate-[pulse_2.4s_ease-in-out_3]')}>
