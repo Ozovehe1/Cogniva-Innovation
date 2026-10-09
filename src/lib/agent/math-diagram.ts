@@ -15,7 +15,7 @@ export type DiagramLibrary = 'sets' | 'geometry' | 'graph' | 'vectors'
 
 const INK = '#14141A', GREEN = '#1F4D3A', CLAY = '#A4502A', NAVY = '#23406A', AMBER = '#8A5A00'
 const rgba = (hex: string, a: number) => { const n = parseInt(hex.slice(1), 16); return `rgba(${((n >> 16) & 255) / 255}, ${((n >> 8) & 255) / 255}, ${(n & 255) / 255}, ${a})` }
-const FONT = `fontFamily: "DejaVu Sans, Inter, sans-serif"`
+const FONT = `fontFamily: "sans-serif"`
 const CANVAS = `canvas {\n  width = 640\n  height = 400\n}\n`
 
 interface Lib { domain: string; style: string; help: string; example: string }
@@ -41,7 +41,7 @@ forall Set x {
   }
   x.text = Text {
     string : x.label
-    fontSize : "20px"
+    fontSize : "22px"
     ${FONT}
     fillColor : ${rgba(INK, 1)}
   }
@@ -60,7 +60,7 @@ forall Element e {
   }
   e.text = Text {
     string : e.label
-    fontSize : "17px"
+    fontSize : "18px"
     ${FONT}
     fillColor : ${rgba(CLAY, 1)}
   }
@@ -120,7 +120,7 @@ forall Point p {
   }
   p.text = Text {
     string : p.label
-    fontSize : "24px"
+    fontSize : "28px"
     ${FONT}
     fillColor : ${rgba(INK, 1)}
   }
@@ -157,9 +157,9 @@ forall Point a; Point b; Point c where Triangle(a, b, c) {
   ensure inRange(vdist(a.pos, b.pos), 170, 420)
   ensure inRange(vdist(b.pos, c.pos), 170, 420)
   ensure inRange(vdist(c.pos, a.pos), 170, 420)
-  ensure lessThan(0.62, angleBetween(b.pos - a.pos, c.pos - a.pos))
-  ensure lessThan(0.62, angleBetween(a.pos - b.pos, c.pos - b.pos))
-  ensure lessThan(0.62, angleBetween(a.pos - c.pos, b.pos - c.pos))
+  ensure lessThan(0.7, angleBetween(b.pos - a.pos, c.pos - a.pos))
+  ensure lessThan(0.7, angleBetween(a.pos - b.pos, c.pos - b.pos))
+  ensure lessThan(0.7, angleBetween(a.pos - c.pos, b.pos - c.pos))
   encourage nearVec(a.text.center, a.pos + 26 * unit(a.pos - (b.pos + c.pos) / 2), 0)
   encourage nearVec(b.text.center, b.pos + 26 * unit(b.pos - (a.pos + c.pos) / 2), 0)
   encourage nearVec(c.text.center, c.pos + 26 * unit(c.pos - (a.pos + b.pos) / 2), 0)
@@ -350,7 +350,7 @@ forall Vector v {
     endArrowhead : "straight"
     endArrowheadSize : 0.55 }
   v.text = Text { string : v.label
-    fontSize : "20px"
+    fontSize : "22px"
     ${FONT}
     fillColor : ${rgba(NAVY, 1)} }
   ensure inRange(norm(v.vec), 110, 300)
@@ -474,6 +474,26 @@ export function repairSubstance(library: DiagramLibrary, substance: string): str
     return l
   })
   for (const n of numeric) { const id = `n${n.replace(/\./g, '_')}`; if (!out.some(l => l.startsWith(`Label ${id} `))) out.push(`Label ${id} "${n}"`) }
+  // Venn of listed members: an element placed with In(...) is outside every set it is not listed in (closed world,
+  // following Subset upwards), otherwise the optimiser happily drops "A only" members into the overlap.
+  if (library === 'sets') {
+    const all = [...extra, ...out]
+    const sets = [...declared].filter(([, t]) => t === 'Set').map(([n]) => n)
+    const up = new Map<string, string[]>()
+    for (const l of all) { const m = l.match(/^Subset\((\w+),\s*(\w+)\)$/); if (m) up.set(m[1], [...(up.get(m[1]) ?? []), m[2]]) }
+    const member = new Map<string, Set<string>>()
+    const explicitOut = new Set<string>()
+    for (const l of all) {
+      const m = l.match(/^(In|NotIn)\((\w+),\s*(\w+)\)$/)
+      if (!m) continue
+      if (m[1] === 'NotIn') { explicitOut.add(`${m[2]}|${m[3]}`); continue }
+      const seen = member.get(m[2]) ?? new Set<string>()
+      const stack = [m[3]]
+      while (stack.length) { const x = stack.pop()!; if (seen.has(x)) continue; seen.add(x); stack.push(...(up.get(x) ?? [])) }
+      member.set(m[2], seen)
+    }
+    for (const [e, ins] of member) for (const st of sets) if (!ins.has(st) && !explicitOut.has(`${e}|${st}`)) out.push(`NotIn(${e}, ${st})`)
+  }
   // Labels may come before the relation that declares their name: resolve them after.
   return [...extra, ...out].filter(l => { const lb = l.match(/^Label\s+(\w+)\s/); return !lb || declared.has(lb[1]) }).join('\n')
 }
@@ -505,6 +525,25 @@ export function checkSubstance(library: DiagramLibrary, substance: string): stri
   if (!declared.size) errors.push(`declare at least one object (${[...types].join(', ')})`)
   if (declared.size > 14) errors.push('at most 14 objects')
   return errors
+}
+
+/**
+ * Penrose sets a label's font through a CSS `style="font: ..."` rule, which the sanitiser drops, so the browser fell back
+ * to its 16px serif default. Copy the size onto plain font-size / font-family attributes (sans-serif, never below 18px in
+ * viewBox units, so labels stay legible when a 640-wide board is shown on a 360-390px phone).
+ */
+export function withTextFonts(svg: string): string {
+  return svg.replace(/<text\b([^>]*)>/g, (whole, attrs: string) => {
+    if (/\sfont-size\s*=/.test(attrs) && /\sfont-family\s*=/.test(attrs)) return whole
+    const style = attrs.match(/\sstyle\s*=\s*"([^"]*)"/)?.[1] ?? ''
+    let px = parseFloat(style.match(/font-size\s*:\s*([\d.]+)px/)?.[1] ?? style.match(/font\s*:[^;]*?([\d.]+)px/)?.[1] ?? '')
+    if (!Number.isFinite(px)) { const h = parseFloat(attrs.match(/\sheight\s*=\s*"([\d.]+)"/)?.[1] ?? ''); px = Number.isFinite(h) ? h / 0.96 : 22 }
+    px = Math.max(18, Math.round(px * 10) / 10)
+    let out = attrs
+    if (!/\sfont-size\s*=/.test(out)) out += ` font-size="${px}px"`
+    if (!/\sfont-family\s*=/.test(out)) out += ' font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"'
+    return `<text${out}>`
+  })
 }
 
 export class SubstanceError extends Error {}
@@ -556,7 +595,7 @@ export async function renderMathDiagram(library: DiagramLibrary, substanceSrc: s
         if (vb[3] < 340) { vb[1] -= (340 - vb[3]) / 2; vb[3] = 340 }
       }
       const body = safe.replace(/<penrose>[\s\S]*?<\/penrose>/, '').replace(/<title>[\s\S]*?<\/title>/g, '').replace(/<svg[^>]*>/, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.map(v => Math.round(v * 10) / 10).join(' ')}">`)
-      const clean = sanitizeSvg(body)
+      const clean = sanitizeSvg(withTextFonts(body))
       if (clean.svg) return { svg: clean.svg, width: vb[2], height: vb[3], ms: Date.now() - t0, library, unmet: best.bad }
       last = 'sanitiser rejected the SVG'
     }
