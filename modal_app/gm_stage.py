@@ -395,6 +395,11 @@ class Stage:
             L = np.linalg.norm(b - a)
             if L < 1e-3:
                 return Dot(a, radius=0.001, color=c)
+            if o.get("dashed"):  # a dashed vector (a parallelogram side, a translated copy) reads as a copy, not a third vector
+                tl = min(0.25, 0.4 * L)
+                d = (b - a) / L
+                return VGroup(DashedLine(a, b - d * tl * 0.9, color=c, stroke_width=sw, dash_length=0.12),
+                              Arrow(b - d * tl, b, buff=0, color=c, stroke_width=sw, tip_length=tl, max_tip_length_to_length_ratio=1.0))
             return Arrow(a, b, buff=0, color=c, stroke_width=sw + 1, tip_length=min(0.25, 0.4 * L), max_tip_length_to_length_ratio=0.4, max_stroke_width_to_length_ratio=30)
         if t == "axes":
             return self._axes(o)
@@ -436,14 +441,15 @@ class Stage:
         g = VGroup(ax)
         if o.get("numbers", True):
             fs = FS["min"] - 2 if not PORTRAIT else FS["min"]
+            gone = o.get("_ticks_gone") or set()
             for v in _ticks(x0, x1, xs):
-                if abs(v) < 1e-9 and y0 < 0 < y1:
+                if abs(v) < 1e-9 and y0 < 0 < y1 or ("x", round(v, 6)) in gone:
                     continue
-                g.add(_t(_num(v, o.get("x_pi")), fs, "muted").scale(1).next_to(ax.c2p(v, max(y0, min(0, y1))), DOWN, buff=0.12))
+                g.add(_tick(_t(_num(v, o.get("x_pi")), fs, "muted").scale(1).next_to(ax.c2p(v, max(y0, min(0, y1))), DOWN, buff=0.12), ("x", round(v, 6))))
             for v in _ticks(y0, y1, ys):
-                if abs(v) < 1e-9:
+                if abs(v) < 1e-9 or ("y", round(v, 6)) in gone:
                     continue
-                g.add(_t(_num(v), fs, "muted").next_to(ax.c2p(max(x0, min(0, x1)), v), LEFT, buff=0.12))
+                g.add(_tick(_t(_num(v), fs, "muted").next_to(ax.c2p(max(x0, min(0, x1)), v), LEFT, buff=0.12), ("y", round(v, 6))))
         lx, ly = o.get("x_label"), o.get("y_label")
         if lx:
             yb = max(y0, min(0, y1))
@@ -1064,6 +1070,30 @@ class Stage:
         except Exception:  # noqa: BLE001
             return None
 
+    def _declutter_ticks(self):
+        """Tick numbers that another drawn thing now runs through (a unit circle over the y-axis numbers) fade out: a
+        crossed-out number is worse than none."""
+        fades = []
+        for aid in list(self.shown):
+            if self.W.objs.get(aid, {}).get("type") != "axes" or aid not in self.mobs:
+                continue
+            o = self.W.objs[aid]
+            gone = o.setdefault("_ticks_gone", set())
+            ticks = [m for m in self.mobs[aid].submobjects if getattr(m, "_tick", False) and getattr(m, "_tick") not in gone]
+            if not ticks:
+                continue
+            _, pts = self._obstacles(exclude=(aid,))
+            if not len(pts):
+                continue
+            for m in ticks:
+                b = _box(m)
+                hit = (pts[:, 0] > b[0] + 0.02) & (pts[:, 0] < b[2] - 0.02) & (pts[:, 1] > b[1] + 0.02) & (pts[:, 1] < b[3] - 0.02)
+                if hit.any():
+                    gone.add(m._tick)  # remembered, so a rebuild of the axes (while vars animate) leaves it out too
+                    fades.append(m.animate.set_opacity(0))
+        if fades:
+            self.scene.play(*fades, run_time=0.3)
+
     def _settle_labels(self, run_time=0.45, play=True, skip=()):
         """Re-place every visible label against everything now on screen (later objects may have landed on earlier labels)."""
         anims = []
@@ -1541,6 +1571,7 @@ class Stage:
                 rt = max(0.6, min(4.0 if a[0] not in ("animate", "flow") else 8.0, budget * w / tw))
                 self.do(a, rt)
             self._settle_labels()
+            self._declutter_ticks()
             used = sc.renderer.time - t0
             if dur - used > 0.05:
                 sc.wait(dur - used)
@@ -1561,6 +1592,11 @@ def _as(a):
             v = a[k]
             return [k] + (v if isinstance(v, list) else [v])
     return []
+
+
+def _tick(m, key=None):
+    m._tick = key or True
+    return m
 
 
 def _lab(s, fs, color):
