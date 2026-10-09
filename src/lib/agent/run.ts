@@ -48,6 +48,9 @@ At most 3 writes. Do not repeat what is already in place. Only report actions wh
 /** The learner explicitly asked for a visual or a tool: the first step must call a tool. */
 export const EXPLICIT_TOOL = /\b(on the (white)?board|whiteboard|draw|drag|let me (move|explore|play)|venn|interactive|circle (the|it|that)|underline|cross (it )?out|annotate|erase|diagram|illustrat|graph|plot|chart|simulat|slider|animat|clip|video|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
 
+/** Explicit asks that are about the board, code, practice or the web, not about seeing an idea: no visual check. */
+export const EXPLICIT_NON_VISUAL = /\b(on the (white)?board|whiteboard|circle (the|it|that)|underline|cross (it )?out|annotate|erase|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
+
 /** The learner asks about their own learning or app actions (not a concept): no forced visual. */
 export const ABOUT_ME = /\b(my (path|lessons?|progress|plan|practice|mastery|streak|goals?|history|notes|week)|what (did|have|should) i|did i|have i (done|learn|studi)|next (lesson|topic)|today'?s plan|study plan|quiz me|practice (set|questions)|start (the|a|this) topic|how am i doing)\b/i
 
@@ -82,7 +85,9 @@ export function firstStepPolicy<T extends { def: { name: string } }>(ctx: Pick<A
   const explicit = EXPLICIT_TOOL.test(lastUser)
   // Questions about the learner's own learning (history, path, plan, practice) are answered from their data, not taught.
   const aboutMe = ABOUT_ME.test(lastUser)
-  const teaching = ctx.mode === 'chat' && !ctx.restricted && !explicit && !aboutMe && (CONCEPT_ASK.test(lastUser) || GENERIC_REASK.test(lastUser) || !!plan || /\?\s*$/.test(lastUser) && lastUser.length > 12)
+  // Naming a visual ("explain the graph of y = x^2 - 4", "show me a diagram of…") is still a teaching turn: the visual
+  // plan and the end-of-turn check apply, so a static plot alone is followed by a live figure (a point tracing the curve).
+  const teaching = ctx.mode === 'chat' && !ctx.restricted && !aboutMe && !EXPLICIT_NON_VISUAL.test(lastUser) && (CONCEPT_ASK.test(lastUser) || GENERIC_REASK.test(lastUser) || !!plan || (explicit && lastUser.length > 12) || /\?\s*$/.test(lastUser) && lastUser.length > 12)
   const forceFirst = ctx.mode === 'chat' && !ctx.restricted && (explicit || teaching)
   const visualSpecs = VISUAL_TOOLS.map(n => byName.get(n)).filter((t): t is NonNullable<typeof t> => !!t)
   const offerAll = teaching ? [...specs, ...visualSpecs.filter(t => !specs.some(x => x.def.name === t.def.name))] : specs
@@ -185,7 +190,7 @@ export async function runAgent(input: {
         ctx.trace.push('visual-check: none shown, retrying with a visual')
         messages.push({ role: 'assistant', content: res.text || '(no visual yet)' })
         // A user-role note: Gemini rejects a request whose last turn is the model's (system notes are lifted out).
-        messages.push({ role: 'user', content: '(Note from the app, not the learner) Your answer has no picture or moving figure yet. Call ONE visual tool now that shows this idea (find_illustration for a real object, interactive or simulate for something that moves or changes, plot for a function, math_diagram for exact geometry, animate_concept for a process), then add one short sentence telling the learner what to look at. Do not repeat what you already said.' })
+        messages.push({ role: 'user', content: '(Note from the app, not the learner) Your answer has no picture or moving figure yet. Call ONE visual tool now that shows this idea (find_illustration for a real object, interactive or simulate for something that moves or changes, interactive with a point gliding along the curve for a function (a static plot alone does not count), math_diagram for exact geometry, animate_concept for a process), then add one short sentence telling the learner what to look at. Do not repeat what you already said.' })
         forcedRetry = true
         continue
       }
