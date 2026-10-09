@@ -14,6 +14,10 @@ import { asData, injectionHeuristic, screenInjection, unsafeQuery } from './guar
 import { screenPython, runPython } from './python'
 import { sanitizeSvg, validateSim, buildPlot, makeBoardScene, makeIllustration } from './visual'
 import { compute } from './compute'
+import { ensureIds, opsToSteps, sceneOf } from './board-scene'
+import { checkScene } from './board-review'
+import { boardSnapshotPng } from './board-render'
+import type { Step } from '../lesson-schema'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES } from './run'
@@ -62,7 +66,29 @@ export function staticCases(): CaseResult[] {
   const c = compute({ op: 'solve', expression: 'x^2 - 5x + 6 = 0' })
   add('compute-solve', c.ok && /2/.test(c.result ?? '') && /3/.test(c.result ?? ''), c.result ?? c.error ?? '')
   add('compute-blocks-import', !compute({ op: 'evaluate', expression: 'import({x:1})' }).ok)
+  // The chat board: stable ids, scene graph, incremental edits, review checks.
+  const scene0 = ensureIds([
+    { type: 'write', text: 'Solve 2x + 3 = -7', x: 24, y: 24, size: 'lg' },
+    { type: 'math', tex: '2x = -10', x: 40, y: 120 },
+    { type: 'math', tex: 'x = -5', x: 40, y: 200, color: 'accent' },
+  ] as Step[])
+  const doc0 = { steps: scene0, groups: {}, rev: 1 }
+  const sc = sceneOf(doc0)
+  add('board-stable-ids', sc.elements.length === 3 && sc.elements.every(e => /^[tm]\d+$/.test(e.id)) && sc.elements[2].step === 3, sc.elements.map(e => `${e.id}:${e.label}`).join(' | '))
+  const ed = opsToSteps([{ op: 'annotate', id: 'm2', mark: 'circle', note: 'the answer' }, { op: 'move', id: 'm1', by: [0, 20] }, { op: 'erase', ids: ['ghost'] }], doc0)
+  add('board-edit-ops', ed.steps.length === 2 && ed.steps[0].type === 'annotate' && ed.errors.length === 1, `${ed.steps.map(x => x.type).join(',')} errors: ${ed.errors.join('; ').slice(0, 100)}`)
+  const clash = checkScene({ steps: ensureIds([...scene0, { type: 'write', text: 'overlap here', x: 44, y: 124 } as Step]), groups: {}, rev: 1 })
+  add('board-review-overlap', clash.some(i => i.kind === 'overlap'), clash.map(i => `${i.id}:${i.kind}`).join(','))
+  const off = checkScene({ steps: ensureIds([{ type: 'write', text: 'far off the right edge of the board', x: 700, y: 40 } as Step]), groups: {}, rev: 1 })
+  add('board-review-offcanvas', off.some(i => i.kind === 'off-canvas'), off.map(i => i.detail).join(';').slice(0, 100))
   return out
+}
+
+/** Static checks that need a native module (resvg board snapshot). */
+export async function staticAsyncCases(): Promise<CaseResult[]> {
+  const t0 = Date.now()
+  const png = await boardSnapshotPng(ensureIds([{ type: 'write', text: 'Snapshot', x: 24, y: 24, size: 'lg' } as Step, { type: 'draw', shape: { kind: 'circle', center: [400, 250], r: 80 }, color: 'accent', fill: true } as Step]))
+  return [{ id: 'board-snapshot-png', group: 'static', pass: !!png && png.length > 1000, detail: png ? `${Math.round(png.length * 0.75 / 1024)} KB PNG` : 'resvg unavailable', ms: Date.now() - t0 }]
 }
 
 /* ───────────── Model-based ───────────── */

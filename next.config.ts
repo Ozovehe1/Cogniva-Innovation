@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Native / DOM-shimmed libraries used only on the server (board snapshots, exact maths diagrams).
+  serverExternalPackages: ["@resvg/resvg-js", "@penrose/core", "linkedom"],
+  // The snapshot renderer loads its font from disk.
+  outputFileTracingIncludes: {
+    "/api/agent/**": ["./src/lib/agent/fonts/**"],
+  },
 };
 
 export default nextConfig;

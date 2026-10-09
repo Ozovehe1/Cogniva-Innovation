@@ -23,6 +23,11 @@ import { dispatchCompose, dispatchRender, renderServiceConfigured, type ManimJob
 import { generateManimCode } from '../lesson-ai'
 import { chatJson } from './llm'
 import { buildPlot, makeBoardScene, makeIllustration, validateSim } from './visual'
+import { MAX_BOARD_STEPS, REGIONS, emptyDoc, ensureIds, idsInRegion, loadBoard, opsToSteps, saveBoard, sceneOf, sceneText, type BoardDoc } from './board-scene'
+import { reviewBoard } from './board-review'
+import { boardSnapshotSvg, svgToPng } from './board-render'
+import { visionJson } from './llm'
+import type { Step } from '../lesson-schema'
 import { compute, type ComputeOp } from './compute'
 import { webSearch, fetchPage } from './web'
 import { runPython } from './python'
@@ -54,6 +59,14 @@ export interface AgentCtx {
   searchUrls: Set<string>
   computeCalls: number
   sources: { title: string; url: string; source: string }[]
+  /** The chat session (the board lives on it); null for background jobs and evals. */
+  sessionId?: string | null
+  /** The session's board, loaded on first use. */
+  board?: BoardDoc
+  /** This turn's board block: its id and the first step this turn added (so all of the turn's edits animate). */
+  boardTurn?: { blockId: string; from: number }
+  /** Whether the session already has something on the board (routing). */
+  hasBoard?: boolean
   /** Per-student daily limits. */
   limits: { animations: number; miniLessons: number; practiceSets: number; webSearches: number; pythonRuns: number }
 }
@@ -94,6 +107,43 @@ async function findTopic(ctx: AgentCtx, args: Record<string, unknown>): Promise<
   const topics = (data ?? []) as TopicRow[]
   const t = topics.find(x => x.node_id === q) ?? topics.find(x => x.title.toLowerCase() === q) ?? topics.find(x => x.title.toLowerCase().includes(q) || q.includes(x.title.toLowerCase()))
   return t ? ownTopic(ctx, t.id) : null
+}
+
+/* ───────────── The chat board (persistent per session) ───────────── */
+
+async function getBoard(ctx: AgentCtx): Promise<BoardDoc> {
+  ctx.board ??= await loadBoard(ctx.admin, ctx.sessionId, ctx.studentId)
+  return ctx.board
+}
+
+/**
+ * Put a new state of the board on screen: review the steps from `from` (repair once), save, and show it in the chat
+ * (steps before this turn's first change appear at once, the rest animate). Returns what the model should know.
+ */
+async function commitBoard(ctx: AgentCtx, doc: BoardDoc, from: number, title: string, opts: { plot?: boolean; vision?: boolean; replace?: boolean } = {}) {
+  const review = await reviewBoard(doc, from, { deadline: Date.now() + 25_000, trace: ctx.trace, vision: opts.vision })
+  let steps = review.steps
+  // Keep the stored board bounded: past the cap, start again from the last full clear.
+  if (steps.length > MAX_BOARD_STEPS) {
+    const cut = steps.slice(0, from).map((x, i) => (x.type === 'clear' && !x.targets ? i : -1)).filter(i => i >= 0).pop()
+    if (cut !== undefined && cut > 0) { steps = steps.slice(cut); from -= cut }
+  }
+  const next: BoardDoc = { steps, groups: doc.groups, rev: (doc.rev ?? 0) + 1 }
+  ctx.board = next
+  ctx.hasBoard = true
+  await saveBoard(ctx.admin, ctx.sessionId, ctx.studentId, next).catch(() => undefined)
+  if (opts.replace || !ctx.boardTurn) ctx.boardTurn = { blockId: bid(), from }
+  const start = Math.min(ctx.boardTurn.from, from)
+  ctx.boardTurn.from = start
+  ctx.emit({ kind: 'board', id: ctx.boardTurn.blockId, title: title.slice(0, 60) || 'Whiteboard', steps, start: start || undefined, rev: next.rev, plot: opts.plot || undefined })
+  const scene = sceneOf(next)
+  return {
+    shown: true,
+    elements: scene.elements.length,
+    scene: sceneText(scene, 30),
+    review: { vision: review.vision, repaired: review.repaired, open_issues: review.issues.filter(i => !i.fixed).slice(0, 5).map(i => `${i.id}: ${i.kind} ${i.detail}`) },
+    note: 'Refer to elements by id in board_edit (e.g. annotate the term you mean). Ids stay the same for the whole chat.',
+  }
 }
 
 /* ───────────── Read tools ───────────── */
@@ -398,18 +448,76 @@ const DIRECTOR: ToolSpec[] = [
   },
 ]
 
+function boardTitle(doc: BoardDoc) {
+  return String((doc.steps.find(x => x.type === 'write') as { text?: string } | undefined)?.text ?? 'Whiteboard')
+}
+
 /* ───────────── Visual and "great things" tools ───────────── */
 
 const VISUAL: ToolSpec[] = [
   {
-    def: { name: 'draw_on_board', description: 'Explain on an animated whiteboard with narration (a short scene drawn and voiced in the chat). Best for any process, derivation or diagram.', parameters: obj({ brief: { type: 'string', description: 'what to show, step by step, in 2-5 sentences' } }, ['brief']) },
+    def: { name: 'draw_on_board', description: 'Start a NEW scene on the chat whiteboard: a short narrated, animated explanation (drawn by hand, voiced). Best for step-by-step derivations, processes and motion. It replaces what is on the board; to change or add to the current board use board_edit instead. Every element gets an id you can edit later.', parameters: obj({ brief: { type: 'string', description: 'what to show, step by step, in 2-5 sentences (say which motion cues help: glide along a path, morph, pulse, circle a term)' } }, ['brief']) },
     tier: 'visual', modes: ['chat'], label: 'Drawing on the board',
     run: async (a, ctx) => {
       const learner = await loadLearner(ctx.admin, ctx.studentId)
       const r = await makeBoardScene(s(a.brief, 900), learner ? levelLine(learner) : '', ctx.trace)
       const title = String((r.steps.find(x => x.type === 'write') as { text?: string } | undefined)?.text ?? 'Whiteboard')
-      ctx.emit({ kind: 'board', id: bid(), title, steps: r.steps })
-      return { shown: true, steps: r.steps.length, narration: r.steps.map(x => (x as { say?: string }).say).filter(Boolean).join(' ').slice(0, 600) }
+      const doc: BoardDoc = { ...emptyDoc(), rev: ctx.board?.rev ?? (await getBoard(ctx)).rev, steps: ensureIds(r.steps) }
+      const out = await commitBoard(ctx, doc, 0, title, { replace: true })
+      return { ...out, steps: r.steps.length, narration: r.steps.map(x => (x as { say?: string }).say).filter(Boolean).join(' ').slice(0, 500) }
+    },
+  },
+  {
+    def: { name: 'board_inspect', description: 'See the chat whiteboard as it is now: every element with its id, type, label, box (x,y,w,h on an 800x500 board) and the step that drew it, plus a look at the rendered picture. Call before editing a board you did not just draw, or when the learner refers to something on it ("the -5 from step 2").', parameters: obj({}) },
+    tier: 'read', modes: ['chat'], label: 'Looking at the board',
+    run: async (_a, ctx) => {
+      const doc = await getBoard(ctx)
+      const scene = sceneOf(doc)
+      if (!scene.elements.length) return { empty: true, note: 'The board is empty. Use draw_on_board to start a scene.' }
+      let look: unknown = null
+      const png = await svgToPng(boardSnapshotSvg(doc.steps), 800)
+      if (png) look = await visionJson(`This is a teaching whiteboard. In JSON {"description": 2 sentences on what it shows, "problems": [up to 3 short layout or correctness problems, or none]}.\nElements:\n${sceneText(scene, 30)}`, png, { deadline: Date.now() + 14_000, trace: ctx.trace })
+      return { scene: sceneText(scene, 40), groups: doc.groups, look: look ?? 'no vision model available right now; rely on the element list', snapshot: png ? 'rendered (800x500 PNG, seen by the vision check)' : 'unavailable' }
+    },
+  },
+  {
+    def: {
+      name: 'board_edit',
+      description: 'Change the CURRENT chat whiteboard incrementally (animated, narrated; nothing else is redrawn). Ops refer to element ids from board_inspect or an earlier board result. Ops: add {text|tex|shape, x, y, size?, color?, on?, rough?, fill?} (shape as in the board schema, e.g. {"kind":"arrow","from":[x,y],"to":[x,y]}); move {id, to:[x,y] | by:[dx,dy] | path:[[x,y],...] | via: id of a drawn curve}; restyle {id, color?, width?, dashed?, fill?, rough?}; erase {ids}; highlight {id, style: box|underline|beat|glow|trace}; annotate {id, mark: circle|underline|cross|tick|bracket|arrow, note?}; morph {id, shape}; transform {id, tex|text} (rewrite an equation in place); group {name, ids}. Give each op a short "say" (spoken as it happens).',
+      parameters: obj({
+        title: { type: 'string' },
+        ops: { type: 'array', maxItems: 12, items: { type: 'object', properties: { op: { type: 'string', enum: ['add', 'move', 'restyle', 'erase', 'highlight', 'annotate', 'morph', 'transform', 'group'] }, id: { type: 'string' }, ids: { type: 'array', items: { type: 'string' } }, name: { type: 'string' }, text: { type: 'string' }, tex: { type: 'string' }, shape: { type: 'object' }, x: { type: 'number' }, y: { type: 'number' }, size: { type: 'string', enum: ['sm', 'md', 'lg', 'xl'] }, color: { type: 'string', enum: ['ink', 'accent', 'clay', 'navy', 'amber', 'muted'] }, on: { type: 'string' }, to: { type: 'array', items: { type: 'number' } }, by: { type: 'array', items: { type: 'number' } }, path: { type: 'array', items: { type: 'array', items: { type: 'number' } } }, via: { type: 'string' }, style: { type: 'string' }, mark: { type: 'string' }, note: { type: 'string' }, width: { type: 'number' }, dashed: { type: 'boolean' }, fill: { type: 'boolean' }, rough: { type: 'boolean' }, say: { type: 'string' } }, required: ['op'] } },
+      }, ['ops']),
+    },
+    tier: 'visual', modes: ['chat'], label: 'Editing the board',
+    run: async (a, ctx) => {
+      const doc = await getBoard(ctx)
+      if (!doc.steps.length) return { error: 'The board is empty. Use draw_on_board to start a scene first.' }
+      const ops = Array.isArray(a.ops) ? a.ops : []
+      if (!ops.length) return { error: 'ops is required' }
+      const r = opsToSteps(ops, doc)
+      if (!r.steps.length && JSON.stringify(r.groups) === JSON.stringify(doc.groups)) return { error: `Nothing could be applied: ${r.errors.slice(0, 6).join('; ')}. Call board_inspect for the real ids and fix the ops.` }
+      const from = doc.steps.length
+      const next: BoardDoc = { ...doc, steps: [...doc.steps, ...(r.steps as Step[])], groups: r.groups }
+      const out = await commitBoard(ctx, next, from, s(a.title, 60) || boardTitle(doc))
+      return { ...out, applied: r.steps.length, skipped: r.errors.length ? r.errors.slice(0, 6) : undefined }
+    },
+  },
+  {
+    def: { name: 'board_clear_region', description: 'Erase part of the chat whiteboard (fades out): a region of the 800x500 board {x,y,w,h}, or one of top|bottom|left|right|all. Elements whose centre lies inside go (touching=true: anything that touches it). Use it to make room before adding new work.', parameters: obj({ region: { type: 'string', enum: ['top', 'bottom', 'left', 'right', 'all'] }, x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, touching: { type: 'boolean' }, keep: { type: 'array', items: { type: 'string' }, description: 'ids to keep' } }) },
+    tier: 'visual', modes: ['chat'], label: 'Clearing part of the board',
+    run: async (a, ctx) => {
+      const doc = await getBoard(ctx)
+      if (!doc.steps.length) return { error: 'The board is already empty.' }
+      const box = typeof a.region === 'string' && REGIONS[a.region] ? REGIONS[a.region] : [a.x, a.y, a.w, a.h].every(v => typeof v === 'number') ? { x: Number(a.x), y: Number(a.y), w: Number(a.w), h: Number(a.h) } : null
+      if (!box) return { error: 'Give region (top|bottom|left|right|all) or x, y, w, h.' }
+      const keep = new Set(Array.isArray(a.keep) ? a.keep.map(String) : [])
+      const ids = idsInRegion(sceneOf(doc), box, a.touching === true).filter(i => !keep.has(i))
+      if (!ids.length) return { cleared: 0, note: 'Nothing on the board in that region.' }
+      const from = doc.steps.length
+      const groups = Object.fromEntries(Object.entries(doc.groups).map(([g, m]) => [g, m.filter(x => !ids.includes(x))]).filter(([, m]) => (m as string[]).length))
+      const out = await commitBoard(ctx, { ...doc, steps: [...doc.steps, { type: 'clear', targets: ids } as Step], groups }, from, boardTitle(doc), { vision: false })
+      return { ...out, cleared: ids.length, ids }
     },
   },
   {
@@ -421,10 +529,11 @@ const VISUAL: ToolSpec[] = [
     run: async (a, ctx) => {
       const r = buildPlot({ title: s(a.title, 34), functions: a.functions as never, points: a.points as never, series: a.series as never, xRange: a.x_range as never, yRange: a.y_range as never, xLabel: s(a.x_label, 16), yLabel: s(a.y_label, 16) })
       if (!r.steps.length) return { error: r.errors.join('; ') }
-      // A second plot in the same turn replaces the first (a correction), instead of stacking two graphs.
-      const prev = ctx.blocks.find(b => b.kind === 'board' && b.plot)
-      ctx.emit({ kind: 'board', id: prev?.id ?? bid(), title: s(a.title, 34) || 'Graph', steps: r.steps, plot: true })
-      return { shown: true, x_range: r.xRange, y_range: r.yRange, roots: r.roots, note: 'Roots are computed exactly; use them, do not guess.', warnings: r.errors.length ? r.errors : undefined }
+      // The graph becomes the chat board (so it can be annotated later). A second plot in the same turn replaces the
+      // first (a correction), instead of stacking two graphs.
+      const doc: BoardDoc = { ...emptyDoc(), rev: (await getBoard(ctx)).rev, steps: ensureIds(r.steps) }
+      const out = await commitBoard(ctx, doc, 0, s(a.title, 34) || 'Graph', { plot: true, vision: false, replace: !ctx.blocks.some(b => b.kind === 'board' && b.plot) })
+      return { shown: true, scene: out.scene, x_range: r.xRange, y_range: r.yRange, roots: r.roots, note: 'Roots are computed exactly; use them, do not guess.', warnings: r.errors.length ? r.errors : undefined }
     },
   },
   {
@@ -605,6 +714,7 @@ const ROUTES: [RegExp, string[]][] = [
   [/\b(start|begin|next (lesson|topic)|prepare|prefetch|open the)/i, ['start_topic', 'prefetch_lesson']],
   [/\b(stuck|keep (getting|failing|missing)|don'?t get|confus|again and again|go back|basics|remedia|failed)/i, ['suggest_remediation', 'make_mini_lesson', 'get_skill_state']],
   [/\b(pace|deadline|hours|too (fast|slow)|busy|more time|less time)/i, ['adjust_pace']],
+  [/\b(circle|underline|cross (it )?out|erase|rub (it )?out|annotate|highlight|label (it|the)|point (at|to)|arrow (to|at)|on the board|the board|step \d|redraw|move (the|it)|fix the (board|diagram|drawing)|add (a|an|the) (label|arrow|line|note))/i, ['board_inspect', 'board_edit', 'board_clear_region']],
   [/\b(listen|voice|read (it )?(out|aloud)|say it|audio)/i, ['narrate']],
   [/\b(lesson|covered|cover|learn(ed|t)|remember|last time|earlier|before|example|my (progress|path|topics?|skills?|goals?))/i, ['get_lesson_digest', 'search_my_learning', 'get_path_progress', 'get_skill_state']],
 ]
@@ -612,7 +722,7 @@ const CORE = ['compute', 'draw_on_board', 'search_my_learning', 'get_path_progre
 const VISUAL_DEFAULT = ['plot', 'illustrate', 'simulate']
 
 /** The tools offered for one chat turn: a core set plus what the message (and the last turns) point to. */
-export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonId'>, text: string): ToolSpec[] {
+export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonId' | 'hasBoard'>, text: string): ToolSpec[] {
   const all = toolsFor(ctx)
   if (ctx.mode !== 'chat') return all
   const want = new Set(CORE)
@@ -620,5 +730,6 @@ export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonI
   for (const [re, names] of ROUTES) if (re.test(text)) { names.forEach(n => want.add(n)); matched = true }
   if (!matched || /\b(explain|show|how|why|what is|teach)\b/i.test(text)) VISUAL_DEFAULT.forEach(n => want.add(n))
   if (ctx.lessonId) want.add('get_lesson_digest')
+  if (ctx.hasBoard) { want.add('board_inspect'); want.add('board_edit') }
   return all.filter(t => want.has(t.def.name))
 }

@@ -360,3 +360,37 @@ export async function promptGuardScore(text: string): Promise<number | null> {
     return Number.isFinite(v) ? v : null
   } catch { return null }
 }
+
+/* ───────────── Vision (board snapshots) ───────────── */
+
+/**
+ * Ask a vision-capable model (Gemini flash-lite, then flash, over every free key) about a PNG. Returns parsed JSON, or
+ * null when no vision model answered in time (the caller then relies on its deterministic checks).
+ */
+export async function visionJson(prompt: string, pngBase64: string, opts: { deadline?: number; trace?: string[] } = {}): Promise<unknown | null> {
+  const deadline = opts.deadline ?? Date.now() + 20_000
+  const keys = GEMINI_KEYS.length ? GEMINI_KEYS.map((_, i) => i) : []
+  for (const model of [...GEMINI_LITE, ...GEMINI_FLASH]) {
+    for (const key of keys) {
+      const name = `${model}#${key + 1}`
+      if ((skipUntil.get(name) ?? 0) > Date.now()) continue
+      const left = deadline - Date.now()
+      if (left < 2500) return null
+      try {
+        const r = await gemClient(key).models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'image/png', data: pngBase64 } }, { text: prompt }] }],
+          config: { httpOptions: { timeout: Math.min(18_000, left) }, maxOutputTokens: 1200, temperature: 0.2, responseMimeType: 'application/json', ...(model.startsWith('gemini-3') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : model.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
+        })
+        const text = (r.candidates?.[0]?.content?.parts ?? []).filter(p => !p.thought && p.text).map(p => p.text).join('')
+        opts.trace?.push(`vision ${name}: ok`)
+        return parseJsonLoose(text)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        opts.trace?.push(`vision ${name}: ${msg.slice(0, 80)}`)
+        if (/\b429\b|quota|RESOURCE_EXHAUSTED|not found|404/i.test(msg)) skipUntil.set(name, Date.now() + 60_000)
+      }
+    }
+  }
+  return null
+}
