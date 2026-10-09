@@ -4,6 +4,7 @@ import { MAX_RENDER_ATTEMPTS, dispatchRender, renderTokenMatches, type ManimJob 
 import { fixManimCode, generateManimCode, type ManimNarration } from '@/lib/lesson-ai'
 import { ensureNarration } from '@/lib/tts-server'
 import { clipBlocked } from '@/lib/correctness/clip'
+import { learnFromLayout } from '@/lib/correctness/layout-learning'
 
 // The composer fallback writes fresh code (up to two 60 s Gemini passes) after answering Modal.
 export const maxDuration = 300
@@ -40,7 +41,10 @@ export async function POST(request: Request) {
     const code = body.composed && typeof body.code === 'string' ? body.code.slice(0, 60000) : undefined
     // Correctness guard: the scene engine's deterministic verifier verdict ({ ok, failed: [...] }). A failed verdict
     // blocks the clip: it is never shown or placed into a lesson.
-    const verdict = body.verdict && typeof body.verdict === 'object' ? body.verdict as { ok?: unknown; failed?: unknown } : null
+    const verdict = body.verdict && typeof body.verdict === 'object' ? body.verdict as { ok?: unknown; failed?: unknown; layout?: unknown } : null
+    // Layout learning: the render's layout outcome (verdict.layout) counts towards recurring patterns, which tune the label
+    // solver and the scene writer for later renders (after the response; best effort).
+    if (verdict?.layout) after(() => learnFromLayout(admin, verdict.layout).then(() => undefined))
     if (clipBlocked(verdict)) {
       const why = Array.isArray(verdict!.failed) ? verdict!.failed.map(String).slice(0, 8).join('; ') : 'verifier failed'
       await admin.from('manim_jobs').update({ status: 'failed', verdict, error: `Blocked by the correctness verifier: ${why}`.slice(0, 3000), ...(code ? { code } : {}) }).eq('id', jobId)

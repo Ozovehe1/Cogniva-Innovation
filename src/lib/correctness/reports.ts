@@ -93,6 +93,26 @@ export function caseFromReport(r: ReportRow, names: string[]): Omit<RegressionCa
   return { kind: 'artefact' as RegressionCase['kind'], title, source: 'report', input: { artefact: art, problem: typeof art.problem === 'string' ? art.problem : '', category: r.category }, expect: { guardFlags: true } }
 }
 
+/**
+ * A confirmed report on a scene-language clip becomes a regression scene: the clip's scene file (no learner data in it, the
+ * prompt and narration are not kept) re-rendered with the current engine must render and must not show again the layout
+ * patterns its render showed. Its patterns also count towards layout learning. Null for other clips.
+ */
+export async function sceneCaseFromReport(admin: SupabaseClient, r: ReportRow): Promise<Omit<RegressionCase, 'id'> | null> {
+  if (r.surface !== 'animation' || !r.clip_job_id) return null
+  const { data } = await admin.from('manim_jobs').select('code, verdict').eq('id', r.clip_job_id).maybeSingle()
+  const job = data as { code: string | null; verdict: { layout?: unknown } | null } | null
+  if (!job?.code || !/from gm_stage import Stage/.test(job.code)) return null
+  const { patternsOf, learnFromLayout, RECUR } = await import('./layout-learning')
+  const patterns = patternsOf(job.verdict?.layout)
+  if (job.verdict?.layout) await learnFromLayout(admin, job.verdict.layout, RECUR - 1)
+  const aspect = (job.verdict?.layout as { aspect?: string } | undefined)?.aspect === '9:16' ? '9:16' : '16:9'
+  return {
+    kind: 'scene', source: 'report', title: `animation: ${r.category?.replace('_', ' ') ?? 'mistake'} (report ${r.id.slice(0, 8)})`,
+    input: { code: job.code.replace(UUID, '<id>'), aspect }, expect: { renders: true, noPatterns: patterns },
+  }
+}
+
 /** Confirmed: feed the blocklist (a wrong picture is never picked again for that topic; a failed clip spec is avoided). */
 export async function feedBlocklist(admin: SupabaseClient, r: ReportRow, avoid?: string | null) {
   const rows: { kind: string; value: string; topic: string; reason: string; report_id: string }[] = []

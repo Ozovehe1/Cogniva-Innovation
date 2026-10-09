@@ -1,0 +1,133 @@
+{
+ "title": "Linear vs exponential growth",
+ "vars": {
+  "t": 0.5
+ },
+ "objects": [
+  {
+   "type": "axes",
+   "id": "ax",
+   "x": [
+    0,
+    6
+   ],
+   "y": [
+    0,
+    40
+   ],
+   "size": [
+    8,
+    4.4
+   ],
+   "x_label": "years",
+   "y_label": "amount",
+   "y_step": 10
+  },
+  {
+   "type": "function",
+   "id": "lin",
+   "on": "ax",
+   "expr": "5 + 5*x",
+   "domain": [
+    0,
+    "t"
+   ],
+   "color": "a",
+   "label": "linear: +5 a year"
+  },
+  {
+   "type": "function",
+   "id": "expo",
+   "on": "ax",
+   "expr": "5*1.4**x",
+   "domain": [
+    0,
+    "t"
+   ],
+   "color": "highlight",
+   "label": "exponential: x1.4 a year"
+  },
+  {
+   "type": "point",
+   "id": "pl",
+   "on": "ax",
+   "at": [
+    "t",
+    "5 + 5*t"
+   ],
+   "color": "a"
+  },
+  {
+   "type": "point",
+   "id": "pe",
+   "on": "ax",
+   "at": [
+    "t",
+    "5*1.4**t"
+   ],
+   "color": "highlight"
+  },
+  {
+   "type": "readout",
+   "id": "ro",
+   "text": "year {t:.1f}: linear {5+5*t:.0f}, exponential {5*1.4**t:.0f}"
+  }
+ ],
+ "constraints": [],
+ "checks": [
+  [
+   "eq",
+   "f(lin, 1)",
+   "10"
+  ],
+  [
+   "eq",
+   "f(expo, 2)",
+   "9.8"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "Two savings plans start at five.",
+   "do": [
+    [
+     "show",
+     "ax",
+     "lin",
+     "expo",
+     "pl",
+     "pe",
+     "ro"
+    ]
+   ]
+  },
+  {
+   "say": "One adds five each year, the other multiplies by one point four.",
+   "do": [
+    [
+     "animate",
+     "t",
+     3,
+     {
+      "run": 3,
+      "rate": "linear"
+     }
+    ]
+   ]
+  },
+  {
+   "say": "At first the line is ahead, but the curve soon overtakes it.",
+   "do": [
+    [
+     "animate",
+     "t",
+     6,
+     {
+      "run": 3,
+      "rate": "linear"
+     }
+    ]
+   ]
+  }
+ ]
+}

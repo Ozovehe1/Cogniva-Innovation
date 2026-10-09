@@ -23,6 +23,9 @@ export type RegressionKind =
   | 'clip'
   /** A promoted learner report: the guard's re-check of the (anonymised) artefact must flag it. */
   | 'artefact'
+  /** A confirmed report on a scene-language clip: re-rendered with the current engine, it must render and none of the
+   *  layout patterns it showed when reported (`noPatterns`) may come back. */
+  | 'scene'
 
 export interface RegressionCase {
   id: string

@@ -1,6 +1,6 @@
 import { getAdmin } from '@/lib/admin'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { caseFromReport, feedBlocklist, type ReportRow } from '@/lib/correctness/reports'
+import { caseFromReport, feedBlocklist, sceneCaseFromReport, type ReportRow } from '@/lib/correctness/reports'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,6 +43,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       blocked = await feedBlocklist(admin, r, body.avoid)
       await admin.from('mistake_reports').update({ status: 'confirmed', triage_note: note ?? r.triage_note, triaged_at: now }).eq('id', id)
     } else if (body.avoid) blocked = await feedBlocklist(admin, { ...r, illustration_id: null }, body.avoid)
+    // A confirmed mistake on a scene-language clip becomes a regression scene right away (and feeds layout learning).
+    if (!r.regression_case_id) {
+      const sc = await sceneCaseFromReport(admin, r).catch(() => null)
+      if (sc) {
+        const { data: row } = await admin.from('regression_cases').insert({ source: 'report', report_id: r.id, kind: sc.kind, title: sc.title, input: sc.input, expect: sc.expect }).select('id').single()
+        if (row) {
+          await admin.from('mistake_reports').update({ regression_case_id: row.id }).eq('id', id)
+          return Response.json({ ok: true, status: 'confirmed', caseId: row.id, scene: true, blocked })
+        }
+      }
+    }
     if (body.action === 'confirm') return Response.json({ ok: true, status: 'confirmed', blocked })
     if (r.regression_case_id) return Response.json({ ok: true, status: 'confirmed', caseId: r.regression_case_id, already: true })
     // The learner's name is scrubbed from the artefact along with every id.

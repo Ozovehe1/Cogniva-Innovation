@@ -1,0 +1,172 @@
+{
+ "title": "The Sine Wave from a Circle",
+ "vars": {
+  "t": "0.5"
+ },
+ "objects": [
+  {
+   "type": "point",
+   "id": "O",
+   "at": [
+    0,
+    0
+   ]
+  },
+  {
+   "type": "point",
+   "id": "P_ref",
+   "hint": [
+    1,
+    0
+   ]
+  },
+  {
+   "type": "point",
+   "id": "P",
+   "hint": [
+    0.8,
+    0.5
+   ]
+  },
+  {
+   "type": "circle",
+   "id": "circ",
+   "center": "O",
+   "radius": 1
+  },
+  {
+   "type": "angle",
+   "id": "ang",
+   "points": [
+    "P_ref",
+    "O",
+    "P"
+   ],
+   "label": "{t/deg:.0f}°"
+  },
+  {
+   "type": "axes",
+   "id": "ax",
+   "x": [
+    0,
+    6.5
+   ],
+   "y": [
+    -1.5,
+    1.5
+   ],
+   "unit": [
+    1,
+    1
+   ],
+   "origin": "O",
+   "x_label": "t",
+   "y_label": "sin",
+   "x_pi": true
+  },
+  {
+   "type": "function",
+   "id": "sine_curve",
+   "on": "ax",
+   "expr": "sin(x)",
+   "domain": [
+    0,
+    "t"
+   ],
+   "color": "accent"
+  },
+  {
+   "type": "point",
+   "id": "P_wave",
+   "on": "ax",
+   "at": [
+    "t",
+    "sin(t)"
+   ],
+   "color": "accent"
+  },
+  {
+   "type": "segment",
+   "id": "proj",
+   "from": "P",
+   "to": "P_wave",
+   "dashed": true,
+   "color": "muted"
+  },
+  {
+   "type": "readout",
+   "id": "ro",
+   "text": "t = {t/deg:.0f}°   sin(t) = {sin(t):.2f}"
+  }
+ ],
+ "constraints": [
+  [
+   "polar",
+   "P",
+   "O",
+   1,
+   "t"
+  ],
+  [
+   "polar",
+   "P_ref",
+   "O",
+   1,
+   0
+  ]
+ ],
+ "checks": [
+  [
+   "eq",
+   "sin(t)",
+   "y(P)"
+  ],
+  [
+   "eq",
+   "sin(t)",
+   "f(sine_curve, t)"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "A point rotates counter-clockwise around the unit circle.",
+   "do": [
+    [
+     "show",
+     "O",
+     "circ",
+     "P",
+     "P_ref",
+     "ang"
+    ]
+   ]
+  },
+  {
+   "say": "Its vertical height at any angle determines the sine value.",
+   "do": [
+    [
+     "show",
+     "ax",
+     "sine_curve",
+     "P_wave",
+     "proj",
+     "ro"
+    ]
+   ]
+  },
+  {
+   "say": "As the angle increases, the height traces out the smooth sine wave.",
+   "do": [
+    [
+     "animate",
+     "t",
+     "2*pi",
+     {
+      "run": 4,
+      "rate": "linear"
+     }
+    ]
+   ]
+  }
+ ]
+}

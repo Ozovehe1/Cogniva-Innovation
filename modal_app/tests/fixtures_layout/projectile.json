@@ -1,0 +1,157 @@
+{
+ "title": "Projectile Motion",
+ "vars": {
+  "v0": 20,
+  "theta": "45*deg",
+  "g": 9.8,
+  "vx": "v0*cos(theta)",
+  "vy0": "v0*sin(theta)",
+  "T": "2*vy0/g",
+  "t": 0,
+  "vy": "vy0 - g*t"
+ },
+ "objects": [
+  {
+   "type": "axes",
+   "id": "ax",
+   "x": [
+    0,
+    45
+   ],
+   "y": [
+    0,
+    15
+   ],
+   "size": [
+    8,
+    4.5
+   ],
+   "x_label": "x (m)",
+   "y_label": "y (m)"
+  },
+  {
+   "type": "curve",
+   "id": "path",
+   "on": "ax",
+   "x": "vx*u",
+   "y": "vy0*u - g*u**2/2",
+   "param": "u",
+   "range": [
+    0,
+    "t"
+   ],
+   "color": "muted",
+   "dashed": true
+  },
+  {
+   "type": "point",
+   "id": "ball",
+   "on": "ax",
+   "at": [
+    "vx*t",
+    "vy0*t - g*t**2/2"
+   ],
+   "color": "accent"
+  },
+  {
+   "type": "vector",
+   "id": "vxv",
+   "from": "ball",
+   "comp": [
+    "vx",
+    0
+   ],
+   "on": "ax",
+   "scale": 0.25,
+   "color": "a",
+   "label": "vx"
+  },
+  {
+   "type": "vector",
+   "id": "vyv",
+   "from": "ball",
+   "comp": [
+    0,
+    "vy"
+   ],
+   "on": "ax",
+   "scale": 0.25,
+   "color": "b",
+   "label": "vy"
+  },
+  {
+   "type": "readout",
+   "id": "ro",
+   "text": "vx = {vx:.1f} m/s, vy = {vy:.1f} m/s"
+  }
+ ],
+ "constraints": [],
+ "checks": [
+  [
+   "eq",
+   "vx",
+   "v0*cos(theta)"
+  ],
+  [
+   "eq",
+   "vy0",
+   "v0*sin(theta)"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "A projectile is launched at 20 meters per second and 45 degrees.",
+   "do": [
+    [
+     "show",
+     "ax",
+     "ball",
+     "vxv",
+     "vyv",
+     "ro"
+    ]
+   ]
+  },
+  {
+   "say": "As it moves, the horizontal velocity stays constant while the path curves.",
+   "do": [
+    [
+     "show",
+     "path"
+    ],
+    [
+     "animate",
+     "t",
+     "T/2",
+     {
+      "run": 3,
+      "rate": "linear"
+     }
+    ]
+   ]
+  },
+  {
+   "say": "At the peak, vertical velocity drops to zero.",
+   "do": [
+    [
+     "highlight",
+     "ro"
+    ]
+   ]
+  },
+  {
+   "say": "Then it turns negative as the projectile falls back down.",
+   "do": [
+    [
+     "animate",
+     "t",
+     "T",
+     {
+      "run": 3,
+      "rate": "linear"
+     }
+    ]
+   ]
+  }
+ ]
+}

@@ -111,7 +111,13 @@ def _ex_text(ex: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def plan_prompt(description: str, narration: dict | None, context: str, aspect: str, examples: list[dict], variant: int = 0) -> str:
+def _avoid_text(avoid: list | None) -> str:
+    """Learned 'avoid' notes (recurring layout failures and confirmed clip mistakes, fed back by the web app)."""
+    lines = [str(a).strip()[:240] for a in (avoid or []) if str(a).strip()][:10]
+    return ("\n\nLearned from earlier clips (follow these):\n- " + "\n- ".join(lines)) if lines else ""
+
+
+def plan_prompt(description: str, narration: dict | None, context: str, aspect: str, examples: list[dict], variant: int = 0, avoid: list | None = None) -> str:
     nar = ""
     if narration and narration.get("text"):
         nar = f"\nThe clip plays while the tutor says (match the beats to it): \"{str(narration['text'])[:700]}\""
@@ -119,7 +125,7 @@ def plan_prompt(description: str, narration: dict | None, context: str, aspect: 
     angle = ["", "\nFor this version, choose a different visual approach than the most obvious one (a different layout or a different way to show the key idea)."][variant % 2]
     return (DOC + "\n\n" + _ex_text(examples) + "\n\nThe examples show the language; do not copy their topic. Write a new scene for:\n"
             f"CONCEPT: {description[:900]}\n" + (f"Context: {context[:400]}\n" if context else "") + nar +
-            f"\nFrame: {frame}. 3-6 beats, about 12-30 seconds in total." + angle)
+            f"\nFrame: {frame}. 3-6 beats, about 12-30 seconds in total." + angle + _avoid_text(avoid))
 
 
 def repair_prompt(ir: dict, problems: list[str], description: str, kind: str = "verify") -> str:
@@ -181,9 +187,13 @@ def scene_facts(ir: dict, aspect: str) -> str:
 
 
 # ───────────────────────── compile ─────────────────────────
-def compile_scene(ir: dict) -> str:
+def compile_scene(ir: dict, layout: dict | None = None) -> str:
+    """The scene file for an IR. layout = the label solver's learned weights (bounded again by gm_stage.layout_weights); the
+    scene writer never sets them (a model-written 'layout_weights' is dropped)."""
     glue = ir.get("glue") if isinstance(ir.get("glue"), dict) else {}
-    clean = {k: v for k, v in ir.items() if k != "glue"}
+    clean = {k: v for k, v in ir.items() if k not in ("glue", "layout_weights")}
+    if layout:
+        clean["layout_weights"] = {str(k): round(float(v), 4) for k, v in layout.items() if isinstance(v, (int, float))}
     funcs = []
     names = []
     for name, src in glue.items():
@@ -326,6 +336,24 @@ def concept_terms_report(description: str, ir: dict) -> list[str]:
 
 
 # ───────────────────────── scoring ─────────────────────────
+def layout_outcome(res: dict, aspect: str) -> dict:
+    """What the render's layout came to, for manim_jobs.verdict.layout: the engine's own measurements (label clearance,
+    distance from target, ownership, smallest text, ticks faded, patterns) plus the frame probe's warnings."""
+    lay = dict((res or {}).get("layout") or {})
+    lay.pop("per_label", None)
+    probs = layout_issues((res or {}).get("probe"), aspect) if (res or {}).get("ok") else []
+    lay["warnings"] = [f"{i['severity']}: {i['problem'][:160]}" for i in probs][:8]
+    pats = dict(lay.get("patterns") or {})
+    for i in probs:  # the frame probe's own high findings, as the same general patterns
+        p = i["problem"]
+        key = "text_overlap" if "collides with" in p else "text_small" if "below the phone-legible" in p else "text_off_frame" if "sticks out" in p \
+            else "label_crossed" if "runs through the text" in p else None
+        if key and i["severity"] == "high":
+            pats[key] = pats.get(key, 0) + 1
+    lay["patterns"] = pats
+    return lay
+
+
 def score_render(ir: dict, res: dict, aspect: str, verify: dict) -> dict:
     lay = layout_issues(res.get("probe"), aspect) if res.get("ok") else []
     hi = sum(1 for i in lay if i["severity"] == "high")
@@ -341,6 +369,7 @@ def score_render(ir: dict, res: dict, aspect: str, verify: dict) -> dict:
     has_stage = any(isinstance(o, dict) and o.get("type") in stage_types and o.get("type") != "text" for o in ir.get("objects") or [])
     s = 10.0 - 1.5 * hi - 0.5 * med - 2.0 * min(1.0, pacing) + 0.4 * min(motion, 4) + 0.3 * min(n_checks, 3) + 0.3 * beats_with_motion
     s -= 0.5 * len(verify.get("warnings") or [])
+    s -= 0.4 * min(5, sum(1 for _ in ((res.get("layout") or {}).get("patterns") or {})))  # the engine's own layout findings
     if not has_stage:
         s -= 8  # only text and equations: nothing is shown
     if not verify.get("ok"):
@@ -372,11 +401,12 @@ def _raw_ir(prompt: str, log: list, model_first: str | None = None, temperature:
                prefer=model_first, est_tokens=len(prompt) // 3.6 + 3200)
 
 
-def variant(description, render, *, narration, context, aspect, examples, log, idx=0, model_first=None, t_end=None):
+def variant(description, render, *, narration, context, aspect, examples, log, idx=0, model_first=None, t_end=None, tuning=None):
+    tuning = tuning or {}
     rec = {"idx": idx, "ok": False, "verify_rounds": 0, "render_rounds": 0, "problems": []}
     t0 = time.time()
     try:
-        ir = _ask_ir(plan_prompt(description, narration, context, aspect, examples, idx), log, model_first, 0.3 + 0.25 * idx)
+        ir = _ask_ir(plan_prompt(description, narration, context, aspect, examples, idx, tuning.get("avoid")), log, model_first, 0.3 + 0.25 * idx)
     except Exception as exc:  # noqa: BLE001
         rec["error"] = f"planner: {type(exc).__name__}: {str(exc)[:200]}"
         return rec
@@ -430,7 +460,7 @@ def variant(description, render, *, narration, context, aspect, examples, log, i
         rec["error"] = "did not verify: " + "; ".join((ver or {}).get("problems", [])[:4])[:500]
         return rec
     for r in range(MAX_RENDER_REPAIRS + 1):
-        code, probs = guard(compile_scene(ir))
+        code, probs = guard(compile_scene(ir, tuning.get("weights")))
         res = {"ok": False, "error": "; ".join(probs), "static": True} if probs else render(code, "l", aspect, True, False)
         if res.get("ok"):
             break
@@ -476,10 +506,13 @@ def final_verdict(description: str, ir: dict, aspect: str = "16:9") -> dict:
 
 
 def run(description: str, render, *, narration: dict | None = None, context: str = "", aspect: str = "16:9", log: list | None = None,
-        n_variants: int = 2, budget_s: float = 240.0, vision: bool = True, learn: bool = True, examples: list | None = None) -> dict:
+        n_variants: int = 2, budget_s: float = 240.0, vision: bool = True, learn: bool = True, examples: list | None = None,
+        tuning: dict | None = None) -> dict:
     """render(code, quality, aspect, want_frames, pen) -> {"ok", "error", "probe", "duration", "frames", "video"?}.
+    tuning = {"weights": {...learned label-solver weights}, "avoid": [learned notes]} from the web app's layout learning.
     Returns {"ok", "code", "ir", "video", "pen", "report"}."""
     log = log if log is not None else []
+    tuning = tuning if isinstance(tuning, dict) else {}
     t0 = time.time()
     t_end = t0 + budget_s
     rep: dict = {"engine": "scene-ir", "aspect": aspect, "variants": []}
@@ -489,7 +522,7 @@ def run(description: str, render, *, narration: dict | None = None, context: str
     pool = ThreadPoolExecutor(max_workers=max(2, n_variants))
     try:
         futs = [pool.submit(variant, description, render, narration=narration, context=context, aspect=aspect, examples=ex, log=log, idx=i,
-                            model_first=firsts[i % len(firsts)], t_end=t_end) for i in range(n_variants)]
+                            model_first=firsts[i % len(firsts)], t_end=t_end, tuning=tuning) for i in range(n_variants)]
         recs = [f.result() for f in futs]
         T = {"variants_s": round(time.time() - t0, 1)}
         for r in recs:
@@ -531,7 +564,7 @@ def run(description: str, render, *, narration: dict | None = None, context: str
                     v2 = GW.verify_ir(ir2, aspect)
                 rep["revision"] = {"verified": v2.get("ok"), "problems": v2.get("problems", [])[:4]}
                 if v2.get("ok"):
-                    code2, probs = guard(compile_scene(ir2))
+                    code2, probs = guard(compile_scene(ir2, tuning.get("weights")))
                     r2 = {"ok": False, "error": "; ".join(probs)} if probs else render(code2, "l", aspect, True, False)
                     if r2.get("ok"):
                         s2 = score_render(ir2, r2, aspect, v2)
@@ -549,6 +582,7 @@ def run(description: str, render, *, narration: dict | None = None, context: str
                 rep["revision"] = {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
         T["revision_s"] = round(time.time() - t0, 1)
         verdict = final_verdict(description, best["ir"], aspect)
+        verdict["layout"] = layout_outcome(best["res"], aspect)
         rep["verdict"] = verdict
         if not verdict["ok"]:
             rep["error"] = "verifier failed the final scene: " + "; ".join(verdict["failed"][:4])

@@ -557,6 +557,19 @@ def compose(job_id: str, description: str, narration: dict | None, context: str,
     return report
 
 
+# ───────────── Layout regression check ─────────────
+# A scene-language scene (e.g. one a learner reported and an admin confirmed) re-rendered at check quality with the current
+# engine; returns the layout outcome (patterns, clearance, smallest text). Rendered in the same sandbox as model-written code.
+@app.function(image=render_image, timeout=300, cpu=2.0, memory=4096, max_containers=4)
+def layout_check_fn(code: str, aspect: str = "16:9") -> dict:
+    import sys
+    sys.path.insert(0, "/root")
+    import gm_scenegen
+
+    r = ff_render.remote(code, "l", aspect, False, False)
+    return {"ok": bool(r.get("ok")), "error": (r.get("error") or "")[-800:] or None, "layout": gm_scenegen.layout_outcome(r, aspect)}
+
+
 # ───────────── Free-form scenes (gm_freeform.py) ─────────────
 # The sandbox: model-written code runs only here, with no network, no secrets, capped CPU / memory / time, and rlimits
 # on the manim subprocess (gm_freeform.render_local). The AST allow-list runs before it, in the orchestrator.
@@ -571,7 +584,8 @@ def ff_render(code: str, quality: str = "l", aspect: str = "16:9", want_frames: 
 
 @app.function(image=render_image, secrets=[secret], timeout=3600, cpu=1.0, memory=2048, max_containers=12)
 def freeform(job_id: str, description: str, narration: dict | None, context: str, upload_url: str, paths_upload_url: str | None,
-             report_upload_url: str | None, ff_report_upload_url: str | None, aspect: str = "16:9", fallback: bool = True, callback: bool = True) -> dict:
+             report_upload_url: str | None, ff_report_upload_url: str | None, aspect: str = "16:9", fallback: bool = True, callback: bool = True,
+             tuning: dict | None = None) -> dict:
     """Free-form animation: plan -> code -> sandbox render (repair errors <= 3) -> layout + vision critic -> one visual repair.
     If it cannot produce a clip, the template composer (compose: part graph, then the grammar composer) takes over, so the
     request never ends without a clip unless both fail (then the web app's last-resort code path runs on the failed callback)."""
@@ -593,7 +607,8 @@ def freeform(job_id: str, description: str, narration: dict | None, context: str
     # 3) the template composer (below, on failure)
     import gm_scenegen
 
-    r = gm_scenegen.run(description, render, narration=narration, context=context, aspect=aspect, log=log)
+    # tuning: the label solver's learned weights and the scene writer's learned avoid-notes (from the web app's layout learning)
+    r = gm_scenegen.run(description, render, narration=narration, context=context, aspect=aspect, log=log, tuning=tuning)
     if not r.get("ok"):
         log.append(f"scene language failed ({(r.get('error') or '')[:200]}); free-form code next")
         first = r.get("report") or {}
@@ -686,6 +701,18 @@ def web():
         ff_report_upload_url: str | None = Field(default=None, max_length=4000)
         aspect: str = Field(default="16:9", pattern=r"^(16:9|9:16)$")
         fallback: bool = True
+        tuning: dict | None = None
+
+    class LayoutCheckRequest(BaseModel):
+        code: str = Field(max_length=200_000)
+        aspect: str = Field(default="16:9", pattern=r"^(16:9|9:16)$")
+
+    @api.post("/layout_check")
+    def layout_check(req: LayoutCheckRequest, x_render_token: str | None = Header(default=None)):
+        # Regression scenes (confirmed clip mistakes): re-render a scene-language scene at check quality with the current
+        # engine and return its layout outcome (patterns, clearance, smallest text) and whether it rendered.
+        _auth(x_render_token)
+        return layout_check_fn.remote(req.code, req.aspect)
 
     @api.post("/freeform", status_code=202)
     def freeform_endpoint(req: FreeformRequest, x_render_token: str | None = Header(default=None)):
@@ -695,7 +722,7 @@ def web():
             if u and not u.startswith("https://"):
                 raise HTTPException(status_code=400, detail="upload urls must be https")
         call = freeform.spawn(req.job_id, req.description, req.narration, req.context, req.upload_url, req.paths_upload_url, req.report_upload_url,
-                              req.ff_report_upload_url, req.aspect, req.fallback, req.callback)
+                              req.ff_report_upload_url, req.aspect, req.fallback, req.callback, req.tuning)
         return {"accepted": True, "call_id": call.object_id}
 
     @api.get("/result/{call_id}")

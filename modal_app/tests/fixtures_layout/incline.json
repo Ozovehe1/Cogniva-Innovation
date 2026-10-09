@@ -1,0 +1,187 @@
+{
+ "title": "Forces on a block on a ramp",
+ "vars": {
+  "th": "25*deg",
+  "m": 2,
+  "g": 9.8,
+  "W": "m*g",
+  "N": "W*cos(th)",
+  "F": "W*sin(th)",
+  "s": 0.12
+ },
+ "objects": [
+  {
+   "type": "point",
+   "id": "A",
+   "at": [
+    -4,
+    -1.5
+   ]
+  },
+  {
+   "type": "point",
+   "id": "B",
+   "at": [
+    3,
+    -1.5
+   ]
+  },
+  {
+   "type": "point",
+   "id": "C"
+  },
+  {
+   "type": "polygon",
+   "id": "ramp",
+   "points": [
+    "A",
+    "B",
+    "C"
+   ],
+   "fill": 0.12,
+   "color": "muted"
+  },
+  {
+   "type": "point",
+   "id": "K"
+  },
+  {
+   "type": "vector",
+   "id": "wv",
+   "from": "K",
+   "comp": [
+    "0",
+    "-W*s"
+   ],
+   "color": "b",
+   "label": "W = mg"
+  },
+  {
+   "type": "vector",
+   "id": "nv",
+   "from": "K",
+   "comp": [
+    "-N*s*sin(th)",
+    "N*s*cos(th)"
+   ],
+   "color": "a",
+   "label": "N"
+  },
+  {
+   "type": "vector",
+   "id": "fv",
+   "from": "K",
+   "comp": [
+    "F*s*cos(th)",
+    "F*s*sin(th)"
+   ],
+   "color": "c",
+   "label": "friction"
+  },
+  {
+   "type": "angle",
+   "id": "ang",
+   "points": [
+    "C",
+    "A",
+    "B"
+   ],
+   "label": "{th/deg:.0f}°",
+   "radius": 0.9
+  },
+  {
+   "type": "readout",
+   "id": "ro",
+   "text": "N = {N:.1f} N   friction = {F:.1f} N"
+  }
+ ],
+ "constraints": [
+  [
+   "ccw",
+   "A",
+   "B",
+   "C"
+  ],
+  [
+   "angle",
+   "B",
+   "A",
+   "C",
+   "th"
+  ],
+  [
+   "vertical",
+   "B",
+   "C"
+  ],
+  [
+   "on",
+   "K",
+   "A-C"
+  ],
+  [
+   "length_ratio",
+   "A-K",
+   "A-C",
+   0.55
+  ]
+ ],
+ "checks": [
+  [
+   "eq",
+   "N",
+   "W*cos(th)"
+  ],
+  [
+   "eq",
+   "F",
+   "W*sin(th)"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "A block rests on a ramp tilted at twenty five degrees.",
+   "do": [
+    [
+     "show",
+     "ramp",
+     "ang",
+     "K"
+    ]
+   ]
+  },
+  {
+   "say": "Gravity pulls it straight down with its weight.",
+   "do": [
+    [
+     "show",
+     "wv"
+    ]
+   ]
+  },
+  {
+   "say": "The ramp pushes back at right angles to its surface, and friction acts up the slope.",
+   "do": [
+    [
+     "show",
+     "nv",
+     "fv",
+     "ro"
+    ]
+   ]
+  },
+  {
+   "say": "Make the ramp steeper: the normal force falls and friction must grow.",
+   "do": [
+    [
+     "animate",
+     "th",
+     "40*deg",
+     {
+      "run": 3
+     }
+    ]
+   ]
+  }
+ ]
+}

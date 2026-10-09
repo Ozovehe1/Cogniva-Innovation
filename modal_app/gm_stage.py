@@ -50,12 +50,94 @@ def col(c, default="ink"):
 
 PORTRAIT = config.frame_height > config.frame_width
 FW, FH = float(config.frame_width), float(config.frame_height)
-if PORTRAIT:
-    FS = {"title": 26, "label": 18, "body": 18, "math": 24, "note": 18, "cell": 18, "min": 16, "box": 18}
-else:
-    # sized for a phone: a 16:9 clip plays ~390 px wide, so nothing under ~30 (about 11 px tall there)
-    FS = {"title": 38, "label": 32, "body": 30, "math": 46, "note": 30, "cell": 32, "min": 30, "box": 30}
-GW.BOX_FS = FS["box"]
+
+# ── layout weights ──
+# The label solver's penalties and the legibility floor. These are defaults: a scene may carry "layout_weights" (learned per
+# recurring failure pattern and stored in the database by the web app), always clamped to LAYOUT_BOUNDS here.
+#   clear      clearance band around a label, in label heights (strokes/glyphs inside it are penalised)
+#   clear_w    penalty per stroke sample inside the clearance band (scaled by how deep it is)
+#   stroke_in  penalty per stroke sample under the label itself
+#   anchor     penalty per label height of distance from the label to its target's ink (plus a gentle pull to its natural spot)
+#   reach      beyond this many label heights from its target a label reads as detached (steep penalty)
+#   own        penalty (per label height) when the label sits nearer another line/arrow/point than its own target
+#   tick_clear clearance (in tick heights) an axis number keeps from drawn marks before it fades out
+#   min_xh_px  the phone-legible floor: smallest lowercase x-height in CSS px on a ~390 px wide phone
+LAYOUT_DEFAULTS = {"clear": 0.5, "clear_w": 3.0, "stroke_in": 4.0, "anchor": 0.6, "reach": 2.0, "own": 6.0, "tick_clear": 0.25, "min_xh_px": 6.0}
+LAYOUT_BOUNDS = {"clear": (0.25, 1.0), "clear_w": (1.0, 12.0), "stroke_in": (2.0, 12.0), "anchor": (0.2, 3.0), "reach": (1.0, 4.0),
+                 "own": (2.0, 20.0), "tick_clear": (0.1, 0.8), "min_xh_px": (5.5, 8.0)}
+
+
+def layout_weights(over=None) -> dict:
+    w = dict(LAYOUT_DEFAULTS)
+    for k, v in (over or {}).items():
+        if k in LAYOUT_BOUNDS:
+            try:
+                lo, hi = LAYOUT_BOUNDS[k]
+                w[k] = min(hi, max(lo, float(v)))
+            except (TypeError, ValueError):
+                pass
+    return w
+
+
+# ── text sizes: computed from the frame and the output, never fixed ──
+# A role's design size scales with the frame's short side (DESIGN_EM font units per frame unit), and every text is at least
+# the phone-legible floor: the font size whose lowercase x-height reaches min_xh_px on a phone. The player fills a ~390 CSS px
+# wide viewport (portrait and landscape); a lower-resolution render is limited by its own pixels. Glyph metrics are measured
+# from the fonts (TeX glyphs are ~2/3 the height of Text glyphs at one font_size, so maths gets its own floor).
+PHONE_CSS_PX = 390.0
+DESIGN_EM = {"title": 4.75, "label": 4.0, "body": 3.75, "math": 5.75, "note": 3.75, "cell": 4.0, "box": 3.75}
+_XH_FALLBACK = {"text": 0.3461 / 48, "tex": 0.2257 / 48}
+_METRIC: dict = {}
+
+
+def _xh(kind="text") -> float:
+    """Lowercase x-height per font_size unit (frame units), measured once from the font."""
+    if kind not in _METRIC:
+        try:
+            m = Text("x", font_size=48) if kind == "text" else MathTex("x", font_size=48)
+            _METRIC[kind] = float(m.height) / 48.0 or _XH_FALLBACK[kind]
+        except Exception:  # noqa: BLE001
+            _METRIC[kind] = _XH_FALLBACK[kind]
+    return _METRIC[kind]
+
+
+def px_per_unit(frame_w=None, pixel_w=None) -> float:
+    fw = float(frame_w or FW)
+    return min(PHONE_CSS_PX, float(pixel_w or config.pixel_width)) / fw
+
+
+def legible_fs(kind="text", min_xh_px=None, frame_w=None, pixel_w=None) -> float:
+    return float(min_xh_px or LAYOUT_DEFAULTS["min_xh_px"]) / px_per_unit(frame_w, pixel_w) / _xh(kind)
+
+
+def text_kind(m) -> str:
+    return "tex" if isinstance(m, MathTex) or m.__class__.__name__ in ("SingleStringMathTex", "Tex") else "text"
+
+
+def text_px(m) -> float:
+    """x-height of a text mobject in phone CSS px (font_size follows any scaling)."""
+    try:
+        return float(m.font_size) * _xh(text_kind(m)) * px_per_unit()
+    except Exception:  # noqa: BLE001
+        return float("inf")
+
+
+FS: dict = {}
+_DBG = __import__("os").environ.get("GM_LAYOUT_DEBUG") or ""  # "1" = placements; a label id = also its best candidates
+
+
+def set_sizes(min_xh_px=None):
+    floor = legible_fs("text", min_xh_px)
+    short = min(FW, FH)
+    FS.clear()
+    FS.update({k: max(floor, round(v * short, 1)) for k, v in DESIGN_EM.items()})
+    FS["min"] = floor
+    FS["tex_min"] = legible_fs("tex", min_xh_px)
+    GW.BOX_FS = FS["box"]
+    GW.BOX_TEX_FS = max(FS["tex_min"], FS["box"] + 8)
+
+
+set_sizes()
 
 
 def _t(text, fs=None, color="ink", weight="NORMAL"):
@@ -102,7 +184,7 @@ def _tex_clean(s: str) -> str:
 
 
 def _m(tex, fs=None, color="ink"):
-    return MathTex(_tex_clean(tex), font_size=max(FS["min"] + 4, fs or FS["math"]), color=col(color))
+    return MathTex(_tex_clean(tex), font_size=max(FS["tex_min"], fs or FS["math"]), color=col(color))
 
 
 class _C:
@@ -159,12 +241,42 @@ def _ovl(a, b):
     return max(0.0, w) * max(0.0, h)
 
 
+def _box_dist(b, pts) -> float:
+    """Shortest distance from a box to a set of points (0 when one is inside). Points may carry the half-width of the stroke
+    they sit on as a third column: the distance is then to the edge of the ink, not its centre line."""
+    return float(_ink_dist(b, pts).min())
+
+
+def _in_poly(pts, poly) -> np.ndarray:
+    """Even-odd point-in-polygon for many points."""
+    x, y = pts[:, 0], pts[:, 1]
+    inside = np.zeros(len(pts), dtype=bool)
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        cross = ((y1 > y) != (y2 > y)) & (x < (x2 - x1) * (y - y1) / ((y2 - y1) if y2 != y1 else 1e-12) + x1)
+        inside ^= cross
+    return inside
+
+
+def _ink_dist(b, pts):
+    dx = np.maximum(np.maximum(b[0] - pts[:, 0], 0.0), pts[:, 0] - b[2])
+    dy = np.maximum(np.maximum(b[1] - pts[:, 1], 0.0), pts[:, 1] - b[3])
+    d = np.hypot(dx, dy)
+    if pts.shape[1] > 2:
+        d = np.where(d > 0, np.maximum(d - pts[:, 2], 1e-6), 0.0)
+    return d
+
+
 class Stage:
     def __init__(self, scene, ir: dict, glue: dict | None = None):
         self.scene = scene
         self.ir = ir
         self.glue = glue or {}
         scene.camera.background_color = BG
+        self.LW = layout_weights(ir.get("layout_weights"))
+        set_sizes(self.LW["min_xh_px"])
         self.W = GW.World(ir, "9:16" if PORTRAIT else "16:9")
         self._layout_zones()
         res = self.W.build(self.main_box)
@@ -212,6 +324,7 @@ class Stage:
         self.dimmed: list = []
         self.cycle = 0
         self.title_mob = None
+        self.audit: dict = {"labels": {}, "min_text_px": None, "ticks_faded": 0, "ticks_restored": 0}
 
     # ── zones ──
     def _layout_zones(self):
@@ -245,7 +358,7 @@ class Stage:
                         except Exception:  # noqa: BLE001
                             widest = max(widest, 6.0)
             self.ro_strip = None
-            if has_eq and widest * (FS["min"] + 2) / FS["math"] > 4.6:
+            if has_eq and widest * FS["tex_min"] / FS["math"] > 4.6:
                 self.band = [-FW / 2 + m, bot, FW / 2 - m, bot + 1.15]
                 bot += 1.25
             elif has_eq:
@@ -440,7 +553,7 @@ class Stage:
         ax.shift(target - ax.c2p((x0 + x1) / 2, (y0 + y1) / 2))
         g = VGroup(ax)
         if o.get("numbers", True):
-            fs = FS["min"] - 2 if not PORTRAIT else FS["min"]
+            fs = FS["min"]  # axis numbers sit at the legible floor
             gone = o.get("_ticks_gone") or set()
             for v in _ticks(x0, x1, xs):
                 if abs(v) < 1e-9 and y0 < 0 < y1 or ("x", round(v, 6)) in gone:
@@ -559,7 +672,7 @@ class Stage:
             cell[1].move_to(cell[0].get_center())
         g.add(row)
         if o.get("indices", True):
-            idx = VGroup(*[_t(str(i + int(o.get("start_index", 0))), FS["min"] - 4 if not PORTRAIT else FS["min"], "muted").next_to(row[i], DOWN, buff=0.08) for i in range(len(vals))])
+            idx = VGroup(*[_t(str(i + int(o.get("start_index", 0))), FS["min"], "muted").next_to(row[i], DOWN, buff=0.08) for i in range(len(vals))])
             g.add(idx)
         g.move_to(self.P(o["id"]))
         g.row = row
@@ -704,10 +817,41 @@ class Stage:
             m.move_to(self._free_spot(m))
         return m
 
+    def _stroke_samples(self, mob, step=0.07):
+        """Points every ~step along every visible stroke of a mobject, plus the outline of small filled marks (dots, arrow tips).
+        Rows are (x, y, half stroke width): a thick battery plate is wider ink than a hairline."""
+        pts = []
+        stack = [mob]
+        while stack:
+            sub = stack.pop()
+            if isinstance(sub, (Text, MathTex)) or sub.__class__.__name__ in ("SingleStringMathTex", "MarkupText", "DecimalNumber"):
+                continue
+            stack.extend(sub.submobjects)
+            p = sub.points
+            if len(p) == 0:
+                continue
+            stroked = sub.get_stroke_width() > 0 and sub.get_stroke_opacity() > 0.02
+            mark = sub.get_fill_opacity() > 0.5 and max(sub.width, sub.height) < 0.45  # a dot or an arrow tip is ink too
+            if not stroked and not mark:
+                continue
+            anchors = p[::4, :2] if len(p) >= 4 else p[:, :2]
+            ends = p[3::4, :2] if len(p) >= 4 else p[:, :2]
+            hw = 0.005 * sub.get_stroke_width() if stroked else 0.0  # Cairo draws stroke_width x 0.01 frame units
+            for a0, a1 in zip(anchors, ends):
+                L = float(np.linalg.norm(a1 - a0))
+                k = max(2, min(60, int(L / step) + 1))
+                t = np.linspace(0, 1, k)[:, None]
+                seg = a0 + t * (a1 - a0)
+                pts.append(np.hstack([seg, np.full((k, 1), hw)]))
+            if mark:
+                pts.append(np.array([[*sub.get_center()[:2], 0.0]]))
+        return np.concatenate(pts) if pts else np.zeros((0, 3))
+
     def _obstacles(self, exclude=(), target=None):
         """Text boxes (labels, glyph groups, tick numbers), filled-shape interiors, and points sampled every ~0.07 units along
-        every drawn stroke (a label must not sit on a line, not just avoid its corners)."""
-        boxes, pts, soft = [], [], []
+        every drawn stroke and small filled mark (a label must not sit on a line, not just avoid its corners). Each stroke
+        sample remembers which object drew it (self._own), so a label can be checked against its own target."""
+        boxes, pts, soft, own, ticks = [], [], [], [], []
         for oid in self.shown:
             if oid in exclude:
                 continue
@@ -716,46 +860,130 @@ class Stage:
                 continue
             o = self.W.objs.get(oid, {})
             if o.get("type") == "label":
+                if getattr(m, "_tiny", False) or m.get_fill_opacity() < 0.05:
+                    continue
                 boxes.append(_box(m))
                 continue
             stack = [m]
             while stack:
                 sub = stack.pop()
                 if isinstance(sub, (Text, MathTex)) or sub.__class__.__name__ in ("SingleStringMathTex", "MarkupText", "DecimalNumber"):
-                    boxes.append(_box(sub))
+                    if sub.get_fill_opacity() > 0.05:
+                        (ticks if getattr(sub, "_tick", False) else boxes).append(_box(sub))
                     continue
                 stack.extend(sub.submobjects)
-                p = sub.points
-                if len(p) == 0:
+                if len(sub.points) == 0:
                     continue
                 if oid != target and sub.get_fill_opacity() > 0.05 and isinstance(sub, RoundedRectangle):
                     boxes.append(_box(sub))  # a box node: never write over it
-                elif oid != target and sub.get_fill_opacity() > 0.05 and isinstance(sub, (Polygon, Circle, Square, Rectangle)):
+                elif oid != target and sub.get_fill_opacity() > 0.05 and isinstance(sub, (Polygon, Circle, Square, Rectangle)) and max(sub.width, sub.height) >= 0.45:
                     soft.append(_box(sub) + np.array([0.12, 0.12, -0.12, -0.12]))  # a filled region: fine to label inside, mildly avoided
-                if sub.get_stroke_width() <= 0 or sub.get_stroke_opacity() <= 0.02:
-                    continue
-                anchors = p[::4, :2] if len(p) >= 4 else p[:, :2]
-                ends = p[3::4, :2] if len(p) >= 4 else p[:, :2]
-                for a0, a1 in zip(anchors, ends):
-                    L = float(np.linalg.norm(a1 - a0))
-                    k = max(2, min(60, int(L / 0.07) + 1))
-                    t = np.linspace(0, 1, k)[:, None]
-                    pts.append(a0 + t * (a1 - a0))
+            sp = self._stroke_samples(m)
+            if len(sp):
+                # axes are background ink: crossing an axis line costs less than crossing a drawn shape
+                wgt = 0.35 if o.get("type") == "axes" else 1.0
+                pts.append(np.hstack([sp, np.full((len(sp), 1), wgt)]))
+                own += [oid] * len(sp)
         self._soft = soft
-        return boxes, (np.concatenate(pts) if pts else np.zeros((0, 2)))
+        self._ticks = ticks  # axis numbers: avoided like any text; one a label still has to crowd fades (see _tick_cover)
+        self._own = np.array(own, dtype=object)
+        return boxes, (np.concatenate(pts) if pts else np.zeros((0, 4)))
 
-    def _score(self, m, boxes, pts, pref=None, home=None):
+    def _target_geom(self, ref):
+        """What a label is about, as points: the stroke samples of its target (or the target's position / cell centre)."""
+        if "[" in ref:
+            c = self.cell(ref)
+            return np.array([c.get_center()[:2]]) if c is not None else None
+        m = self.mobs.get(ref)
+        t = self.W.objs.get(ref, {}).get("type")
+        if m is not None and t in ("polygon", "circle") and len(m.points):
+            # a region: a label anywhere inside it is on it (a² written in its square)
+            sp = self._stroke_samples(m)
+            poly = m.points[::4, :2] if len(m.points) >= 4 else m.points[:, :2]
+            b = _box(m)
+            gx, gy = np.meshgrid(np.linspace(b[0], b[2], 12), np.linspace(b[1], b[3], 12))
+            g = np.c_[gx.ravel(), gy.ravel()]
+            inside = _in_poly(g, poly)
+            return np.concatenate([sp, np.c_[g[inside], np.zeros(int(inside.sum()))]]) if inside.any() else sp
+        if m is not None and t not in BLOCKY:
+            sp = self._stroke_samples(m)
+            if len(sp):
+                return sp
+        if m is not None:  # a block: its outline
+            b = _box(m)
+            t = np.linspace(0, 1, 8, endpoint=False)
+            return np.concatenate([np.c_[b[0] + t * (b[2] - b[0]), np.full(8, b[1])], np.c_[np.full(8, b[2]), b[1] + t * (b[3] - b[1])],
+                                   np.c_[b[2] - t * (b[2] - b[0]), np.full(8, b[3])], np.c_[np.full(8, b[0]), b[3] - t * (b[3] - b[1])]])
+        try:
+            return np.array([self.pos(ref)[:2]])
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _related(self, ref):
+        """Objects a label of ref may sit next to without being mistaken for theirs: ref itself, its end points, its group."""
+        o = self.W.objs.get(ref, {})
+        rel = {ref}
+        mine = set()
+        for key in ("from", "to", "center", "points", "of", "on"):
+            for x in GW._as_list(o.get(key)):
+                if isinstance(x, str):
+                    rel.add(x)
+                    mine.add(x)
+        for gid, g in self.W.objs.items():
+            if g.get("type") == "group" and ref in (g.get("members") or []):
+                rel.add(gid)
+            # drawn on the same points (an angle's sides are its polygon's edges): not a rival for the label
+            theirs = {x for key in ("from", "to", "points") for x in GW._as_list(g.get(key)) if isinstance(x, str)}
+            if len(mine & theirs) >= 2:
+                rel.add(gid)
+        return rel
+
+    def _label_ctx(self, o, exclude=None):
+        """Everything a label's placement is scored against, gathered once per placement."""
+        ref = str(o.get("for"))
+        boxes, pts = self._obstacles(exclude=exclude or (o["id"],), target=ref)
+        own = self._own
+        rel = self._related(ref)
+        axes_ids = {k for k, v in self.W.objs.items() if v.get("type") == "axes"}
+        other = np.array([x not in rel and x not in axes_ids and self.W.objs.get(x, {}).get("type") not in BLOCKY for x in own], dtype=bool) if len(own) else np.zeros(0, bool)
+        mine = np.array([x == ref for x in own], dtype=bool) if len(own) == len(pts) else None
+        return {"boxes": boxes, "pts": pts, "other": pts[other] if len(pts) else pts, "tgt": self._target_geom(ref) if o.get("for") else None,
+                "mine": mine}
+
+    def _score(self, m, boxes, pts, pref=None, home=None, ctx=None):
+        """Lower is better. All distances are measured against the label's own size, so the rules hold at any frame/aspect."""
+        LW = self.LW
         b = _box(m)
-        pad = 0.06
-        bp = b + np.array([-pad, -pad, pad, pad])
+        h = max(min(m.height, m.width), 0.18)
+        c = LW["clear"] * h
         s = 0.0
-        for o in boxes:
-            s += 60 * _ovl(bp, o)
+        for o in list(boxes) + list(getattr(self, "_ticks", [])):
+            # other text: overlapping is a collision; closer than the clearance band crowds it
+            gx = max(o[0] - b[2], b[0] - o[2], 0.0)
+            gy = max(o[1] - b[3], b[1] - o[3], 0.0)
+            gap = math.hypot(gx, gy)
+            if gap <= 0.0:
+                s += 60 * _ovl(b, o) + 2 * LW["clear_w"]
+            elif gap < c:
+                s += 2 * LW["clear_w"] * (1.0 - gap / c)
         for o in getattr(self, "_soft", []):
-            s += 1.0 * _ovl(bp, o)
+            s += 1.0 * _ovl(b, o)
         if len(pts):
-            inside = (pts[:, 0] > bp[0]) & (pts[:, 0] < bp[2]) & (pts[:, 1] > bp[1]) & (pts[:, 1] < bp[3])
-            s += 4.0 * float(inside.sum())
+            d = _ink_dist(b, pts)
+            wt = pts[:, 3] if pts.shape[1] > 3 else np.ones(len(pts))
+            s += LW["stroke_in"] * float(wt[d <= 1e-9].sum())
+            band = (d > 1e-9) & (d < c)
+            mine = ctx.get("mine") if ctx is not None else None
+            if mine is not None and len(mine) == len(d) and mine.any():
+                # the label's own target: keep the clearance from its nearest stroke, but do not count how many of its samples
+                # fall in the band (that density made a box's corner beat the middle of its side, so labels drifted diagonally
+                # off their own node toward the next one)
+                tb = band & mine
+                if tb.any():
+                    s += 3.0 * LW["clear_w"] * (1.0 - float(d[tb].min()) / c)
+                band = band & ~mine
+            if band.any():
+                s += LW["clear_w"] * float((wt[band] * (1.0 - d[band] / c)).sum())
         lb = self.label_box
         out = max(0, lb[0] - b[0]) + max(0, b[2] - lb[2]) + max(0, lb[1] - b[1]) + max(0, b[3] - lb[3])
         s += 200 * out
@@ -764,48 +992,117 @@ class Stage:
         for z in (self.panel, self.band):
             if z:
                 s += 80 * _ovl(b, z)
-        if home is not None:
-            s += 1.5 * float(np.linalg.norm(m.get_center()[:2] - home[:2]))
+        tg = ctx.get("tgt") if ctx is not None else None
+        if tg is not None and len(tg):
+            # attachment: distance from the label to its target's ink (in label heights); beyond reach it reads as detached
+            att = _box_dist(b, tg) / h
+            s += LW["anchor"] * att + 25.0 * max(0.0, att - LW["reach"])
+            if home is not None:  # a gentle pull toward the natural spot (a line's midpoint, an angle's bisector)
+                s += 0.15 * LW["anchor"] * float(np.linalg.norm(m.get_center()[:2] - np.asarray(home)[:2])) / h
+        elif home is not None:
+            dist = float(np.linalg.norm(m.get_center()[:2] - np.asarray(home)[:2])) / h
+            s += LW["anchor"] * dist + 10.0 * max(0.0, dist - LW["reach"])
+        if ctx is not None and ctx.get("tgt") is not None and len(ctx["tgt"]) and len(ctx["other"]):
+            # ownership: the label must read as its target's, i.e. sit nearer its target than any other line, arrow or point
+            dt = _box_dist(b, ctx["tgt"])
+            do = _box_dist(b, ctx["other"])
+            if do < dt:
+                s += LW["own"] * (dt - do) / h
         return s
 
     def _candidates(self, m, o):
+        """Candidate centres for a label, built from the target's real geometry: offsets are the measured half-width of the
+        glyph across its line (battery plates, arrow tips, a resistor's zigzag) plus clearance bands in label heights."""
         ref = str(o["for"])
         W = self.W
         tgt = W.objs.get(ref, {})
         t = tgt.get("type")
         cands = []
         side = o.get("side")
+        h = max(min(m.height, m.width), 0.18)
+        c = self.LW["clear"] * h
+        offs = (c, 2 * c, 3.5 * c)
         dirs = [UP, UP + RIGHT, RIGHT, DOWN + RIGHT, DOWN, DOWN + LEFT, LEFT, UP + LEFT]
         named = {"above": UP, "below": DOWN, "left": LEFT, "right": RIGHT, "up": UP, "down": DOWN}
         if side in named:
             dirs = [named[side]] + [d for d in dirs if not np.allclose(d, named[side])]
+
+        def across(a, b, fr):
+            """Candidates both sides of the line a->b at fractions fr, clear of the glyph drawn on it."""
+            d = b - a
+            L = float(np.linalg.norm(d)) + 1e-9
+            u = d / L
+            n = np.array([-u[1], u[0], 0.0])
+            mob = self.mobs.get(ref)
+            sp = self._stroke_samples(mob) if mob is not None else np.zeros((0, 3))
+            out = []
+            for f in fr:
+                p = a + f * d
+                half_u = 0.5 * (abs(u[0]) * m.width + abs(u[1]) * m.height)
+                half_n = 0.5 * (abs(n[0]) * m.width + abs(n[1]) * m.height)
+                for sgn in (1, -1):
+                    ext = 0.0
+                    if len(sp):
+                        rel = sp[:, :2] - p[:2]
+                        along = rel @ u[:2]
+                        acr = rel @ (sgn * n[:2]) + sp[:, 2]
+                        near = np.abs(along) < half_u + c
+                        if near.any():
+                            ext = max(0.0, float(acr[near].max()))
+                    for off in offs:
+                        out.append(_C.at(m, p + sgn * n * (ext + off + half_n)))
+            return out
+
         if "[" in ref:
             cm = self.cell(ref)
             if cm is not None:
                 for d in (UP, DOWN):
-                    cands.append(_C.next_to(cm, d, 0.15 if d is UP else 0.55, m))
+                    for off in offs[:2]:
+                        cands.append(_C.next_to(cm, d, off if d is UP else off + 0.4, m))
             return cands, (cm.get_center() if cm is not None else None)
         if t == "point" or t is None and ref in W.objs:
             p = self.P(ref)
+            r = float(tgt.get("size", 0.08))
             for d in dirs:
-                for buff in (0.12, 0.3):
-                    cands.append(_C.near_point(p, 0.08, d, buff, m))
+                for off in offs:
+                    cands.append(_C.near_point(p, r, d, off, m))
             return cands, p
         if t in ("segment", "vector", "line", "ray") or "-" in ref and t is None or t in GW.TWO_TERMINAL:
             pts = W.ref_points(ref) if t is None else [tgt["from"], tgt.get("to")]
             a = self.P(pts[0])
             b = self.P(pts[1]) if isinstance(pts[1], str) else np.array([*W.to_frame(W.end(ref, self.X, self.vals)), 0.0])
+            lm = self.mobs.get(ref)
+            if t in ("line", "ray") and isinstance(lm, Line):
+                a, b = lm.get_start(), lm.get_end()  # a line/ray is drawn across the stage: label anywhere along what is drawn
+            fr = (0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8)
+            cands = across(a, b, fr)
             if t == "vector":
-                a, b = a, b
-            d = b - a
-            n = np.array([-d[1], d[0], 0.0]) / (np.linalg.norm(d) + 1e-9)
-            for f in (0.5, 0.35, 0.65, 0.85):
-                c = a + f * d
-                for s in (1, -1):
-                    for off in (0.32, 0.55):
-                        mm = _C.at(m, c + s * n * (off + 0.5 * max(m.width * abs(n[0]), m.height * abs(n[1]))))
-                        cands.append(mm)
-            return cands, a + 0.5 * d
+                # past the head, along the arrow (and either side of that): where an arrow's name is often read
+                d = b - a
+                u = d / (np.linalg.norm(d) + 1e-9)
+                n = np.array([-u[1], u[0], 0.0])
+                for dd in (u, (u + n) / math.sqrt(2), (u - n) / math.sqrt(2)):
+                    ext = 0.5 * (abs(dd[0]) * m.width + abs(dd[1]) * m.height)
+                    for off in offs:
+                        cands.append(_C.at(m, b + dd * (off + ext + 0.1)))
+            return cands, a + 0.5 * (b - a)
+        if t == "flow" and self.mobs.get(ref) is not None:
+            mob = self.mobs[ref]
+            path = mob[0] if isinstance(mob, VGroup) and len(mob) and not isinstance(mob, Arrow) else mob
+            for f in (0.5, 0.4, 0.6, 0.3, 0.7):
+                try:
+                    p0, p1 = path.point_from_proportion(max(0, f - 0.03)), path.point_from_proportion(min(1, f + 0.03))
+                except Exception:  # noqa: BLE001
+                    continue
+                mid = path.point_from_proportion(f)
+                du = p1 - p0
+                du = du / (np.linalg.norm(du) + 1e-9)
+                cands += across(mid - du * 0.5, mid + du * 0.5, (0.5,))
+            try:
+                home = path.point_from_proportion(0.5)
+            except Exception:  # noqa: BLE001
+                home = mob.get_center()
+            return cands, home
         if t == "angle":
             A, B, C = (self.P(x) for x in tgt["points"])
             u, v = (A - B) / (np.linalg.norm(A - B) + 1e-9), (C - B) / (np.linalg.norm(C - B) + 1e-9)
@@ -816,16 +1113,18 @@ class Stage:
             for k in range(24):
                 ang = a0 + 2 * math.pi * k / 24
                 d = np.array([math.cos(ang), math.sin(ang), 0.0])
-                for off in (0.25, 0.5, 0.8, 1.2):
-                    ext = 0.5 * (abs(d[0]) * m.width + abs(d[1]) * m.height)
-                    cands.append(_C.at(m, B + d * (r + off + ext)))
-            return cands, B + bis * (r + 0.3 + 0.5 * max(m.width, m.height))
+                ext = 0.5 * (abs(d[0]) * m.width + abs(d[1]) * m.height)
+                for rad in (0.6 * r, r, r + c, r + 2 * c, r + 3.5 * c):
+                    cands.append(_C.at(m, B + d * (rad + ext)))
+            return cands, B + bis * (r + c + 0.5 * max(m.width, m.height))
         if t == "polygon":
             P = [self.P(x) for x in tgt["points"]]
             cen = np.mean(P, axis=0)
             cands.append(_C.at(m, cen))
+            poly = VMobject().set_points_as_corners(P)
             for d in dirs:
-                cands.append(_C.next_to(VMobject().set_points_as_corners(P), d, 0.15, m))
+                for off in offs:
+                    cands.append(_C.next_to(poly, d, off, m))
             return cands, cen
         mob = self.mobs.get(ref) or self.mob(ref)
         if t == "function":
@@ -834,30 +1133,66 @@ class Stage:
                 for f in (0.95, 0.8, 0.6, 0.3, 0.1):
                     p = pp[min(len(pp) - 1, int(f * len(pp)))]
                     for d in (UP + RIGHT, UP + LEFT, DOWN + RIGHT, RIGHT, UP):
-                        cands.append(_C.near_point(p, 0.05, d, 0.15, m))
+                        for off in offs[:2]:
+                            cands.append(_C.near_point(p, 0.05, d, off, m))
                 return cands, pp[int(0.9 * (len(pp) - 1))]
         if mob is not None:
             for d in dirs:
-                cands.append(_C.next_to(mob, d, 0.18, m))
+                for off in offs:
+                    cands.append(_C.next_to(mob, d, off, m))
             if t == "circle":
-                c = mob.get_center()
+                cc = mob.get_center()
                 r = mob.width / 2
                 for a in np.linspace(0, 2 * math.pi, 12, endpoint=False):
-                    cands.append(_C.at(m, c + (r + 0.25 + max(m.width, m.height) / 2) * np.array([math.cos(a), math.sin(a), 0])))
+                    cands.append(_C.at(m, cc + (r + c + max(m.width, m.height) / 2) * np.array([math.cos(a), math.sin(a), 0])))
             return cands, mob.get_center()
         return [_C.at(m, ORIGIN)], None
 
     def _side_pen(self, c, o, home):
+        tgt = self.W.objs.get(str(o.get("for")), {})
+        if tgt.get("type") == "angle" and not o.get("side"):
+            # an angle's label reads as that angle inside its opening; outside it is a fallback
+            try:
+                A, B, C = (self.P(x)[:2] for x in tgt["points"])
+                p = c.get_center()[:2] - B
+                u, v = A - B, C - B
+                cr = lambda a, b: a[0] * b[1] - a[1] * b[0]  # noqa: E731
+                inside = cr(u, p) * cr(u, v) >= 0 and cr(v, p) * cr(v, u) >= 0
+                return 0.0 if inside else 1.5
+            except Exception:  # noqa: BLE001
+                return 0.0
         side = {"above": (0, 1), "below": (0, -1), "left": (-1, 0), "right": (1, 0), "up": (0, 1), "down": (0, -1)}.get(str(o.get("side") or ""))
         if not side or home is None:
             return 0.0
         d = c.get_center()[:2] - np.asarray(home)[:2]
-        return 0.0 if d[0] * side[0] + d[1] * side[1] > 0.05 else 8.0
+        along, perp = d[0] * side[0] + d[1] * side[1], abs(d[0] * side[1] - d[1] * side[0])
+        # 'below' means mostly below: far off to one side and a little down reads as belonging to the neighbour
+        return 0.0 if along > 0.05 and along >= 0.5 * perp else 3.0  # a stated side is a preference; legibility and ownership outrank it
+
+    def _best_spot(self, m, o, ctx=None):
+        cands, home = self._candidates(m, o)
+        ctx = ctx or self._label_ctx(o)
+        scored = [(self._score(c, ctx["boxes"], ctx["pts"], home=home, ctx=ctx) + self._side_pen(c, o, home), i) for i, c in enumerate(cands)]
+        # local search: nudge the best few around by fractions of the clearance band (a tight gap is often just off-grid)
+        h = max(min(m.height, m.width), 0.18)
+        c = self.LW["clear"] * h
+        for s0, i in sorted(scored)[:6]:
+            base = cands[i].get_center()
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+                for step in (0.5 * c, c, 2 * c):
+                    cc = _C.at(m, base + np.array([dx, dy, 0.0]) * step)
+                    cands.append(cc)
+                    scored.append((self._score(cc, ctx["boxes"], ctx["pts"], home=home, ctx=ctx) + self._side_pen(cc, o, home), len(cands) - 1))
+        s, i = min(scored)
+        if _DBG == o.get("id"):
+            for s1, j in sorted(scored)[:6]:
+                print("  cand", round(s1, 2), np.round(cands[j].get_center()[:2], 2))
+        return cands[i], s, home, ctx
 
     def _place(self, m, o):
-        cands, home = self._candidates(m, o)
-        boxes, pts = self._obstacles(exclude=(o["id"],), target=str(o.get("for")))
-        best = min(cands, key=lambda c: self._score(c, boxes, pts, home=home) + self._side_pen(c, o, home))
+        best, bs, home, ctx = self._best_spot(m, o)
+        if _DBG:
+            print("PLACE", o["id"], round(bs, 2), np.round(best.get_center()[:2], 2), "home", None if home is None else np.round(np.asarray(home)[:2], 2))
         m.move_to(best.get_center())
         return m
 
@@ -893,8 +1228,9 @@ class Stage:
         maxw = (z[2] - z[0]) - 0.2
         if m.width > maxw:
             k = maxw / m.width
-            if k * FS["math"] < FS["min"] + 2:
-                k = (FS["min"] + 2) / FS["math"]
+            floor = FS["tex_min"] if isinstance(m, MathTex) else FS["min"]
+            if k * m.font_size < floor:
+                k = floor / m.font_size
             m.scale(k)
         return m
 
@@ -1010,15 +1346,9 @@ class Stage:
             old._sig = sig
             if t == "axes":
                 old.ax = new.ax
-        # labels follow their anchors (text re-rendered only at the end of the motion)
-        for oid in list(self.shown):
-            o = self.W.objs.get(oid)
-            if o and o["type"] == "label" and o.get("for") and oid in self.mobs:
-                lm = self.mobs[oid]
-                anchor = self._anchor_now(o)
-                if anchor is not None and getattr(lm, "_anchor", None) is not None:
-                    lm.shift(anchor - lm._anchor)
-                    lm._anchor = anchor
+            if hasattr(new, "_path_pts"):
+                old._path_pts = new._path_pts
+        # labels follow their anchors through their own updaters (text re-rendered only at the end of the motion)
 
     def _deps(self, o):
         d = o.get("_deps")
@@ -1070,32 +1400,68 @@ class Stage:
         except Exception:  # noqa: BLE001
             return None
 
-    def _declutter_ticks(self):
-        """Tick numbers that another drawn thing now runs through (a unit circle over the y-axis numbers) fade out: a
-        crossed-out number is worse than none."""
-        fades = []
+    def _tick_cover(self):
+        """Axis numbers that a drawn mark (a curve, a unit circle, an arrow and its tip, a dot) runs through or crowds within a
+        clearance band of the number's own height: {axes id: (covered keys, uncovered faded keys)}."""
+        out = {}
         for aid in list(self.shown):
             if self.W.objs.get(aid, {}).get("type") != "axes" or aid not in self.mobs:
                 continue
             o = self.W.objs[aid]
             gone = o.setdefault("_ticks_gone", set())
-            ticks = [m for m in self.mobs[aid].submobjects if getattr(m, "_tick", False) and getattr(m, "_tick") not in gone]
+            ticks = [m for m in self.mobs[aid].submobjects if getattr(m, "_tick", False)]
             if not ticks:
                 continue
             _, pts = self._obstacles(exclude=(aid,))
-            if not len(pts):
-                continue
+            lab = [_box(self.mobs[x]) for x in self.shown if self.W.objs.get(x, {}).get("type") == "label" and x in self.mobs
+                   and not getattr(self.mobs[x], "_tiny", False) and self.mobs[x].get_fill_opacity() > 0.05]
+            hit, free = set(), set()
             for m in ticks:
                 b = _box(m)
-                hit = (pts[:, 0] > b[0] + 0.02) & (pts[:, 0] < b[2] - 0.02) & (pts[:, 1] > b[1] + 0.02) & (pts[:, 1] < b[3] - 0.02)
-                if hit.any():
-                    gone.add(m._tick)  # remembered, so a rebuild of the axes (while vars animate) leaves it out too
+                g = self.LW["tick_clear"] * min(m.height, 0.4)
+                covered = bool(len(pts)) and bool((_ink_dist(b, pts) < g).any())
+                # a label that took (or crowds) the number's place
+                covered = covered or any(_ovl(b, lb) > 0 for lb in lab)
+                if _DBG and covered and m._tick not in gone:
+                    print("TICK", m._tick, "ink" if bool(len(pts)) and bool((_ink_dist(b, pts) < g).any()) else "label")
+                if covered and m._tick not in gone:
+                    hit.add(m._tick)
+                elif not covered and m._tick in gone:
+                    free.add(m._tick)
+            out[aid] = (hit, free)
+        return out
+
+    def _declutter_ticks(self):
+        """Tick numbers that another drawn thing now runs through or crowds (a unit circle over the y-axis numbers, the vy arrow
+        over the '40') fade out: a crossed-out number is worse than none. They stay out while covered (also when the axes are
+        rebuilt as vars animate) and come back once what covered them has moved on (a projectile that flew past)."""
+        fades = []
+        for aid, (hit, free) in self._tick_cover().items():
+            o = self.W.objs[aid]
+            gone = o["_ticks_gone"]
+            for m in self.mobs[aid].submobjects:
+                key = getattr(m, "_tick", None)
+                if key in hit:
+                    gone.add(key)
                     fades.append(m.animate.set_opacity(0))
+                    self.audit["ticks_faded"] += 1
+                elif key in free:
+                    gone.discard(key)
+                    fades.append(m.animate.set_opacity(1))
+                    self.audit["ticks_restored"] += 1
+            if free and not any(getattr(m, "_tick", None) in free for m in self.mobs[aid].submobjects):
+                # rebuilt while those numbers were out: rebuild once more with them back
+                new = self._make(o)
+                if new is not None:
+                    self.mobs[aid].become(new)
+                    self.mobs[aid].ax = new.ax
         if fades:
             self.scene.play(*fades, run_time=0.3)
 
     def _settle_labels(self, run_time=0.45, play=True, skip=()):
-        """Re-place every visible label against everything now on screen (later objects may have landed on earlier labels)."""
+        """Re-place every visible label against everything now on screen (later objects may have landed on earlier labels, or
+        sit nearer a label than its own target). A label only moves when the new spot is clearly better, and never beyond its
+        reach from the target (the score's anchor term), so labels do not wander away from what they name."""
         anims = []
         for oid in list(self.shown):
             o = self.W.objs.get(oid)
@@ -1104,14 +1470,12 @@ class Stage:
             m = self.mobs[oid]
             if getattr(m, "_tiny", False):  # faded with its zero-length arrow; it comes back when the arrow grows
                 continue
-            boxes, pts = self._obstacles(exclude=(oid,), target=str(o["for"]))
-            cur = self._score(m, boxes, pts)
-            if cur < 3:
-                continue
-            cands, home = self._candidates(m, o)
-            best = min(cands, key=lambda c: self._score(c, boxes, pts, home=home))
-            bs = self._score(best, boxes, pts, home=home)
-            if bs < cur - 2 and np.linalg.norm(best.get_center() - m.get_center()) > 0.1:
+            best, bs, home, ctx = self._best_spot(m, o)
+            cur = self._score(m, ctx["boxes"], ctx["pts"], home=home, ctx=ctx) + self._side_pen(m, o, home)
+            h = max(min(m.height, m.width), 0.18)
+            if _DBG:
+                print("SETTLE", oid, round(cur, 2), "->", round(bs, 2), np.round(m.get_center()[:2], 2), np.round(best.get_center()[:2], 2))
+            if bs < cur - 1.0 and np.linalg.norm(best.get_center() - m.get_center()) > 0.25 * h:
                 delta = best.get_center() - m.get_center()
                 anims.append(m.animate.shift(delta))
             # a label that cannot find a clean spot is taken off rather than left on top of something
@@ -1124,19 +1488,64 @@ class Stage:
         return anims
 
     def _anchor_now(self, o):
+        """The live point a label is attached to: the midpoint of its line/arrow/flow, an angle's vertex, a block's centre, a
+        point's position. Read every frame by the label's updater."""
         ref = str(o["for"])
         try:
             if "[" in ref:
                 c = self.cell(ref)
                 return c.get_center() if c is not None else None
-            t = self.W.objs.get(ref, {}).get("type")
-            if t in BLOCKY:
+            tgt = self.W.objs.get(ref, {})
+            t = tgt.get("type")
+            if t in BLOCKY or t in ("circle", "polygon", "group"):
                 return self.mobs[ref].get_center() if ref in self.mobs else None
             if t == "function":
-                return None
+                # the label of a function rides with the drawn end of its curve (a domain [0, t] grows as t animates)
+                pp = getattr(self.mobs.get(ref), "_path_pts", None)
+                return np.array(pp[int(0.9 * (len(pp) - 1))]) if pp else None
+            if t == "flow":
+                mob = self.mobs.get(ref)
+                if mob is None:
+                    return None
+                path = mob[0] if isinstance(mob, VGroup) and len(mob) and not isinstance(mob, Arrow) else mob
+                return path.point_from_proportion(0.5)
+            if t == "angle":
+                return self.P(tgt["points"][1])
+            if t in ("segment", "line", "ray") or t in GW.TWO_TERMINAL:
+                return (self.P(tgt["from"]) + self.P(tgt["to"])) / 2
+            if t == "vector":
+                a = self.P(tgt["from"])
+                b = np.array([*self.W.to_frame(self.W.end(ref, self.X, self.vals)), 0.0])
+                return (a + b) / 2
+            if t is None and "-" in ref:
+                pts = self.W.ref_points(ref)
+                return (self.P(pts[0]) + self.P(pts[-1])) / 2
             return self.pos(ref)
         except Exception:  # noqa: BLE001
             return None
+
+    def _follow(self, oid):
+        """Attach a label to its target with an updater: every frame it moves by however much its anchor moved, whatever moved
+        it (a var animating, a 'move', a rebuilt arrow), so it never drifts off mid-clip."""
+        m = self.mobs.get(oid)
+        o = self.W.objs.get(oid)
+        if m is None or not o or not o.get("for") or getattr(m, "_follows", False):
+            return
+
+        def upd(mm):
+            a = self._anchor_now(o)
+            prev = getattr(mm, "_anchor", None)
+            if a is None:
+                return
+            if prev is not None:
+                d = a - prev
+                if float(np.abs(d).max()) > 1e-6:
+                    mm.shift(d)
+            mm._anchor = a
+
+        m._anchor = self._anchor_now(o)
+        m.add_updater(upd)
+        m._follows = True
 
     def _zero_length(self, ref):
         o = self.W.objs.get(ref) if isinstance(ref, str) else None
@@ -1179,6 +1588,7 @@ class Stage:
                 anims.append(Transform(old, new) if not templ else FadeTransform(old, new))
                 if templ:
                     self.mobs[oid] = new
+                    self._follow(oid)
                 old._anchor = new._anchor
         return anims
 
@@ -1243,18 +1653,14 @@ class Stage:
             for x in list(self.shown):
                 o = self.W.objs.get(x, {})
                 if o.get("type") == "label" and o.get("for") and x in self.mobs and (x in ids or x.endswith(".lbl") and x[:-4] in ids):
-                    m = self.mobs[x]
-                    before = m.get_center().copy()
-                    self._place(m, o)
-                    if getattr(m, "_anchor", None) is not None:
-                        m._anchor = m._anchor
-                    del before
+                    self._place(self.mobs[x], o)
+                    self._follow(x)
             new_ids = {x for x in ids} | {f"{x}.lbl" for x in ids}
             if any(self.W.objs.get(x, {}).get("type") != "label" for x in ids):
                 # older labels that the new objects now cover move out of the way in the same animation
                 anims += self._settle_labels(play=False, skip=new_ids)
             if anims:
-                from manim import LaggedStart, AnimationGroup
+                from manim import LaggedStart
                 flat = []
                 for an in anims:
                     flat += an if isinstance(an, list) else [an]
@@ -1572,10 +1978,101 @@ class Stage:
                 self.do(a, rt)
             self._settle_labels()
             self._declutter_ticks()
+            self._audit()
             used = sc.renderer.time - t0
             if dur - used > 0.05:
                 sc.wait(dur - used)
         sc.wait(0.6)
+        self._write_report()
+
+    # ── layout outcome (logged per render; the web app learns from recurring patterns) ──
+    def _audit(self):
+        """After a beat settles: measure every visible label against its target and the ink around it, and the smallest text on
+        screen. Keeps the worst value per label over the clip."""
+        A = self.audit
+        for oid in list(self.shown):
+            o = self.W.objs.get(oid)
+            m = self.mobs.get(oid)
+            if not o or o["type"] != "label" or not o.get("for") or m is None or getattr(m, "_tiny", False) or m.get_fill_opacity() < 0.05:
+                continue
+            try:
+                ctx = self._label_ctx(o)
+                _, home = self._candidates(m, o)
+            except Exception:  # noqa: BLE001
+                continue
+            h = max(min(m.height, m.width), 0.18)
+            b = _box(m)
+            gap = _box_dist(b, ctx["pts"]) / h if len(ctx["pts"]) else 9.0
+            if ctx.get("tgt") is not None and len(ctx["tgt"]):
+                far = _box_dist(b, ctx["tgt"]) / h
+            else:
+                far = float(np.linalg.norm(m.get_center()[:2] - np.asarray(home)[:2])) / h if home is not None else 0.0
+            dt = _box_dist(b, ctx["tgt"]) if ctx.get("tgt") is not None and len(ctx["tgt"]) else 0.0
+            do = _box_dist(b, ctx["other"]) if len(ctx["other"]) else 9.0
+            ovl = sum(_ovl(b, x) for x in ctx["boxes"]) / (h * h)
+            r = A["labels"].setdefault(oid, {"gap": 9.0, "far": 0.0, "own_margin": 9.0, "overlap": 0.0})
+            r["gap"] = round(min(r["gap"], gap), 3)
+            r["far"] = round(max(r["far"], far), 3)
+            r["own_margin"] = round(min(r["own_margin"], (do - dt) / h), 3)
+            r["overlap"] = round(max(r["overlap"], ovl), 3)
+        mins = []
+        stack = list(self.scene.mobjects) + [self.mobs[x] for x in self.shown if x in self.mobs] + \
+            [x for x in (self.title_mob, self.eq_mob, self.eq_note, self.note_mob) if x is not None]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, (Text, MathTex)) and x.get_fill_opacity() > 0.05 and x.width > 1e-3:
+                mins.append(text_px(x))
+                continue
+            stack.extend(x.submobjects)
+        if mins:
+            A["min_text_px"] = round(min(mins + ([A["min_text_px"]] if A["min_text_px"] is not None else [])), 2)
+
+    def layout_report(self) -> dict:
+        """The render's layout outcome: per-label clearance, distance from the anchor and ownership margin (all in label
+        heights), the smallest text in phone px, tick numbers faded/restored, labels culled, and the failure patterns they add up
+        to. Patterns are general (never scene content) so recurring ones can tune the solver and the scene writer."""
+        A, LW = self.audit, self.LW
+        pats: dict = {}
+        for oid, r in A["labels"].items():
+            if r["gap"] < 0.12:
+                pats["label_touching"] = pats.get("label_touching", 0) + 1
+            if r["far"] > LW["reach"]:
+                pats["label_far"] = pats.get("label_far", 0) + 1
+            if r["own_margin"] < -0.05:
+                pats["label_ambiguous"] = pats.get("label_ambiguous", 0) + 1
+            if r["overlap"] > 0.05:
+                pats["label_overlap"] = pats.get("label_overlap", 0) + 1
+        if A["min_text_px"] is not None and A["min_text_px"] < LW["min_xh_px"] - 0.25:
+            pats["text_small"] = 1
+        if getattr(self, "culled", None):
+            pats["label_culled"] = len(self.culled)
+        try:
+            X, vals = self.X, self.vals
+            ys = {oid: self.W.pos(oid, X, vals)[1] for oid, o in self.W.objs.items() if o.get("type") == "icon"}
+            kinds = {oid: str(self.W.objs[oid].get("icon", self.W.objs[oid].get("kind"))) for oid in ys}
+            if any(ys[s_] < ys[g] for s_ in ys for g in ys if kinds[s_] in GW.SKY_ICONS and kinds[g] in GW.GROUND_ICONS):
+                pats["sky_below_ground"] = 1
+        except Exception:  # noqa: BLE001
+            pass
+        worst = {}
+        if A["labels"]:
+            worst = {"gap": min(r["gap"] for r in A["labels"].values()), "far": max(r["far"] for r in A["labels"].values()),
+                     "own_margin": min(r["own_margin"] for r in A["labels"].values()), "overlap": max(r["overlap"] for r in A["labels"].values())}
+        return {"v": 1, "aspect": "9:16" if PORTRAIT else "16:9", "labels": len(A["labels"]), "worst": worst, "min_text_px": A["min_text_px"],
+                "ticks_faded": A["ticks_faded"], "ticks_restored": A["ticks_restored"], "culled": list(getattr(self, "culled", []))[:8],
+                "patterns": pats, "weights": {k: round(v, 4) for k, v in LW.items()}, "per_label": {k: v for k, v in list(A["labels"].items())[:16]}}
+
+    def _write_report(self):
+        import json
+        import os
+        path = os.environ.get("GM_LAYOUT_PATH")
+        if not path:
+            return
+        try:
+            with open(path, "w") as f:
+                json.dump(self.layout_report(), f)
+        except Exception as exc:  # noqa: BLE001
+            print("layout report failed:", exc)
 
 
 BLOCKY = {"box", "icon", "cells", "axes", "text"}

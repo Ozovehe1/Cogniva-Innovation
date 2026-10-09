@@ -34,6 +34,8 @@ ON_AXES = {"function", "area"}
 PANEL = {"equation", "readout"}
 OTHER = {"label", "pointer", "flow", "group"}
 TYPES = GEOM | BLOCKS | ON_AXES | PANEL | OTHER
+SKY_ICONS = {"sun", "cloud", "rain", "bolt", "snowflake"}
+GROUND_ICONS = {"sea", "lake", "mountain", "tree", "plant", "house", "factory", "person"}
 TWO_TERMINAL = {"battery", "resistor", "bulb", "switch", "meter", "capacitor", "spring"}
 ICONS = {"sun", "cloud", "rain", "drop", "mountain", "sea", "lake", "leaf", "tree", "plant", "cell", "ball", "house", "factory",
          "person", "earth", "flask", "magnet", "bolt", "fire", "snowflake", "gear", "eye", "lamp", "atom", "molecule", "arrow"}
@@ -460,6 +462,18 @@ def wrap(text: str, width_chars: int = 16, max_lines: int = 3) -> str:
 
 
 BOX_FS = 28
+BOX_TEX_FS = None  # set by gm_stage from the frame (the TeX legibility floor); None = BOX_FS + 4
+
+# Font metrics (lowercase x-height per font_size unit, frame units) of the stage fonts, for code that cannot load Manim.
+XH_PER_FS = {"text": 0.3461 / 48, "tex": 0.2257 / 48}
+
+
+def legible_font_size(aspect: str = "16:9", kind: str = "text", min_xh_px: float = 6.0, pixel_w: float | None = None) -> float:
+    """The phone-legible floor for a font_size: the size whose x-height reaches min_xh_px CSS px when the clip fills a ~390 px wide
+    phone (a lower-resolution render is limited by its own pixels). Same rule as gm_stage.legible_fs, without Manim."""
+    fw = 8.0 * 9 / 16 if aspect == "9:16" else 8.0 * 16 / 9
+    ppu = min(390.0, float(pixel_w or 1e9)) / fw
+    return min_xh_px / ppu / XH_PER_FS["tex" if kind == "tex" else "text"]
 CELL_FS = 30
 
 
@@ -467,7 +481,7 @@ def block_size(o: dict) -> tuple[float, float]:
     t = o["type"]
     if t == "box":
         if o.get("tex"):
-            w, h = max((tex_size(str(t), BOX_FS + 4) for t in _as_list(o["tex"])), key=lambda x: x[0])
+            w, h = max((tex_size(str(t), BOX_TEX_FS or BOX_FS + 4) for t in _as_list(o["tex"])), key=lambda x: x[0])
         else:
             w, h = max((text_size(wrap(str(t), int(o.get("wrap", 16))), BOX_FS) for t in _as_list(o.get("text", ""))), key=lambda x: x[0])
         w, h = w + 0.5, h + 0.35
@@ -528,6 +542,8 @@ class World:
         self.order: list[str] = []
         self._index()
         self.cons = [c for c in (self.ir.get("constraints") or []) if isinstance(c, list) and c]
+        self._auto_cons = self._strata()
+        self.cons += self._auto_cons
         self._validate()
         self._unknowns()
         self.X = None
@@ -590,6 +606,31 @@ class World:
                             o[key] = [self.vars.eval(x, v0) for x in _as_list(o[key])][: (3 if key in ("x", "y") else 2)]
                         except Exception as exc:  # noqa: BLE001
                             self.problems.append(f"axes {oid}: {key} {o[key]!r}: {exc}")
+
+    def _strata(self) -> list[list]:
+        """Sky things (sun, cloud, rain, lightning, snow) sit above ground things (sea, lake, land, plants, buildings, people): an
+        implicit soft 'above' for every such pair the scene does not place vertically itself (an explicit relation between the
+        two always wins). Returned separately so soft_report does not blame the author for the engine's own relation."""
+        sky, ground = [], []
+        for oid, o in self.objs.items():
+            if o.get("type") != "icon":
+                continue
+            k = str(o.get("icon", o.get("kind")) or "")
+            if k in SKY_ICONS:
+                sky.append(oid)
+            elif k in GROUND_ICONS:
+                ground.append(oid)
+        if not sky or not ground:
+            return []
+        vert = set()
+        for c in self.cons:
+            if c and c[0] in ("above", "below", "column", "aligned", "same_y") and len(c) > 2:
+                flat = [x for x in c[1:] if isinstance(x, str)] + [y for x in c[1:] if isinstance(x, list) for y in x if isinstance(y, str)]
+                for x in flat:
+                    for y in flat:
+                        if x != y:
+                            vert.add((x, y))
+        return [["above", s_, g, 0.2] for s_ in sky for g in ground if (s_, g) not in vert]
 
     def ref_points(self, ref: str) -> list[str]:
         """'A-B' -> [A, B]; a segment/vector/ray/line id -> its two points; a point/block id -> [id]."""
@@ -1200,7 +1241,7 @@ class World:
             try:
                 r = self._res(c, X, vals)
             except Exception as exc:  # noqa: BLE001
-                out.append(f"constraint {c!r} cannot be evaluated ({type(exc).__name__}: {str(exc)[:80]})")
+                out.append(f"constraint {c!r} cannot be evaluated ({type(exc).__name__}: {str(exc)[:80]}){_eval_hint(c, exc)}")
                 continue
             m = max([abs(x) for x in r] or [0])
             if m > tol:
@@ -1221,8 +1262,9 @@ class World:
 
     def soft_report(self, X, vals, tol=0.05) -> list[str]:
         out = []
+        auto = [id(c) for c in getattr(self, "_auto_cons", [])]
         for c in self.cons:
-            if c[0] in SOFT:
+            if c[0] in SOFT and id(c) not in auto:
                 try:
                     m = max([abs(x) for x in self._res(c, X, vals)] or [0])
                 except Exception:  # noqa: BLE001
@@ -1313,7 +1355,7 @@ class World:
                     if not self.eval_check_expr(c[1], X, vals):
                         out.append(f"check {c!r} is false")
             except Exception as exc:  # noqa: BLE001
-                out.append(f"check {c!r} cannot be evaluated: {type(exc).__name__}: {str(exc)[:100]}")
+                out.append(f"check {c!r} cannot be evaluated: {type(exc).__name__}: {str(exc)[:100]}{_eval_hint(c, exc)}")
         return out
 
     def visibility_report(self) -> list[str]:
@@ -1973,3 +2015,16 @@ def fmt_template(s: str, vals: dict) -> str:
 def verify_ir(ir: dict, aspect: str = "16:9", stage_box=None) -> dict:
     w = World(ir, aspect)
     return w.build(stage_box or [-4.5, -2.7, 4.5, 2.7])
+
+
+def _eval_hint(c, exc) -> str:
+    """A repair hint for the scene writer when a check/constraint used a getter name as a value (a bare `x` / `y`, which
+    are the coordinate getters x(P) / y(P), or a point name inside an expression). Seen on free-tier models writing
+    ['eq', 'y', 'sin(theta)'] for 'the point's height is sin theta' (the clip then fell back to free-form code)."""
+    txt = repr(c)
+    msg = str(exc)
+    if "function" in msg or re.search(r"'(x|y)'\s*(uses|is)", msg) or re.search(r"\[\s*'eq'\s*,\s*'(x|y)'", txt):
+        return " - hint: x and y are getters; write x(P) / y(P) for a point's coordinates, and use declared vars by name"
+    if "undefined name" in msg:
+        return " - hint: expressions may use declared vars and getters such as x(P), y(P), length(A,B), angle(A,B,C); declare a var for anything else"
+    return ""

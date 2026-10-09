@@ -74,6 +74,18 @@ async function runOne(c: RegressionCase, admin: SupabaseClient, studentId: strin
       const state = clipState(job)
       return { pass: exp.blocked ? clipBlocked(job.verdict) && state === 'failed' : state === 'done', detail: `verdict ${JSON.stringify(inp.verdict).slice(0, 100)} → learner sees "${state}"` }
     }
+    case 'scene': {
+      const base = process.env.MODAL_RENDER_URL?.replace(/\/+$/, '')
+      if (!base) return { pass: false, detail: 'render service not configured (MODAL_RENDER_URL)' }
+      const res = await fetch(`${base}/layout_check`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN ?? '' },
+        body: JSON.stringify({ code: String(inp.code ?? ''), aspect: inp.aspect === '9:16' ? '9:16' : '16:9' }), signal: AbortSignal.timeout(240_000),
+      })
+      if (!res.ok) return { pass: false, detail: `layout_check answered ${res.status}` }
+      const r = await res.json() as { ok: boolean; error?: string | null; layout?: { patterns?: Record<string, number> } }
+      const back = ((exp.noPatterns as string[] | undefined) ?? []).filter(p => Number(r.layout?.patterns?.[p] ?? 0) > 0)
+      return { pass: r.ok && back.length === 0, detail: r.ok ? (back.length ? `still shows ${back.join(', ')}` : `clean of ${((exp.noPatterns as string[] | undefined) ?? []).join(', ') || 'its reported patterns'}; now ${Object.keys(r.layout?.patterns ?? {}).join(', ') || 'no patterns'}`) : `does not render: ${(r.error ?? '').slice(-160)}` }
+    }
     case 'artefact': {
       const r = recheck((inp.artefact ?? {}) as Record<string, unknown>, String(inp.problem ?? ''))
       return { pass: exp.guardFlags === false ? !r.flagged : r.flagged, detail: r.flagged ? r.issues.slice(0, 3).join(' | ').slice(0, 200) : 'guard does not catch this yet (add a check, then this case passes)' }

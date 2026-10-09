@@ -1,0 +1,107 @@
+{
+ "title": "Ohm's Law: V equals I R",
+ "vars": {
+  "R": 2,
+  "V": 6,
+  "I": "V/R"
+ },
+ "objects": [
+  {
+   "type": "circuit",
+   "id": "circ",
+   "width": 5,
+   "height": 3,
+   "parts": [
+    {
+     "type": "battery",
+     "side": "left",
+     "label": "{V}V"
+    },
+    {
+     "type": "resistor",
+     "side": "bottom",
+     "label": "{R}Ω"
+    }
+   ]
+  },
+  {
+   "type": "readout",
+   "id": "ro",
+   "text": "I = {I:.1f} A"
+  }
+ ],
+ "constraints": [
+  [
+   "above",
+   "ro",
+   "circ"
+  ]
+ ],
+ "checks": [
+  [
+   "eq",
+   "I",
+   "V/R"
+  ],
+  [
+   "eq",
+   "R",
+   2
+  ]
+ ],
+ "beats": [
+  {
+   "say": "A circuit with a 6 volt battery and a 2 ohm resistor.",
+   "do": [
+    [
+     "show",
+     "circ",
+     "ro"
+    ],
+    [
+     "flow",
+     "circ.loop"
+    ]
+   ]
+  },
+  {
+   "say": "Ohm's law gives the current as 3 amps.",
+   "do": [
+    [
+     "highlight",
+     "ro"
+    ]
+   ]
+  },
+  {
+   "say": "If we double the voltage to 12 volts...",
+   "do": [
+    [
+     "animate",
+     "V",
+     12,
+     {
+      "run": 2,
+      "rate": "smooth"
+     }
+    ],
+    [
+     "flow",
+     "circ.loop",
+     {
+      "n": 10
+     }
+    ]
+   ]
+  },
+  {
+   "say": "The current doubles to 6 amps.",
+   "do": [
+    [
+     "highlight",
+     "ro"
+    ]
+   ]
+  }
+ ]
+}

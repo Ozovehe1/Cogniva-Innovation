@@ -480,10 +480,12 @@ def _kw_hint(fn_name: str, kw: str) -> str:
 
 
 # ───────────────────────── layout check ─────────────────────────
-def min_font_size(aspect: str) -> float:
-    # A 16:9 clip on a ~390 pt wide phone: 1 unit ~ 27 pt, so font_size 28 gives ~10 pt glyphs (the floor we accept). A
-    # 9:16 clip fills the phone: 1 unit ~ 87 pt, so font_size 16 is already ~18 pt.
-    return 16.0 if aspect == "9:16" else 28.0
+def min_font_size(aspect: str, kind: str = "text") -> float:
+    # The phone-legible floor computed from the frame (gm_world.legible_font_size, the same rule the scene engine sizes text
+    # with): a 16:9 clip on a ~390 px wide phone needs ~font_size 30 for Text, a 9:16 clip that fills the phone far less. TeX
+    # glyphs are ~2/3 the height of Text glyphs at one font_size, so MathTex has its own (higher) floor.
+    import gm_world
+    return gm_world.legible_font_size(aspect, kind)
 
 
 def _area(b):
@@ -505,6 +507,7 @@ def layout_issues(probe: dict, aspect: str) -> list[dict]:
     fw, fh = probe.get("frame", [14.22, 8.0])
     fx, fy = fw / 2, fh / 2
     minfs = min_font_size(aspect)
+    minfs_tex = min_font_size(aspect, "tex")
     seen: dict = {}
 
     def add(key, sev, msg, t):
@@ -521,9 +524,10 @@ def layout_issues(probe: dict, aspect: str) -> list[dict]:
                 add(("off", x["label"]), "high", f'text "{x["label"]}" sticks out of the frame by {out:.2f} units at t={t}s', t)
             if x["kind"] in ("Text", "MarkupText", "Paragraph") and re.search(r"\$|\\[a-zA-Z]+|\^\{|_\{", x["label"]):
                 add(("rawtex", x["label"]), "high", f'Text "{x["label"]}" shows raw LaTeX ($, \\cmd): Text does not render maths; use MathTex / math_tex for it', t)
-            if x.get("font_size") and x["font_size"] < minfs - 0.5 and _area(b) > 0:
-                add(("small", x["label"]), "high" if x["font_size"] < minfs * 0.8 else "medium",
-                    f'text "{x["label"]}" is font_size {x["font_size"]:.0f}, below the phone-legible {minfs:.0f} (t={t}s)', t)
+            mf = minfs_tex if x["kind"] in ("MathTex", "SingleStringMathTex", "Tex") else minfs
+            if x.get("font_size") and x["font_size"] < mf - 0.5 and _area(b) > 0:
+                add(("small", x["label"]), "high" if x["font_size"] < mf * 0.8 else "medium",
+                    f'text "{x["label"]}" is font_size {x["font_size"]:.0f}, below the phone-legible {mf:.0f} (t={t}s)', t)
         for i in range(len(texts)):
             for j in range(i + 1, len(texts)):
                 a, b = texts[i]["bbox"], texts[j]["bbox"]
@@ -803,7 +807,8 @@ def render_local(code: str, quality: str = "l", aspect: str = "16:9", want_frame
         os.setsid()
 
     env = {k: v for k, v in os.environ.items() if not re.search(r"KEY|TOKEN|SECRET|PASSWORD", k)}
-    env.update(FF_PROBE_PATH=probe_path, PEN_EXPORT_PATH=pen_path, PYTHONPATH=kit_dir or _HERE, MPLBACKEND="Agg")
+    layout_path = os.path.join(wd, "layout.json")
+    env.update(FF_PROBE_PATH=probe_path, PEN_EXPORT_PATH=pen_path, GM_LAYOUT_PATH=layout_path, PYTHONPATH=kit_dir or _HERE, MPLBACKEND="Agg")
     out: dict = {"ok": False}
     try:
         proc = subprocess.run(cmd, cwd=wd, capture_output=True, text=True, timeout=timeout_s, env=env, preexec_fn=limits)
@@ -818,6 +823,13 @@ def render_local(code: str, quality: str = "l", aspect: str = "16:9", want_frame
                 probe = json.load(f)
         except Exception:  # noqa: BLE001
             probe = None
+    layout = None
+    if os.path.exists(layout_path):  # the scene engine's layout outcome (gm_stage.Stage.layout_report); free-form code writes none
+        try:
+            with open(layout_path) as f:
+                layout = json.load(f)
+        except Exception:  # noqa: BLE001
+            layout = None
     files = [p for p in sorted(glob.glob(os.path.join(wd, "media", "videos", "**", "*.mp4"), recursive=True)) if "partial_movie_files" not in p]
     if proc.returncode != 0 or not files:
         shutil.rmtree(wd, ignore_errors=True)
@@ -829,7 +841,7 @@ def render_local(code: str, quality: str = "l", aspect: str = "16:9", want_frame
         dur = float(p.stdout.strip() or 0)
     except Exception:  # noqa: BLE001
         pass
-    out = {"ok": True, "probe": probe, "duration": round(dur, 2)}
+    out = {"ok": True, "probe": probe, "duration": round(dur, 2), "layout": layout}
     if want_frames:
         frames = []
         for i, ft in enumerate(frame_times(probe, dur)):

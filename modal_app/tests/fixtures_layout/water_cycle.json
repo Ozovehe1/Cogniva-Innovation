@@ -1,0 +1,170 @@
+{
+ "title": "The Water Cycle",
+ "vars": {
+  "stage": 0
+ },
+ "objects": [
+  {
+   "type": "icon",
+   "id": "sun",
+   "icon": "sun",
+   "size": 1.0,
+   "color": "warm"
+  },
+  {
+   "type": "icon",
+   "id": "sea",
+   "icon": "sea",
+   "size": 1.2,
+   "color": "water"
+  },
+  {
+   "type": "icon",
+   "id": "cloud",
+   "icon": "cloud",
+   "size": 1.2,
+   "color": "muted"
+  },
+  {
+   "type": "icon",
+   "id": "mountain",
+   "icon": "mountain",
+   "size": 1.2,
+   "color": "muted"
+  },
+  {
+   "type": "flow",
+   "id": "f_evap",
+   "from": "sea",
+   "to": "cloud",
+   "label": "Evaporation",
+   "bend": -0.4
+  },
+  {
+   "type": "flow",
+   "id": "f_precip",
+   "from": "cloud",
+   "to": "mountain",
+   "label": "Precipitation",
+   "bend": 0.2
+  },
+  {
+   "type": "flow",
+   "id": "f_runoff",
+   "from": "mountain",
+   "to": "sea",
+   "label": "Runoff",
+   "bend": 0.4
+  }
+ ],
+ "constraints": [
+  [
+   "left_of",
+   "sea",
+   "mountain",
+   3.0
+  ],
+  [
+   "below",
+   "sun",
+   "cloud",
+   1.5
+  ],
+  [
+   "left_of",
+   "sun",
+   "mountain",
+   1.0
+  ],
+  [
+   "above",
+   "cloud",
+   "sea",
+   2.0
+  ]
+ ],
+ "checks": [
+  [
+   "true",
+   "stage >= 0"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "The sun heats the sea, causing water to evaporate.",
+   "do": [
+    [
+     "show",
+     "sun",
+     "sea"
+    ],
+    [
+     "show",
+     "f_evap"
+    ],
+    [
+     "flow",
+     "f_evap",
+     {
+      "color": "accent"
+     }
+    ]
+   ]
+  },
+  {
+   "say": "Rising water vapour cools and condenses into clouds.",
+   "do": [
+    [
+     "show",
+     "cloud"
+    ],
+    [
+     "highlight",
+     "cloud"
+    ]
+   ]
+  },
+  {
+   "say": "Water falls from the clouds as precipitation over the land.",
+   "do": [
+    [
+     "show",
+     "mountain"
+    ],
+    [
+     "show",
+     "f_precip"
+    ],
+    [
+     "flow",
+     "f_precip",
+     {
+      "color": "water"
+     }
+    ]
+   ]
+  },
+  {
+   "say": "Water flows downhill as runoff, returning to the sea.",
+   "do": [
+    [
+     "show",
+     "f_runoff"
+    ],
+    [
+     "flow",
+     "f_runoff",
+     {
+      "color": "water"
+     }
+    ],
+    [
+     "set",
+     {
+      "stage": 1
+     }
+    ]
+   ]
+  }
+ ]
+}

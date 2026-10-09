@@ -3,6 +3,7 @@ import { manimContext } from './playbook/retrieve'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { MANIM_BUCKET, publicClipUrl } from './supabase/admin'
 import { MANIM_SCENE_NAME, fixManimCode, vetManimCode } from './lesson-ai'
+import { layoutTuning } from './correctness/layout-learning'
 
 export interface ManimJob {
   id: string
@@ -161,6 +162,8 @@ export async function dispatchFreeform(admin: SupabaseClient, job: Pick<ManimJob
   ])
   if (signErr || !signed) return { ok: false as const, error: `Could not create an upload URL: ${signErr?.message ?? 'unknown error'}` }
   await admin.from('manim_jobs').update({ status: 'rendering', error: null, attempts: attempt, video_path: path }).eq('id', job.id)
+  // What the engine has learned from recurring layout failures: bounded solver weights + avoid-notes for the scene writer.
+  const tuning = await layoutTuning(admin).catch(() => null)
   try {
     const res = await fetch(`${process.env.MODAL_RENDER_URL!.replace(/\/+$/, '')}/freeform`, {
       method: 'POST',
@@ -168,7 +171,7 @@ export async function dispatchFreeform(admin: SupabaseClient, job: Pick<ManimJob
       body: JSON.stringify({
         job_id: job.id, description: job.prompt.slice(0, 4000), context: context.slice(0, 3000), narration: null, aspect,
         upload_url: signed.signedUrl, paths_upload_url: penSigned?.signedUrl ?? null, report_upload_url: repSigned?.signedUrl ?? null,
-        ff_report_upload_url: ffSigned?.signedUrl ?? null,
+        ff_report_upload_url: ffSigned?.signedUrl ?? null, tuning,
       }),
       signal: AbortSignal.timeout(20_000),
     })

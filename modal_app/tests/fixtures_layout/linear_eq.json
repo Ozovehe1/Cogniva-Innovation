@@ -1,0 +1,126 @@
+{
+ "title": "Solving 3(y-5) = 12",
+ "vars": {
+  "step": 0,
+  "y": 9
+ },
+ "objects": [
+  {
+   "type": "balance",
+   "id": "bal",
+   "left": [
+    "3*(y-5)",
+    "y-5",
+    "y"
+   ],
+   "right": [
+    "12",
+    "4",
+    "9"
+   ],
+   "tilt": 0
+  },
+  {
+   "type": "equation",
+   "id": "eq",
+   "lines": [
+    {
+     "sym": "3*(y-5) = 12"
+    },
+    {
+     "sym": "y-5 = 4",
+     "note": "divide both sides by 3"
+    },
+    {
+     "sym": "y = 9",
+     "note": "add 5 to both sides"
+    }
+   ],
+   "chain": "equiv"
+  }
+ ],
+ "constraints": [
+  [
+   "column",
+   [
+    "bal",
+    "eq"
+   ],
+   0.4
+  ]
+ ],
+ "checks": [
+  [
+   "eq",
+   "3*(9-5)",
+   "12"
+  ],
+  [
+   "eq",
+   "9",
+   "9"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "We start with the equation three times y minus five equals twelve on the balance.",
+   "do": [
+    [
+     "show",
+     "bal",
+     "eq"
+    ],
+    [
+     "equation",
+     "eq",
+     0
+    ]
+   ]
+  },
+  {
+   "say": "Divide both sides by three to simplify the equation.",
+   "do": [
+    [
+     "set",
+     {
+      "step": 1
+     }
+    ],
+    [
+     "equation",
+     "eq",
+     1
+    ]
+   ]
+  },
+  {
+   "say": "Next, add five to both sides to isolate y.",
+   "do": [
+    [
+     "set",
+     {
+      "step": 2
+     }
+    ],
+    [
+     "equation",
+     "eq",
+     2
+    ]
+   ]
+  },
+  {
+   "say": "We find the final solution: y equals nine.",
+   "do": [
+    [
+     "highlight",
+     "bal"
+    ],
+    [
+     "highlight",
+     "eq"
+    ]
+   ]
+  }
+ ]
+}
