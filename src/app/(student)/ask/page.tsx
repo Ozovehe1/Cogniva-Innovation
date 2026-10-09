@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { TutorPresence } from '@/components/genie/tutor-presence'
 import { redirect } from 'next/navigation'
 import { getSessionProfile } from '@/lib/auth'
 import { AgentChat, type ChatMessage } from '@/components/agent/chat'
@@ -34,6 +35,7 @@ export default async function AskPage({ searchParams }: { searchParams: Promise<
         </div>
         {(sessionId || prompt) && <Link href="/ask" className="text-[13px] font-medium text-accent">New chat</Link>}
       </div>
+      <TutorPresence className="mb-1 rounded-[14px] border border-line bg-surface py-1.5 pl-2 pr-1.5 shadow-[var(--shadow-card)]" />
       {(sessions ?? []).length > 0 && !prompt && (
         <nav aria-label="Recent chats" className="-mx-4 mb-2 flex gap-2 overflow-x-auto px-4 py-2 sm:mx-0 sm:px-0">
           {(sessions ?? []).map(s => (

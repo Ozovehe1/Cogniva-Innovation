@@ -5,6 +5,8 @@ import { RichText } from '@/components/rich-text'
 import { SafetyPause } from '@/components/safety-pause'
 import { cx } from '@/components/ui'
 import { AgentBlock } from './blocks'
+import { genie } from '@/components/genie/presence'
+import { syntheticMouth } from '@/components/genie/lipsync'
 import type { Block, ChatEvent } from '@/lib/agent/types'
 
 export interface ChatMessage { role: 'user' | 'assistant'; content: string; blocks?: Block[]; tools?: { name: string; label: string; state: string }[]; error?: string | null }
@@ -54,6 +56,19 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
   const endRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const sentInitial = useRef(false)
+
+  // The tutor character: thinking until the answer starts, "talking" while it streams, listening while the learner types.
+  const last = messages[messages.length - 1]
+  const streaming = busy && last?.role === 'assistant' && !!last.content
+  const [typing, setTyping] = useState(false)
+  useEffect(() => { genie.set('thinking', busy && !streaming, 'chat') }, [busy, streaming])
+  useEffect(() => { genie.set('listening', typing || input.trim().length > 0, 'chat') }, [typing, input])
+  const streamingRef = useRef(false)
+  streamingRef.current = streaming
+  useEffect(() => {
+    const off = genie.addSpeaker(() => (streamingRef.current ? syntheticMouth() * 0.8 : null))
+    return () => { off(); genie.set('thinking', false, 'chat'); genie.set('listening', false, 'chat') }
+  }, [])
 
   const scroll = useCallback(() => requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })), [])
 
@@ -155,6 +170,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
           {messages.length > 0 && <button type="button" onClick={reset} aria-label="New chat" className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-line bg-surface text-muted hover:text-ink"><Plus className="h-4 w-4" /></button>}
           <div className="flex min-w-0 flex-1 items-end rounded-[22px] border border-line bg-surface pl-4 pr-1.5 shadow-[var(--shadow-card)] focus-within:border-accent focus-within:ring-3 focus-within:ring-accent/15">
             <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} rows={1} maxLength={2000}
+              onFocus={() => setTyping(true)} onBlur={() => setTyping(false)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); void send(input) } }}
               placeholder={lessonId ? 'Ask about this lesson…' : 'Ask GeniusMap…'} aria-label="Message"
               className="max-h-36 min-h-11 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug text-ink placeholder:text-faint focus:outline-none" />

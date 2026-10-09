@@ -31,6 +31,8 @@ export async function updateSession(request: NextRequest) {
     path === '/api/tts/warm' ||
     // Whiteboard assets (the 3D hand model and its fallback sprite).
     path.startsWith('/whiteboard/') ||
+    // Tutor character (Rive file and its self-hosted runtime).
+    path.startsWith('/genie/') ||
     // Called by the Modal render service; authenticated with X-Render-Token instead of a session.
     path === '/api/manim/callback' ||
     // Lesson video recorder (Modal): the callback uses X-Render-Token, the render page a signed, expiring job token.

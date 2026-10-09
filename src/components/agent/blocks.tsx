@@ -2,13 +2,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { ArrowRight, Check, ExternalLink, Pause, Play, RotateCcw, Volume2, X } from 'lucide-react'
+import { ArrowRight, Check, ExternalLink, ImageOff, Pause, Play, RotateCcw, Volume2, X } from 'lucide-react'
 import { WhiteboardPlayer } from '@/components/whiteboard'
 import { RichText } from '@/components/rich-text'
-import { buttonClass, cx, Spinner } from '@/components/ui'
+import { buttonClass, cx, Skeleton, Spinner } from '@/components/ui'
 import { compileExpr } from '@/lib/lesson-schema'
 import type { Block } from '@/lib/agent/types'
 import type { SimSpec } from '@/lib/agent/visual'
+import type { Credit } from '@/lib/illustrations/types'
+import { genie } from '@/components/genie/presence'
+import { speakerForAudio } from '@/components/genie/lipsync'
 import { ConfirmBlock } from './confirm'
 
 // JSXGraph (~1 MB) loads only when an interactive figure is on screen.
@@ -24,7 +27,7 @@ const label = 'text-[11px] font-medium uppercase tracking-[0.08em] text-muted'
 export function AgentBlock({ block }: { block: Block }) {
   switch (block.kind) {
     case 'board': return <BoardBlock block={block} />
-    case 'svg': return <SvgBlock svg={block.svg} alt={block.alt} />
+    case 'svg': return <SvgBlock svg={block.svg} alt={block.alt} credit={block.credit} url={block.url} />
     case 'sim': return <SimBlock spec={block.spec} />
     case 'interactive': return (
       <div className={cx(frame, 'p-4')}>
@@ -77,14 +80,62 @@ function BoardBlock({ block }: { block: Extract<Block, { kind: 'board' }> }) {
   )
 }
 
-function SvgBlock({ svg, alt }: { svg: string; alt: string }) {
+export function SvgBlock({ svg, alt, credit, url, forceState }: { svg: string; alt: string; credit?: Credit; url?: string; /** lab page only: hold one state */ forceState?: 'loading' | 'error' }) {
   // Sanitised on the server, and shown as an image: nothing inside an <img> SVG can run or load anything.
-  const src = useMemo(() => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, [svg])
+  // Library illustrations come from our public bucket by URL; drawn ones are inline.
+  const [attempt, setAttempt] = useState(0)
+  const src = useMemo(() => url ? (attempt ? `${url}${url.includes('?') ? '&' : '?'}r=${attempt}` : url) : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, [svg, url, attempt])
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>(forceState ?? (url ? 'loading' : 'ready'))
+  const img = useRef<HTMLImageElement | null>(null)
+  // The image may finish (or fail) before hydration attaches onLoad/onError: read its state once mounted.
+  useEffect(() => {
+    const el = img.current
+    if (forceState || !el || !el.complete) return
+    setState(el.naturalWidth > 0 ? 'ready' : 'error')
+  }, [forceState, src])
   return (
-    <figure className={cx(frame, 'bg-white p-3')}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={alt} className="mx-auto h-auto w-full max-w-[640px]" />
-      <figcaption className="mt-2 text-[13px] leading-snug text-muted">{alt}</figcaption>
+    <figure className={cx(frame, 'group')}>
+      <div className="relative bg-white">
+        {state === 'loading' && (
+          <div className="absolute inset-0 flex flex-col justify-center gap-3 p-6" aria-hidden>
+            <Skeleton className="mx-auto h-[46%] w-[58%] rounded-[12px]" />
+            <Skeleton className="mx-auto h-3 w-[40%]" />
+          </div>
+        )}
+        {state === 'error' ? (
+          <div role="img" aria-label={alt} className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-2 bg-sunken px-6 text-center">
+            <ImageOff className="h-6 w-6 text-faint" strokeWidth={1.75} aria-hidden />
+            <p className="text-[14px] font-medium text-ink-2">This picture didn’t load</p>
+            <p className="max-w-[34ch] text-[13px] leading-snug text-muted">{alt}</p>
+            {url && !forceState && (
+              <button type="button" onClick={() => { setState('loading'); setAttempt(a => a + 1) }} className={cx(buttonClass('ghost', 'sm'), 'mt-1 min-h-11')}>
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden />Try again
+              </button>
+            )}
+          </div>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img ref={img} src={src} alt={alt} loading="lazy" decoding="async" onLoad={() => { if (!forceState) setState('ready') }} onError={() => { if (!forceState) setState('error') }}
+            className={cx('mx-auto block h-auto w-full max-w-[640px] p-3 transition-opacity duration-300 ease-out', state === 'loading' ? 'aspect-[4/3] opacity-0' : 'opacity-100')} />
+        )}
+      </div>
+      {credit ? (
+        // Library illustrations: title, author, source and licence, each linked (what CC BY asks for).
+        <figcaption className="flex items-center gap-2 border-t border-line bg-surface px-1.5">
+          <a href={credit.url} target="_blank" rel="noopener noreferrer"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-[10px] px-2 text-[12.5px] leading-snug text-muted transition-colors hover:bg-sunken hover:text-ink-2 focus-visible:outline-2 focus-visible:outline-accent">
+            <span className="min-w-0 truncate"><span className="font-medium text-ink-2">{credit.title.replace(/\s+(en|EN|eng)$/, '')}</span> · {credit.author}{credit.source !== credit.author ? `, ${credit.source}` : ''}{credit.changes ? ` · ${credit.changes}` : ''}</span>
+            <ExternalLink className="h-3.5 w-3.5 flex-shrink-0 opacity-60" strokeWidth={2} aria-hidden />
+            <span className="sr-only">(opens the source page)</span>
+          </a>
+          {credit.licenseUrl ? (
+            <a href={credit.licenseUrl} target="_blank" rel="noopener noreferrer license" aria-label={`Licence: ${credit.license}`}
+              className="inline-flex min-h-11 flex-shrink-0 items-center rounded-[10px] px-1.5 focus-visible:outline-2 focus-visible:outline-accent">
+              <span className="rounded-full border border-accent-line bg-accent-soft px-2 py-0.5 text-[11px] font-medium tracking-wide text-accent">{credit.license}</span>
+            </a>
+          ) : <span className="mr-2 flex-shrink-0 rounded-full border border-line bg-sunken px-2 py-0.5 text-[11px] font-medium text-muted">{credit.license}</span>}
+        </figcaption>
+      ) : <figcaption className="border-t border-line px-3.5 py-2.5 text-[13px] leading-snug text-muted">{alt}</figcaption>}
     </figure>
   )
 }
@@ -249,6 +300,7 @@ function PracticeBlock({ block }: { block: Extract<Block, { kind: 'practice' }> 
       const r = await fetch('/api/agent/practice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actionId: block.actionId, index: i, choice: c }) })
       const j = await r.json()
       setState(s => ({ ...s, [i]: { picked: [...(s[i]?.picked ?? []), c], done: !!j.done, correct: j.correct, hint: j.hint, answer: j.answer, explain: j.explain } }))
+      if (typeof j.correct === 'boolean') genie.react(j.correct ? 'happy' : 'encouraging')
       if (j.review && typeof j.review === 'object') setReview(j.review)
     } finally { setBusy(null) }
   }
@@ -312,6 +364,7 @@ function AudioBlock({ text }: { text: string }) {
     setState('loading')
     if (!audio.current) {
       audio.current = new Audio(`/api/tts?text=${encodeURIComponent(text.slice(0, 600))}`)
+      speakerForAudio(audio.current)
       audio.current.onended = () => setState('idle')
       audio.current.onerror = () => setState('idle')
     }

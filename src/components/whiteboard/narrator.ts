@@ -33,6 +33,8 @@ export interface Narrator {
   readonly fallbackReason?: string | null
   /** Wake the natural voice service (it scales to zero when idle). */
   warm?(): void
+  /** For the tutor character's lip sync: the natural-voice clip being heard and where it is, or 'device' / null. */
+  lipSync?(): { url: string; t: number } | 'device' | null
 }
 
 /**
@@ -379,6 +381,14 @@ class AudioNarrator implements Narrator {
   advancing() {
     const a = this.audio
     return this.mode === 'audio' && !!a && this.flowing && !a.paused && !a.ended && a.readyState >= 3
+  }
+
+  lipSync() {
+    if (this.mode === 'device') return typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking && !speechSynthesis.paused ? 'device' as const : null
+    const a = this.audio
+    if (!this.advancing() || !a) return null
+    const url = a.currentSrc || a.src
+    return url && !url.startsWith('data:') ? { url, t: a.currentTime } : null
   }
 
   position() {

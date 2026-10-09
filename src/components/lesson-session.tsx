@@ -10,6 +10,8 @@ import { Spinner, buttonClass, cx } from './ui'
 import type { TranscriptAside } from '@/components/whiteboard/player'
 import type { Step } from '@/lib/lesson-schema'
 import type { Chapter } from '@/lib/lesson-sections'
+import { TutorPresence } from '@/components/genie/tutor-presence'
+import { genie } from '@/components/genie/presence'
 
 /** Fired by IdleTimeout just before the away sign-out, so progress is saved while the session is still valid. */
 export const BEFORE_SIGNOUT_EVENT = 'geniusmap:before-signout'
@@ -150,7 +152,22 @@ export function LessonSession({
     }
   }, [mode, flush])
 
+  // The tutor character reacts to the lesson: listening at a check, celebrating or encouraging after an answer,
+  // thinking while a new explanation is written; talking follows the narration audio on its own.
+  useEffect(() => () => { genie.set('listening', false, 'lesson'); genie.set('thinking', false, 'lesson') }, [])
+  const tutorReact = useCallback((e: PlayerEvent) => {
+    if (e.type === 'step') genie.set('listening', control.current?.played().slice(-1)[0]?.type === 'check' || steps[e.index]?.type === 'check', 'lesson')
+    else if (e.type === 'check') {
+      genie.set('listening', false, 'lesson')
+      if (e.response === 'answer' && e.correct === true) genie.react('happy')
+      else if (e.response === 'answer' && e.correct === false) genie.react('encouraging')
+      else if (e.response === 'got_it') genie.react('happy', 1600)
+      else if (e.response === 'differently' || e.response === 'explain_wrong' || e.response === 'again') genie.react('encouraging', 1600)
+    } else if (e.type === 'complete') genie.react('happy', 3200)
+  }, [steps])
+
   const onEvent = useCallback((e: PlayerEvent) => {
+    tutorReact(e)
     if (e.type === 'position') {
       pending.current = { stepIndex: e.cursor, sectionIndex: e.section, furthest: e.furthest, scriptSteps: e.total }
       schedule()
@@ -181,10 +198,11 @@ export function LessonSession({
       post({ completed: true, event: { type: 'complete' } })
       setFinished(true)
     }
-  }, [post, flush, schedule, partial, checkHref, mode])
+  }, [post, flush, schedule, partial, checkHref, mode, tutorReact])
 
   const onNeedSteps = useCallback(async (req: NeedStepsRequest): Promise<Step[]> => {
     history.current.push({ reason: req.reason, answer: req.answer })
+    genie.set('thinking', true, 'lesson')
     const res = await fetch('/api/tutor/step', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -198,7 +216,7 @@ export function LessonSession({
       }),
       // Past this, the player falls back to the lesson's own alternative explanation.
       signal: AbortSignal.timeout(30_000),
-    }).catch(() => null)
+    }).catch(() => null).finally(() => genie.set('thinking', false, 'lesson'))
     if (!res) return []
     if (!res.ok) return []
     const data = await res.json().catch(() => ({}))
@@ -209,11 +227,12 @@ export function LessonSession({
   /** Low check-in: slow down and walk through one worked example of what is on the board. */
   const workedExample = useCallback(async () => {
     const played = control.current?.played() ?? []
+    genie.set('thinking', true, 'lesson')
     const res = await fetch('/api/tutor/step', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lessonId, reason: 'worked_example', played, history: history.current }),
       signal: AbortSignal.timeout(35_000),
-    }).catch(() => null)
+    }).catch(() => null).finally(() => genie.set('thinking', false, 'lesson'))
     const data = res?.ok ? await res.json().catch(() => ({})) : {}
     const steps = Array.isArray(data.steps) ? (data.steps as Step[]) : []
     return steps.length > 0 && !!control.current?.insertNow(steps)
@@ -221,6 +240,8 @@ export function LessonSession({
 
   return (
     <>
+    {/* The character looks down toward the board by default. */}
+    <TutorPresence variant="lesson" look={{ x: 0.2, y: 0.55 }} className="mb-2" />
     <WhiteboardPlayer
       controlRef={control}
       slow={slow}
