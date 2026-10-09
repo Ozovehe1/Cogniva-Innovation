@@ -299,6 +299,34 @@ export function sanitizeSvg(input: string): { svg: string | null; removed: strin
   return { svg: svg.length > 50_000 ? null : svg, removed: [...new Set(removed)] }
 }
 
+/**
+ * Labels the model placed past the edge of its viewBox (a right-aligned "Hydrophilic head" at x = 60) were cut off
+ * ("hilic Head"). Widen the viewBox to take in every label's estimated width. Skipped when groups are transformed
+ * (positions are then not absolute).
+ */
+export function fitLabelsInView(svg: string): string {
+  const vb = svg.match(/viewBox="\s*([-\d.]+)[\s,]+([-\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*"/)
+  if (!vb || /<g[^>]*\btransform=/i.test(svg)) return svg
+  const [x0, y0, w, h] = vb.slice(1, 5).map(Number)
+  let lo = x0, hi = x0 + w
+  const rootSize = Number(svg.match(/<svg[^>]*\bfont-size="([\d.]+)/)?.[1] ?? 16)
+  for (const m of svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/gi)) {
+    const attrs = m[1]
+    if (/\btransform=/.test(attrs)) continue
+    const x = Number(attrs.match(/\bx="([-\d.]+)/)?.[1])
+    if (!Number.isFinite(x)) continue
+    const fs = Number(attrs.match(/font-size="([\d.]+)/)?.[1] ?? attrs.match(/font-size:\s*([\d.]+)/)?.[1] ?? rootSize)
+    const len = m[2].replace(/<[^>]+>/g, '').replace(/&[a-z#0-9]+;/gi, 'x').trim().length
+    const tw = len * fs * 0.56
+    const anchor = attrs.match(/text-anchor="(\w+)"/)?.[1] ?? 'start'
+    const left = anchor === 'end' ? x - tw : anchor === 'middle' ? x - tw / 2 : x
+    lo = Math.min(lo, left - 6); hi = Math.max(hi, left + tw + 6)
+  }
+  if (lo >= x0 && hi <= x0 + w) return svg
+  const nw = Math.round(hi - lo)
+  return svg.replace(vb[0], `viewBox="${Math.floor(lo)} ${y0} ${nw} ${h}"`)
+}
+
 export async function makeIllustration(brief: string, trace?: string[]): Promise<{ svg: string; removed: string[]; alt: string }> {
   const prompt = `Draw a clean, labelled teaching diagram as a single SVG for: """${brief.slice(0, 800)}"""
 Composition: use the WHOLE viewBox: the main subject spans 60-80% of the width and is centred; leave a clear margin of 24 for labels. Every label sits in empty space next to what it names (offset 8-14 px from the line or arrow tip, with a thin leader line if needed); no label may overlap a shape, an arrow or another label. Arrows are long enough to read (60-140 px).
@@ -308,6 +336,7 @@ Return JSON {"alt": one-sentence description, "svg": "<svg ...>...</svg>"}.`
   const raw = await chatJson(prompt, { maxTokens: 5000, trace }) as { svg?: unknown; alt?: unknown }
   const s = sanitizeSvg(typeof raw?.svg === 'string' ? raw.svg : '')
   if (!s.svg) throw new Error('The illustration was not a usable SVG')
+  s.svg = fitLabelsInView(s.svg)
   return { svg: s.svg, removed: s.removed, alt: typeof raw?.alt === 'string' ? raw.alt.slice(0, 300) : brief.slice(0, 200) }
 }
 

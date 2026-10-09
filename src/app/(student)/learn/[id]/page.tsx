@@ -35,7 +35,11 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
   // The learner's own lesson: place finished clips it never showed, queue missing ones, add real pictures for
   // real-world structures (lesson-refresh.ts; per learner, capped so the page never waits long).
   if (own && needsVisualRefresh(l.style_notes)) {
-    const r = await Promise.race([refreshLessonVisuals(createAdminClient(), id, profile!.id).catch(() => ({ changed: false })), new Promise<{ changed: boolean }>(res => setTimeout(() => res({ changed: false }), 12_000))])
+    // Capped so the page never waits long; a refresh still running at the cap finishes in the background (it was
+    // dropped before, so lessons whose refresh takes > 12 s never got their pictures, scenes or clips).
+    const work = refreshLessonVisuals(createAdminClient(), id, profile!.id).catch(() => ({ changed: false }))
+    const r = await Promise.race([work, new Promise<{ changed: boolean; late: true }>(res => setTimeout(() => res({ changed: false, late: true }), 12_000))])
+    if ('late' in r) after(() => work.then(() => undefined))
     if (r.changed) {
       const { data: fresh } = await supabase.from('lessons').select('script, chapters').eq('id', id).maybeSingle()
       if (fresh) { l.script = (fresh as { script: unknown }).script; l.chapters = (fresh as { chapters: unknown }).chapters }
