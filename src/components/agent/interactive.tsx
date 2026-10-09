@@ -48,6 +48,7 @@ export default function InteractiveFigure({ spec, alt }: { spec: IxSpec; alt: st
         })
         boardRef.current = board
         const pts: Record<string, any> = {}
+        const initial = initialEnv(spec, k)
         // The live environment: slider values plus every point's current coordinates.
         const env = (): IxEnv => {
           const e: IxEnv = { ...sliders.current }
@@ -68,9 +69,14 @@ export default function InteractiveFigure({ spec, alt }: { spec: IxSpec; alt: st
           }
           const curves: Record<string, any> = {}
           for (const f of spec.functions) curves[f.name] = board.create('functiongraph', [(x: number) => k.fn[f.name](x, env())], { strokeColor: IX_HEX[f.color], strokeWidth: 2.6, dash: f.dashed ? 2 : 0, name: f.label, withLabel: !!f.label, label: { fontSize: 13, color: IX_HEX[f.color] }, highlight: false })
-          for (const g of spec.gliders) pts[g.name] = board.create('glider', [g.x, k.fn[g.on](g.x, env()), curves[g.on]], pointStyle(IX_HEX[g.color], true, g.label))
+          for (const g of spec.gliders.filter(q => q.circle === undefined)) pts[g.name] = board.create('glider', [g.x, k.fn[g.on](g.x, env()), curves[g.on]], pointStyle(IX_HEX[g.color], true, g.label))
+          // Circles before circle gliders (a point on the unit circle) and before polygons that may use those points.
+          const circs = spec.circles.map((c, i) => board.create('circle', c.through ? [pts[c.center], pts[c.through]] : [pts[c.center], () => Math.abs(k.radius[i]!(0, env()))], { strokeColor: IX_HEX[c.color], strokeWidth: 2.2, highlight: false }))
+          for (const g of spec.gliders.filter(q => q.circle !== undefined)) {
+            const p0 = initial.pos[g.name] ?? [0, 0]
+            pts[g.name] = board.create('glider', [p0[0], p0[1], circs[g.circle!]], pointStyle(IX_HEX[g.color], true, g.label))
+          }
           for (const pg of spec.polygons) board.create('polygon', pg.points.map(n => pts[n]), { fillColor: IX_HEX[pg.color], fillOpacity: 0.12, highlight: false, borders: { strokeColor: IX_HEX[pg.color], strokeWidth: 2, highlight: false }, vertices: { visible: false } })
-          spec.circles.forEach((c, i) => board.create('circle', c.through ? [pts[c.center], pts[c.through]] : [pts[c.center], () => Math.abs(k.radius[i]!(0, env()))], { strokeColor: IX_HEX[c.color], strokeWidth: 2.2, highlight: false }))
           for (const s of spec.segments) board.create(s.arrow ? 'arrow' : s.line ? 'line' : 'segment', [pts[s.from], pts[s.to]], { strokeColor: IX_HEX[s.color], strokeWidth: 2.2, dash: s.dashed ? 2 : 0, highlight: false })
           if (spec.field) {
             const n = 14, xr = [spec.x[0], n, spec.x[1]], yr = [spec.y[0], Math.round(n * 0.7), spec.y[1]]

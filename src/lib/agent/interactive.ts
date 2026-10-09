@@ -11,11 +11,12 @@ export const IX_HEX: Record<IxColor, string> = { ink: '#14141A', accent: '#1F4D3
 
 export interface IxSlider { name: string; label: string; min: number; max: number; step: number; value: number }
 export interface IxPoint { name: string; x: number; y: number; xExpr?: string; yExpr?: string; drag: boolean; label: string; color: IxColor; hidden?: boolean }
-export interface IxGlider { name: string; on: string; x: number; label: string; color: IxColor }
+/** A point that slides along a function graph (on = function name, starts at x) or around a circle (circle = index into circles, starts at angle). */
+export interface IxGlider { name: string; on: string; x: number; label: string; color: IxColor; circle?: number; angle?: number }
 export interface IxFunction { name: string; expr: string; label: string; color: IxColor; dashed: boolean }
 export interface IxSegment { from: string; to: string; color: IxColor; arrow: boolean; dashed: boolean; line: boolean }
 export interface IxPolygon { points: string[]; color: IxColor }
-export interface IxCircle { center: string; through?: string; radius?: string; color: IxColor }
+export interface IxCircle { name?: string; center: string; through?: string; radius?: string; color: IxColor }
 export interface IxReadout { label: string; expr: string; unit?: string }
 export interface IxSpec {
   title: string
@@ -109,17 +110,21 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   })
 
   const gliders: IxGlider[] = []
+  const circleGliders: { q: Record<string, unknown>; i: number; name: string; on: string }[] = []
   for (const { q, i, ok } of gliderRaw) {
     if (!ok) continue
     const name = str(q.name, 3)
     const on = str(q.on, 8)
     const f = functions.find(fn => fn.name === on)
+    // Not a function: maybe a circle (by name, or "circle" when there is exactly one). Resolved once circles are read.
+    const rawCircles = arr(o.circles, 3)
+    if (!f && (rawCircles.some(c => str(c.name, 8) === on) || (/circle/i.test(on) && rawCircles.length === 1))) { circleGliders.push({ q, i, name, on }); continue }
     if (!f) { errors.push(`gliders[${i}].on must name one of the functions (${functions.map(fn => fn.name).join(', ') || 'none given'})`); continue }
     if (new RegExp(`\\b${name.toLowerCase()}[xy]\\b`, 'i').test(f.expr)) { errors.push(`gliders[${i}] cannot ride on ${on}, which depends on ${name} itself`); continue }
     gliders.push({ name, on, x: num(q.x) ?? (x[0] + x[1]) / 2, label: str(q.label, 24) || name, color: color(q.color, 'clay') })
   }
 
-  const pointNames = new Set([...points.map(p => p.name), ...gliders.map(g => g.name)])
+  const pointNames = new Set([...points.map(p => p.name), ...gliders.map(g => g.name), ...circleGliders.map(g => g.name)])
   // An end given as [x, y] (numbers or expressions, e.g. ["px", 0] for the foot below P) becomes a hidden helper point.
   let aux = 0
   const known = (n: unknown, at: string): boolean => {
@@ -159,11 +164,22 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   arr(o.circles, 3).forEach((q, i) => {
     if (!known(q.center, `circles[${i}].center`)) return
     const center = lastName()
-    if (q.through !== undefined) { if (!known(q.through, `circles[${i}].through`)) return; circles.push({ center, through: lastName(), color: color(q.color, 'navy') }); return }
+    const name = str(q.name, 8) || undefined
+    if (q.through !== undefined) { if (!known(q.through, `circles[${i}].through`)) return; circles.push({ name, center, through: lastName(), color: color(q.color, 'navy') }); return }
     const r = typeof q.radius === 'number' ? String(q.radius) : ex(q.radius, 80)
     if (!check(r, `circles[${i}].radius`, [], false)) return
-    circles.push({ center, radius: r, color: color(q.color, 'navy') })
+    circles.push({ name, center, radius: r, color: color(q.color, 'navy') })
   })
+  for (const { q, i, name, on } of circleGliders) {
+    const ci = circles.findIndex(c => c.name === on) >= 0 ? circles.findIndex(c => c.name === on) : circles.length === 1 ? 0 : -1
+    if (ci < 0) { errors.push(`gliders[${i}].on: circle "${on}" could not be drawn`); continue }
+    const c = circles[ci]
+    const glided = new Set(circleGliders.map(g => g.name))
+    if (c.center === name || c.through === name || glided.has(c.center) || (c.through && glided.has(c.through))) { errors.push(`gliders[${i}] cannot ride on a circle defined by a point that itself rides on a circle`); continue }
+    if (c.radius && new RegExp(`\\b${name.toLowerCase()}[xy]\\b`, 'i').test(c.radius)) { errors.push(`gliders[${i}] cannot ride on a circle whose radius depends on ${name}`); continue }
+    const deg = num(q.angle_deg), rad = num(q.angle)
+    gliders.push({ name, on, x: 0, circle: ci, angle: rad ?? (deg !== null ? deg * Math.PI / 180 : Math.PI / 4), label: str(q.label, 24) || name, color: color(q.color, 'clay') })
+  }
 
   let field: IxSpec['field']
   if (o.field && typeof o.field === 'object') {
@@ -232,10 +248,31 @@ export function initialEnv(spec: IxSpec, k: IxCompiled): { env: IxEnv; pos: Reco
     pos[p.name] = [px, py]; env[`${p.name.toLowerCase()}x`] = px; env[`${p.name.toLowerCase()}y`] = py
   }
   for (const g of spec.gliders) {
+    if (g.circle !== undefined) continue
     const gy = k.fn[g.on]?.(g.x, env) ?? NaN
     pos[g.name] = [g.x, gy]; env[`${g.name.toLowerCase()}x`] = g.x; env[`${g.name.toLowerCase()}y`] = gy
   }
+  for (const g of spec.gliders) {
+    if (g.circle === undefined) continue
+    const [cx, cy, r] = circleAt(spec, k, g.circle, pos, env)
+    const gx = cx + r * Math.cos(g.angle ?? 0), gy = cy + r * Math.sin(g.angle ?? 0)
+    pos[g.name] = [gx, gy]; env[`${g.name.toLowerCase()}x`] = gx; env[`${g.name.toLowerCase()}y`] = gy
+  }
+  // Points that follow a glider (the foot ["px", 0] below P) are evaluated again now the gliders are placed.
+  for (const p of spec.points) {
+    if (!p.xExpr && !p.yExpr) continue
+    const px = p.xExpr ? k.px[p.name](0, env) : p.x, py = p.yExpr ? k.py[p.name](0, env) : p.y
+    pos[p.name] = [px, py]; env[`${p.name.toLowerCase()}x`] = px; env[`${p.name.toLowerCase()}y`] = py
+  }
   return { env, pos }
+}
+
+/** Centre and radius of circle i given current point positions. */
+export function circleAt(spec: IxSpec, k: IxCompiled, i: number, pos: Record<string, [number, number]>, env: IxEnv): [number, number, number] {
+  const ci = spec.circles[i]
+  const c = pos[ci.center] ?? [NaN, NaN]
+  const r = ci.through ? Math.hypot((pos[ci.through]?.[0] ?? NaN) - c[0], (pos[ci.through]?.[1] ?? NaN) - c[1]) : Math.abs(k.radius[i]?.(0, env) ?? NaN)
+  return [c[0], c[1], r]
 }
 
 /** dy/dx = f(x, y) solved both ways from (x0, y0) with RK4, clipped to the view. */
