@@ -26,9 +26,10 @@ export function SiteFooter() {
     <footer className="border-t border-line">
       <div className="pb-safe mx-auto flex max-w-[1120px] flex-col gap-4 px-5 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between md:px-8">
         <Logo />
-        <nav className="flex flex-wrap items-center gap-x-5 gap-y-2" aria-label="Footer">
+        <nav className="flex flex-wrap items-center gap-x-5 gap-y-1 [&>a]:inline-flex [&>a]:min-h-11 [&>a]:items-center" aria-label="Footer">
           <Link href="/about" className="hover:text-ink">About</Link>
           {demoAvailable && <Link href="/learn/demo" className="hover:text-ink">Sample lesson</Link>}
+          <Link href="/credits" className="hover:text-ink">Credits</Link>
           <Link href="/login" className="hover:text-ink">Sign in</Link>
           <span>© {new Date().getFullYear()} GeniusMap</span>
         </nav>

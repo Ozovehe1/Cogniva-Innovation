@@ -26,6 +26,7 @@ export async function updateSession(request: NextRequest) {
     path.startsWith('/login') ||
     path.startsWith('/signup') ||
     path === '/about' ||
+    path === '/credits' ||
     path === '/learn/demo/ink-test' ||
     // Wakes the narration voice when a lesson opens (public demo too); only voices lessons for signed-in users.
     path === '/api/tts/warm' ||

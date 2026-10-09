@@ -5,20 +5,20 @@ import { LessonIllustration, SiteFooter, SiteHeader, demoAvailable } from '@/com
 
 const lessonFeatures = [
   {
-    title: 'Written out, step by step',
-    desc: 'Each lesson plays on a whiteboard. Ideas are written one line at a time and equations change in place, so you can follow how one step becomes the next.',
+    title: 'A tutor that owns its board',
+    desc: 'Your tutor writes and draws on its own whiteboard, one line at a time, and can point at, change or redraw any part of it when you ask.',
   },
   {
-    title: 'Diagrams and animations',
-    desc: 'Graphs, shapes and points are drawn as they are explained, and a lesson can include a short rendered animation for the idea that needs motion.',
+    title: 'Exact diagrams, real pictures',
+    desc: 'Graphs and shapes are computed from the maths. Organs, cells and circuits come from free scientific illustration libraries, each credited to its author.',
   },
   {
-    title: 'A natural voice, with a transcript',
-    desc: 'The AI tutor explains each step aloud in a natural voice, and every line is kept in a transcript you can scroll back through. Turn the voice off at any time.',
+    title: 'Figures you can move',
+    desc: 'For ideas that change, the tutor demonstrates on a live figure, then hands it to you: drag the point, move the slider, find the answer yourself.',
   },
   {
     title: 'Checks that re-explain',
-    desc: 'Short questions stop the lesson to see whether an idea landed. If it did not, the AI tutor explains it another way, or walks through a worked example, instead of repeating itself.',
+    desc: 'Short questions see whether an idea landed. A miss gets a “not yet” and another way to see it, never a red cross. Anything that looks wrong can be reported in one tap.',
   },
 ]
 
