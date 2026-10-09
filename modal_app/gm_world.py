@@ -1643,6 +1643,11 @@ def describe(w: "World", max_lines: int = 60) -> str:
                     out.append(f"{t} {oid} '{str(o.get('text') or o.get('tex') or o.get('icon') or o.get('values'))[:40]}' at ({c[0]:.1f}, {c[1]:.1f})")
                 elif t == "flow":
                     out.append(f"flow {oid}: {o.get('from')} -> {o.get('to')}" + (f" '{o.get('label')}'" if o.get("label") else ""))
+                elif t == "readout" and label == w.solved[0][0]:
+                    out.append(f"readout {oid} (text panel): '{fmt_template(str(o.get('text', '')), vals)[:80]}'")
+                elif t == "equation" and label == w.solved[0][0]:
+                    out.append(f"equation {oid} (text panel): " + " ; ".join(str(ln.get("sym") or ln.get("tex") or "")[:60] for ln in (o.get("lines") or []) if isinstance(ln, dict))[:240]
+                               + (f" chem {o['chem']}" if o.get("chem") else ""))
             except Exception:  # noqa: BLE001
                 continue
         groups = {}

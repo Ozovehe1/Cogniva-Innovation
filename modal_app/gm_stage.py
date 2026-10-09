@@ -61,8 +61,18 @@ def _t(text, fs=None, color="ink", weight="NORMAL"):
     return Text(str(text), font_size=max(FS["min"], fs or FS["body"]), color=col(color), weight=weight)
 
 
+def _tex_clean(s: str) -> str:
+    """Sympy-style products in a TeX string read as maths: 3*(y-5) -> 3(y-5), 2*x -> 2x, a*b -> a \\cdot b."""
+    s = str(s)
+    if "*" not in s or "\\" in s:
+        return s
+    s = re.sub(r"\*\*", "^", s)
+    s = re.sub(r"(\d)\s*\*\s*(?=[(A-Za-z])", r"\1", s)
+    return s.replace("*", r" \cdot ")
+
+
 def _m(tex, fs=None, color="ink"):
-    return MathTex(str(tex), font_size=max(FS["min"] + 4, fs or FS["math"]), color=col(color))
+    return MathTex(_tex_clean(tex), font_size=max(FS["min"] + 4, fs or FS["math"]), color=col(color))
 
 
 class _C:
@@ -206,6 +216,9 @@ class Stage:
                 bot += 0.55 * rows + 0.1
             right = (self.panel[0] - 0.25) if self.panel else FW / 2 - m
             self.main_box = [-FW / 2 + m + 0.3, bot + 0.3, right - 0.3, top - 0.3]
+        if any(isinstance(o, dict) and o.get("type") == "axes" for o in objs) and (self.ro_strip or self.band or has_notes):
+            # tick numbers hang ~0.4 below the x-axis: keep them clear of the readout strip / equation band / caption below
+            self.main_box[1] += 0.35 + (0.4 if any(isinstance(o, dict) and o.get("type") == "axes" and o.get("x_label") for o in objs) else 0)
         self.label_box = [self.main_box[0] - 0.25, self.main_box[1] - 0.25, self.main_box[2] + 0.25, self.main_box[3] + 0.25]
         self.top, self.bot = top, bot
 
@@ -364,7 +377,12 @@ class Stage:
                 g.add(_t(_num(v), fs, "muted").next_to(ax.c2p(max(x0, min(0, x1)), v), LEFT, buff=0.12))
         lx, ly = o.get("x_label"), o.get("y_label")
         if lx:
-            g.add(_lab(lx, FS["label"], "ink").next_to(ax.c2p(x1, max(y0, min(0, y1))), UP + LEFT * 0.2, buff=0.15))
+            yb = max(y0, min(0, y1))
+            if yb <= y0 + 1e-9 and o.get("numbers", True):
+                # x-axis along the bottom: the axis title sits centred under the tick numbers, clear of every curve
+                g.add(_lab(lx, FS["label"], "ink").next_to(ax.c2p((x0 + x1) / 2, yb), DOWN, buff=0.5))
+            else:
+                g.add(_lab(lx, FS["label"], "ink").next_to(ax.c2p(x1, yb), UP + LEFT * 0.2, buff=0.15))
         if ly:
             g.add(_lab(ly, FS["label"], "ink").next_to(ax.c2p(max(x0, min(0, x1)), y1), RIGHT, buff=0.15))
         g.ax = ax

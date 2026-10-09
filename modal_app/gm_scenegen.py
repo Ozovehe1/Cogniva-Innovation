@@ -135,7 +135,8 @@ REVIEW_PROMPT = """You check a teaching animation's scene before it is drawn. A 
 CONCEPT: {concept}
 SOLVED SCENE (start and end of the animation):
 {desc}
-BEATS: {beats}
+BEATS (narration -> actions):
+{beats}
 Does this scene correctly and recognisably show the concept? Think about what the shapes/curves/boxes actually are from the numbers
 and check each one against the concept like a strict teacher, e.g.:
 - a rearrangement proof needs congruent right triangles (legs a, b, hypotenuse c) tiling a square of side a+b with no partial overlaps,
@@ -143,7 +144,9 @@ and check each one against the concept like a strict teacher, e.g.:
 - a ray crossing a boundary keeps going forward: the refracted ray leaves the boundary on the FAR side of the normal from the incident ray
   (if the incident ray travels right, the refracted ray also travels right); only a reflected ray comes back on the same side;
 - a tangent touches the curve at the point with the curve's slope; vectors add head to tail; a circuit loop is closed;
-- an algorithm's states step correctly; an equation's steps are valid and the answer is not on screen before it is derived.
+- an algorithm's states step correctly; an equation's steps are valid and the answer is not on screen before it is derived;
+- every beat DOES what it SAYS: if the narration says the pieces are rearranged / something slides, grows or shifts, that beat must
+  morph/animate/set it (showing a caption is not a rearrangement); a proof must actually show its steps, not just state the result.
 Directions are degrees from +x (0 = right, 90 = up, -90 = down). Ignore style. Return JSON only:
 {{"correct": true|false, "problems": ["what is wrong, and which objects/relations to change"]}}  (problems empty when correct)"""
 
@@ -154,7 +157,8 @@ def semantic_review(description: str, ir: dict, aspect: str, log: list) -> list[
         w = GW.World(ir, aspect)
         w.build([-4.5, -2.7, 4.5, 2.7])
         desc = GW.describe(w)
-        beats = " | ".join(str(b.get("say", ""))[:120] for b in ir.get("beats") or [])[:700]
+        beats = "\n".join(f"{i + 1}. \"{str(b.get('say', ''))[:140]}\" -> does: " + json.dumps(b.get("do") or [], separators=(",", ":"))[:220]
+                          for i, b in enumerate(ir.get("beats") or []))[:1600]
         raw = chat(REVIEW_PROMPT.format(concept=description[:600], desc=desc[:3500], beats=beats), purpose="plan", json_out=True, max_tokens=900,
                    temperature=0.1, log=log, timeout=40, reasoning="medium", est_tokens=2600)
         r = parse_json(raw)
