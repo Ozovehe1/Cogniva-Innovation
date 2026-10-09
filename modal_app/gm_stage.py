@@ -685,7 +685,11 @@ class Stage:
         if o.get("tex"):
             m = _m(GW.fmt_template(GW.pick_text(o["tex"], vals, o.get("index")), vals), FS["label"] + 10, o.get("color", "ink"))
         else:
-            m = _t(GW.fmt_template(GW.pick_text(o.get("text", ""), vals, o.get("index")), vals), FS["label"], o.get("color", "ink"))
+            txt = GW.fmt_template(GW.pick_text(o.get("text", ""), vals, o.get("index")), vals)
+            if re.search(r"[\w)]\s*(\^|\*\*)\s*[\w(]", txt) and not re.search(r"[A-Za-z]{4,}", txt):
+                m = _m(txt, FS["label"] + 10, o.get("color", "ink"))  # y = x^2 written as text: typeset it (x² not x^2)
+            else:
+                m = _t(txt, FS["label"], o.get("color", "ink"))
         if o.get("for"):
             self._place(m, o)
         elif o.get("at"):
