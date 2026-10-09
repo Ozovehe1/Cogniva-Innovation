@@ -5,7 +5,7 @@ import type { IxSpec } from './interactive'
 
 export type Block =
   /** start: steps before it are already on the board (shown at once); the rest animate (a board edit). */
-  | { kind: 'board'; id: string; title: string; steps: Step[]; plot?: boolean; start?: number; rev?: number }
+  | { kind: 'board'; id: string; title: string; steps: Step[]; plot?: boolean; start?: number; rev?: number; diagram?: boolean }
   | { kind: 'svg'; id: string; svg: string; alt: string }
   | { kind: 'sim'; id: string; spec: SimSpec }
   /** A live JSXGraph figure from a validated spec (boardFigure: its static picture was also placed on the board). */

@@ -63,11 +63,11 @@ function BoardBlock({ block }: { block: Extract<Block, { kind: 'board' }> }) {
   return (
     <div className={cx(frame, 'p-0')}>
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-        <span className={label}>{block.plot ? 'Graph' : 'Whiteboard'}</span>
+        <span className={label}>{block.plot ? 'Graph' : block.diagram ? 'Diagram' : 'Whiteboard'}</span>
         <span className="truncate pl-3 text-[13px] text-ink-2"><RichText text={block.title} /></span>
       </div>
       <div className="p-2 sm:p-3">
-        <WhiteboardPlayer key={`${block.id}:${block.rev ?? 0}`} steps={block.steps} title={block.title} autoPlay={!!block.plot || !!block.start} initialIndex={block.start ?? 0} allowSkipChecks />
+        <WhiteboardPlayer key={`${block.id}:${block.rev ?? 0}`} steps={block.steps} title={block.title} autoPlay={!!block.plot || !!block.diagram || !!block.start} initialIndex={block.start ?? 0} allowSkipChecks />
       </div>
     </div>
   )

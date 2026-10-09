@@ -123,7 +123,7 @@ async function getBoard(ctx: AgentCtx): Promise<BoardDoc> {
  * Put a new state of the board on screen: review the steps from `from` (repair once), save, and show it in the chat
  * (steps before this turn's first change appear at once, the rest animate). Returns what the model should know.
  */
-async function commitBoard(ctx: AgentCtx, doc: BoardDoc, from: number, title: string, opts: { plot?: boolean; vision?: boolean; replace?: boolean } = {}) {
+async function commitBoard(ctx: AgentCtx, doc: BoardDoc, from: number, title: string, opts: { plot?: boolean; vision?: boolean; replace?: boolean; diagram?: boolean } = {}) {
   const review = await reviewBoard(doc, from, { deadline: Date.now() + 25_000, trace: ctx.trace, vision: opts.vision })
   let steps = review.steps
   // Keep the stored board bounded: past the cap, start again from the last full clear.
@@ -138,7 +138,7 @@ async function commitBoard(ctx: AgentCtx, doc: BoardDoc, from: number, title: st
   if (opts.replace || !ctx.boardTurn) ctx.boardTurn = { blockId: bid(), from }
   const start = Math.min(ctx.boardTurn.from, from)
   ctx.boardTurn.from = start
-  ctx.emit({ kind: 'board', id: ctx.boardTurn.blockId, title: title.slice(0, 60) || 'Whiteboard', steps, start: start || undefined, rev: next.rev, plot: opts.plot || undefined })
+  ctx.emit({ kind: 'board', id: ctx.boardTurn.blockId, title: title.slice(0, 60) || 'Whiteboard', steps, start: start || undefined, rev: next.rev, plot: opts.plot || undefined, diagram: opts.diagram || undefined })
   const scene = sceneOf(next)
   return {
     shown: true,
@@ -584,14 +584,14 @@ const VISUAL: ToolSpec[] = [
       const area = append ? { x: 420, y: 70, w: 360, h: 410 } : { x: 30, y: 72, w: 740, h: 410 }
       const k = Math.min(area.w / d.width, area.h / d.height)
       const w = Math.round(d.width * k), h = Math.round(d.height * k)
-      const fig = { type: 'draw', shape: { kind: 'figure', x: Math.round(area.x + (area.w - w) / 2), y: Math.round(area.y + (area.h - h) / 2), w, h, svg: d.svg, alt }, say: alt } as unknown as Step
+      const fig = { type: 'draw', shape: { kind: 'figure', x: Math.round(area.x + (area.w - w) / 2), y: Math.round(area.y + (area.h - h) / 2), w, h, svg: d.svg, alt } } as unknown as Step
       if (append) {
         const from = doc0.steps.length
-        const out = await commitBoard(ctx, { ...doc0, steps: ensureIds([...doc0.steps, fig]) }, from, boardTitle(doc0), { vision: false })
+        const out = await commitBoard(ctx, { ...doc0, steps: ensureIds([...doc0.steps, fig]) }, from, boardTitle(doc0), { vision: false, diagram: true })
         return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined }
       }
-      const steps = ensureIds([{ type: 'write', text: title, x: 24, y: 22, size: 'lg', say: title } as unknown as Step, fig])
-      const out = await commitBoard(ctx, { ...emptyDoc(), rev: doc0.rev, steps }, 0, title, { replace: true, vision: false })
+      const steps = ensureIds([{ type: 'write', text: title, x: 24, y: 22, size: 'lg' } as unknown as Step, fig])
+      const out = await commitBoard(ctx, { ...emptyDoc(), rev: doc0.rev, steps }, 0, title, { replace: true, vision: false, diagram: true })
       return { ...out, library, laid_out_ms: d.ms, unmet_constraints: d.unmet || undefined, note: 'Shown on the board. Explain it in 2-4 sentences; annotate parts with board_edit using the figure id if useful.' }
     },
   },
@@ -629,9 +629,9 @@ const VISUAL: ToolSpec[] = [
           const append = doc0.steps.length > 0
           const area = append ? { x: 420, y: 70, w: 360, h: 410 } : { x: 30, y: 72, w: 740, h: 410 }
           const kk = Math.min(area.w / 640, area.h / 420), w = Math.round(640 * kk), h = Math.round(420 * kk)
-          const fig = { type: 'draw', shape: { kind: 'figure', x: Math.round(area.x + (area.w - w) / 2), y: Math.round(area.y + (area.h - h) / 2), w, h, svg, alt }, say: v.spec.title } as unknown as Step
+          const fig = { type: 'draw', shape: { kind: 'figure', x: Math.round(area.x + (area.w - w) / 2), y: Math.round(area.y + (area.h - h) / 2), w, h, svg, alt } } as unknown as Step
           const steps = append ? ensureIds([...doc0.steps, fig]) : ensureIds([{ type: 'write', text: v.spec.title, x: 24, y: 22, size: 'lg' } as unknown as Step, fig])
-          const out = await commitBoard(ctx, append ? { ...doc0, steps } : { ...emptyDoc(), rev: doc0.rev, steps }, append ? doc0.steps.length : 0, append ? boardTitle(doc0) : v.spec.title, { vision: false, replace: !append })
+          const out = await commitBoard(ctx, append ? { ...doc0, steps } : { ...emptyDoc(), rev: doc0.rev, steps }, append ? doc0.steps.length : 0, append ? boardTitle(doc0) : v.spec.title, { vision: false, replace: !append, diagram: true })
           boardFigure = sceneOf(ctx.board!).elements.filter(e => e.type === 'figure').pop()?.id
           void out
         }
