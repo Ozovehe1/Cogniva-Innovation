@@ -251,7 +251,7 @@ export function IntakeFlow({
             })}
           </div>
           <div className="mt-2 flex justify-between text-[12px] text-faint">
-            <span>{steps[Math.min(4, Math.floor(step))]}</span>
+            <span>{phase === 'result' ? 'Your map' : steps[Math.min(4, Math.floor(step))]}</span>
             <span className="tnum">{phase === 'intake' ? (screen?.id === 'goal' ? 'About a minute to set up' : screen?.id === 'purpose' ? 'Almost there' : `${Math.max(1, 4 - Math.floor(step))} quick ${4 - Math.floor(step) === 1 ? 'step' : 'steps'} left`) : phase === 'diag' ? 'Short check' : phase === 'result' ? 'Done' : ''}</span>
           </div>
         </div>

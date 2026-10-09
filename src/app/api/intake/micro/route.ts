@@ -4,6 +4,7 @@ import { answersToColumns, learnerSnapshot, listPaths, loadLearner, reflectWhy, 
 import { MICRO_QUESTIONS, fill, isMinor, itemById, type Answer, type Answers, type MicroId } from '@/lib/intake'
 import { updateOwnPathAnswers } from '@/lib/path-edit'
 import { detectDistress } from '@/lib/safety'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 /** At most one micro-question every this often (and one per lesson end). */
 const GAP_MS = 12 * 3_600_000
@@ -63,6 +64,9 @@ export async function POST(request: Request) {
   let reflection: string | null = null
   if (!ans.skipped) {
     const paths = await listPaths(supabase, profile.id)
+    // Paths are written server-side only (RLS): the admin client, always scoped to this learner's own rows.
+    let db: ReturnType<typeof createAdminClient>
+    try { db = createAdminClient() } catch { return NextResponse.json({ ok: true, reflection: null }) }
     if (id === 'hours') {
       // Weekly time belongs to a goal: re-plan the newest one (pace, lesson length, due dates).
       const p = paths.find(x => x.status === 'ready')
@@ -74,7 +78,7 @@ export async function POST(request: Request) {
         if (!keys.length) break
         const snap = { ...(p.learner_snapshot ?? learnerSnapshot(l)) } as Record<string, unknown>
         for (const k of keys) snap[k] = (cols as Record<string, unknown>)[k]
-        await supabase.from('learning_paths').update({ learner_snapshot: snap }).eq('id', p.id).eq('student_id', profile.id)
+        await db.from('learning_paths').update({ learner_snapshot: snap }).eq('id', p.id).eq('student_id', profile.id)
       }
     }
     if (id === 'why' && typeof ans.v === 'string' && ans.v.length > 2) {
@@ -83,7 +87,7 @@ export async function POST(request: Request) {
         reflection = r.reflection || null
         if (r.valueType) after(async () => {
           await supabase.from('learner_profiles').update({ value_type: r.valueType }).eq('student_id', profile.id)
-          for (const p of paths) await supabase.from('learning_paths').update({ learner_snapshot: { ...(p.learner_snapshot ?? {}), value_type: r.valueType, why_text: ans.v } }).eq('id', p.id).eq('student_id', profile.id)
+          for (const p of paths) await db.from('learning_paths').update({ learner_snapshot: { ...(p.learner_snapshot ?? {}), value_type: r.valueType, why_text: ans.v } }).eq('id', p.id).eq('student_id', profile.id)
         })
       } catch { /* the answer is saved; the reflection is a nicety */ }
     }
