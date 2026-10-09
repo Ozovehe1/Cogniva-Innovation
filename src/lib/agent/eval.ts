@@ -24,11 +24,11 @@ import { validateScript, type Step } from '../lesson-schema'
 import { expandBoardDiagrams, nextTutorSteps } from '../lesson-ai'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
-import { runAgent, CHAT_SYSTEM, MAX_WRITES, EXPLICIT_TOOL } from './run'
+import { runAgent, CHAT_SYSTEM, MAX_WRITES, EXPLICIT_TOOL, firstStepPolicy } from './run'
 import { CONCEPT_ASK, GENERIC_REASK, beatVisualLine, readVisual, visualPlanHint, visualText } from '../visual-policy'
 import { clipTargets } from '../lesson-clip'
 import { trimRequest } from './llm'
-import { selectTools, type AgentCtx } from './tools'
+import { selectTools, toolsFor, type AgentCtx } from './tools'
 import type { Block } from './types'
 import { illustrationStaticCases, illustrationVisualCases } from '../illustrations/eval'
 import { onboardingStaticCases } from '../onboarding-eval'
@@ -299,6 +299,8 @@ const ROUTING_CASES: ToolCase[] = [
   { id: 'em-motor', msg: 'How does an electric motor work?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
   { id: 'em-generator', msg: 'How does a generator make electricity?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
   { id: 'em-solenoid', msg: 'What is a solenoid?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
+  // The forced visual first step is for teaching turns only: a question about the learner's own learning reads their data.
+  { id: 'about-me-not-forced', msg: 'What did I study this week?', expect: ['search_my_learning', 'get_path_progress', 'get_lesson_digest'] },
 ]
 
 export async function lessonCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
@@ -325,12 +327,14 @@ export async function toolCases(admin: SupabaseClient, studentId: string, only?:
   const out: CaseResult[] = []
   for (const c of cases.filter(x => !only || only.includes(x.id))) {
     const t0 = Date.now()
-    const tools = selectTools({ ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now'), visualTopic: c.topic ?? null }, c.msg, c.msg).map(t => t.def)
+    const tctx = { ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now'), visualTopic: c.topic ?? null }
+    const specs = selectTools(tctx, c.msg, c.msg)
     try {
-      // Same per-turn policy as runAgent: the visual-plan note for un-hinted concept questions, and a forced first tool call.
-      const plan = visualPlanHint(visualText(c.msg, c.topic))
-      const force = EXPLICIT_TOOL.test(c.msg) || (!!plan && (CONCEPT_ASK.test(c.msg) || GENERIC_REASK.test(c.msg)))
-      const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, toolChoice: force ? 'required' : 'auto', messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, ...(plan && !EXPLICIT_TOOL.test(c.msg) ? [{ role: 'system' as const, content: plan }] : []), { role: 'user', content: c.msg }] })
+      // The same step-0 policy as runAgent (firstStepPolicy): teaching turns get the visual plan note, only the visual
+      // tools (board only for working) and a forced first tool call.
+      const pol = firstStepPolicy(tctx, c.msg, specs, new Map(toolsFor(tctx).map(t => [t.def.name, t])))
+      const tools = (pol.teaching && pol.firstSpecs.length ? pol.firstSpecs : specs).map(t => t.def)
+      const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, toolChoice: pol.forceFirst ? 'required' : 'auto', messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, ...(pol.note ? [{ role: 'system' as const, content: pol.note }] : []), { role: 'user', content: c.msg }] })
       const names = r.toolCalls.map(x => x.name)
       out.push({ id: `${group === 'tools' ? 'tool' : group === 'lesson' ? 'lesson' : 'route'}-${c.id}`, group, pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
       // Tool-arg validity: every call parsed as JSON with required fields present.

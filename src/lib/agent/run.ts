@@ -48,6 +48,9 @@ At most 3 writes. Do not repeat what is already in place. Only report actions wh
 /** The learner explicitly asked for a visual or a tool: the first step must call a tool. */
 export const EXPLICIT_TOOL = /\b(on the (white)?board|whiteboard|draw|drag|let me (move|explore|play)|venn|interactive|circle (the|it|that)|underline|cross (it )?out|annotate|erase|diagram|illustrat|graph|plot|chart|simulat|slider|animat|clip|video|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
 
+/** The learner asks about their own learning or app actions (not a concept): no forced visual. */
+export const ABOUT_ME = /\b(my (path|lessons?|progress|plan|practice|mastery|streak|goals?|history|notes|week)|what (did|have|should) i|did i|have i (done|learn|studi)|next (lesson|topic)|today'?s plan|study plan|quiz me|practice (set|questions)|start (the|a|this) topic|how am i doing)\b/i
+
 /** The visual tools a teaching turn always offers (the model picks; descriptions say when each fits). */
 const VISUAL_TOOLS = ['find_illustration', 'interactive', 'simulate', 'animate_concept', 'plot', 'math_diagram', 'illustrate', 'draw_on_board']
 /** Blocks that count as a real picture or a moving figure (a board scene alone does not). */
@@ -62,6 +65,30 @@ const VISUAL_PLAN_NOTE = `Teaching turn. First make your visual plan: what IS th
 Usually one or two visuals. Then explain in 2-6 short sentences that walk through what the visual shows, in its order.`
 
 export interface RunResult { text: string; model: string | null; steps: number; toolCalls: string[]; busy?: boolean }
+
+/**
+ * The per-turn visual policy (shared with the routing evals so they test what learners get). Teaching turns: a concept
+ * question, a re-ask, or anything the routing hint reads as having a visual subject. The MODEL decides which visual fits
+ * (all visual tools are offered with descriptions + the system prompt's guide); the regex reading is only a hint line
+ * and, at the end, a fallback. Its first step must call a visual tool (the visual plan: the model reads the concept and
+ * picks the tool and what to show), the board only for working. Step 0 offers the visual tools only; the board joins
+ * them when the idea is working/derivation (hint) or when nothing richer was read.
+ */
+export function firstStepPolicy<T extends { def: { name: string } }>(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'visualTopic'>, lastUser: string, specs: T[], byName: Map<string, T>) {
+  const vt = visualText(lastUser, ctx.visualTopic)
+  const plan = ctx.mode === 'chat' ? visualPlanHint(vt) : null
+  const explicit = EXPLICIT_TOOL.test(lastUser)
+  // Questions about the learner's own learning (history, path, plan, practice) are answered from their data, not taught.
+  const aboutMe = ABOUT_ME.test(lastUser)
+  const teaching = ctx.mode === 'chat' && !ctx.restricted && !explicit && !aboutMe && (CONCEPT_ASK.test(lastUser) || GENERIC_REASK.test(lastUser) || !!plan || /\?\s*$/.test(lastUser) && lastUser.length > 12)
+  const forceFirst = ctx.mode === 'chat' && !ctx.restricted && (explicit || teaching)
+  const visualSpecs = VISUAL_TOOLS.map(n => byName.get(n)).filter((t): t is NonNullable<typeof t> => !!t)
+  const offerAll = teaching ? [...specs, ...visualSpecs.filter(t => !specs.some(x => x.def.name === t.def.name))] : specs
+  const hintRich = richToolsFor(readVisual(vt))
+  const firstSpecs = teaching ? visualSpecs.filter(t => t.def.name !== 'draw_on_board' || !hintRich.length) : []
+  const note = teaching ? `${VISUAL_PLAN_NOTE}${plan ? `\nHint from the app's subject reader (a suggestion, you decide): ${plan}` : ''}` : plan && !explicit ? plan : null
+  return { vt, plan, explicit, teaching, forceFirst, firstSpecs, offerAll, note }
+}
 
 export async function runAgent(input: {
   ctx: AgentCtx
@@ -81,25 +108,10 @@ export async function runAgent(input: {
   const used: string[] = []
   let model: string | null = null
   let text = ''
-  // Teaching turns: a concept question, a re-ask, or anything the routing hint reads as having a visual subject.
-  // The MODEL decides which visual fits (all visual tools are offered with descriptions + the system prompt's
-  // guide); the regex reading is only a hint line and, at the end, a fallback. Its first step must call a visual tool
-  // (the visual plan: the model reads the concept and picks the tool and what to show), the board only for working.
-  const vt = visualText(lastUser, ctx.visualTopic)
-  const plan = ctx.mode === 'chat' ? visualPlanHint(vt) : null
-  const explicit = EXPLICIT_TOOL.test(lastUser)
-  const teaching = ctx.mode === 'chat' && !ctx.restricted && !explicit && (CONCEPT_ASK.test(lastUser) || GENERIC_REASK.test(lastUser) || !!plan || /\?\s*$/.test(lastUser) && lastUser.length > 12)
-  const forceFirst = ctx.mode === 'chat' && !ctx.restricted && (explicit || teaching)
-  const visualSpecs = VISUAL_TOOLS.map(n => byName.get(n)).filter((t): t is NonNullable<typeof t> => !!t)
-  const offerAll = teaching ? [...specs, ...visualSpecs.filter(t => !specs.some(x => x.def.name === t.def.name))] : specs
-  // Step 0 of a teaching turn: the visual tools only; the board joins them when the idea is working/derivation (hint) or
-  // when nothing richer was read. From step 1 every tool is offered (labels, working on the board, lookups).
-  const hintRich = richToolsFor(readVisual(vt))
-  const firstSpecs = teaching ? visualSpecs.filter(t => t.def.name !== 'draw_on_board' || !hintRich.length) : []
-  if (teaching) {
-    messages.splice(messages.length - 1, 0, { role: 'system', content: `${VISUAL_PLAN_NOTE}${plan ? `\nHint from the app's subject reader (a suggestion, you decide): ${plan}` : ''}` })
-    ctx.trace.push(`visual-first: ${firstSpecs.map(t => t.def.name).join(',')}`)
-  } else if (plan && !explicit) messages.splice(messages.length - 1, 0, { role: 'system', content: plan })
+  const pol = firstStepPolicy(ctx, lastUser, specs, byName)
+  const { vt, teaching, forceFirst, firstSpecs, offerAll } = pol
+  if (pol.note) messages.splice(messages.length - 1, 0, { role: 'system', content: pol.note })
+  if (teaching) ctx.trace.push(`visual-first: ${firstSpecs.map(t => t.def.name).join(',')}`)
   const richShown = () => (ctx.blocks ?? []).some(b => RICH_BLOCKS.has(b.kind))
   const runTool = async (name: string, args: Record<string, unknown>, tag: string) => {
     const spec = byName.get(name)
