@@ -1120,15 +1120,15 @@ class World:
             X[2 * i:2 * i + 2] = rng.uniform(-3.5, 3.5, 2) if seed else [((i * 1.7) % 7) - 3.5, ((i * 2.3) % 5) - 2.5]
         return X
 
-    def _vec(self, X, vals, reg=None, X0=None):
-        r = [w * (1.0 if hard else 0.6) for w, _, hard in self.residuals(X, vals)]
+    def _vec(self, X, vals, reg=None, X0=None, soft_w=0.6):
+        r = [w * (1.0 if hard else soft_w) for w, _, hard in self.residuals(X, vals)]
         if reg:
             r += list(reg * (X - X0))
         return np.array(r, dtype=float)
 
-    def _lm(self, X, vals, iters=60, reg=0.0, X0=None):
+    def _lm(self, X, vals, iters=60, reg=0.0, X0=None, soft_w=0.6):
         lam = 1e-2
-        f = self._vec(X, vals, reg, X0)
+        f = self._vec(X, vals, reg, X0, soft_w)
         cost = f @ f
         n = len(X)
         if n == 0:
@@ -1139,7 +1139,7 @@ class World:
             for j in range(n):
                 Xp = X.copy()
                 Xp[j] += h
-                J[:, j] = (self._vec(Xp, vals, reg, X0) - f) / h
+                J[:, j] = (self._vec(Xp, vals, reg, X0, soft_w) - f) / h
             A = J.T @ J
             g = J.T @ f
             improved = False
@@ -1149,7 +1149,7 @@ class World:
                 except np.linalg.LinAlgError:
                     step = -np.linalg.lstsq(J, f, rcond=None)[0]
                 Xn = X + step
-                fn = self._vec(Xn, vals, reg, X0)
+                fn = self._vec(Xn, vals, reg, X0, soft_w)
                 cn = fn @ fn
                 if cn < cost:
                     X, f, cost = Xn, fn, cn
@@ -1173,6 +1173,10 @@ class World:
             X, _ = self._lm(X0, vals, iters=40 if warm is not None else 80, reg=1e-3, X0=X0)
             X, _ = self._lm(X, vals, iters=30)  # polish without the gauge regulariser
             hard = sum(r * r for r, _, h in self.residuals(X, vals, which="hard") if h)
+            if hard > 1e-9:
+                # layout (soft) relations can pull an exact relation a little off: finish with the hard ones dominant
+                X, _ = self._lm(X, vals, iters=40, soft_w=0.02)
+                hard = sum(r * r for r, _, h in self.residuals(X, vals, which="hard") if h)
             soft = sum(r * r for r, _, h in self.residuals(X, vals) if not h)
             score = hard * 1e3 + soft
             if best is None or score < best[1] - 1e-12:
@@ -1440,8 +1444,14 @@ class World:
                 break
             ks = k
         seen_kind: dict = {}
+        # a segment/shape that passes through zero size during an animation (sin = 0 at theta = pi) is fine; one that is
+        # degenerate in every state is a mistake
+        degen_all = None
         for label, ov, vals, X in solved:
-            for m in self.constraint_report(X, vals) + self.checks_report(X, vals) + self._degenerate(X, vals) + self._shape_report(X, vals):
+            d = set(self._degenerate(X, vals))
+            degen_all = d if degen_all is None else (degen_all & d)
+        for label, ov, vals, X in solved:
+            for m in self.constraint_report(X, vals) + self.checks_report(X, vals) + [x for x in self._degenerate(X, vals) if x in (degen_all or set())] + self._shape_report(X, vals):
                 key = m.split(" fails")[0].split(" is not satisfied")[0][:120]
                 if key in seen_kind:
                     seen_kind[key][1] += 1
