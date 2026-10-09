@@ -1,4 +1,5 @@
 'use client'
+import { ReportButton } from '@/components/report/report-mistake'
 import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { UpNextCard } from './up-next'
@@ -27,6 +28,7 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
   const [answers, setAnswers] = useState<(number | null)[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [flagged, setFlagged] = useState<Set<number>>(() => new Set())
   const [result, setResult] = useState<{ passed?: boolean; score?: number; results: Result[]; recheck?: boolean; reopened?: string[]; next?: { id: string; title: string; lesson_id: string | null } | null } | null>(null)
 
   const load = async (action: 'start' | 'recheck_start') => {
@@ -77,6 +79,11 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
                   </button>
                 ))}
               </div>
+              <div className="-mb-2 -ml-2.5 mt-1 flex items-center gap-2">
+                {flagged.has(qi) ? <p className="flex min-h-11 items-center gap-1.5 px-2.5 text-[12.5px] text-accent"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Flagged — thanks, we’ll check this question</p>
+                  : <ReportButton what="this question" payload={() => ({ surface: 'mastery', lessonId, artefact: { question: q.q, options: q.options, index: qi, topic: q.topic ?? null, topicId, recheck: mode === 'recheck' } })}
+                      onReported={() => setFlagged(f => new Set(f).add(qi))} />}
+              </div>
             </li>
           ))}
         </ol>
@@ -114,7 +121,9 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
         {r.results.map((x, i) => (
           <li key={i} className="flex gap-3 text-[15px] leading-relaxed">
             {x.correct ? <Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2.25} /> : <X className="mt-1 h-4 w-4 flex-shrink-0 text-clay" strokeWidth={2.25} />}
-            <span className="text-ink-2">{x.correct ? 'Correct.' : <>Answer: <RichText text={x.answer ?? ''} />.</>} {x.explain && <RichText text={x.explain} />}</span>
+            <span className="min-w-0 flex-1 text-ink-2">{x.correct ? 'Correct.' : <>Answer: <RichText text={x.answer ?? ''} />.</>} {x.explain && <RichText text={x.explain} />}
+              <span className="-mb-2 -ml-2.5 block"><ReportButton what="this answer" payload={() => ({ surface: 'mastery', lessonId, artefact: { question: list[i]?.q ?? null, options: list[i]?.options ?? null, answer: x.answer ?? null, text: x.explain ?? null, index: i, topicId } })} /></span>
+            </span>
           </li>
         ))}
       </ul>

@@ -1,4 +1,5 @@
 'use client'
+import { sameScript } from '@/lib/correctness/hide'
 import 'katex/dist/katex.min.css'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
@@ -92,6 +93,10 @@ export interface PlayerControl {
   /** Steps on the board since the last full clear, up to the current position. */
   played: () => Step[]
   isPlaying: () => boolean
+  /** What is on screen now (for "Report a mistake"): live index, original script index, and that step. */
+  current: () => { index: number; origIndex: number; step: Step | null; steps: Step[]; orig: number[] }
+  /** Swap a reported visual for a placeholder at once (live index). */
+  replaceStep: (index: number, step: Step) => void
 }
 
 export interface TranscriptAside { label: string; count?: number; content: React.ReactNode }
@@ -185,7 +190,7 @@ export function WhiteboardPlayer({
     lastKey.current = scriptKey
     const prev = lastScript.current
     lastScript.current = initialSteps
-    if (prev.length > 0 && initialSteps.length > prev.length && JSON.stringify(initialSteps.slice(0, prev.length)) === JSON.stringify(prev)) {
+    if (prev.length > 0 && initialSteps.length > prev.length && sameScript(initialSteps.slice(0, prev.length), prev)) {
       const tail = initialSteps.slice(prev.length)
       setSteps(cur => [...cur, ...tail])
       setOrig(cur => [...cur, ...tail.map((_, k) => prev.length + k)])
@@ -763,6 +768,11 @@ export function WhiteboardPlayer({
         return steps.slice(from, cursor)
       },
       isPlaying: () => playing && !hold,
+      current: () => {
+        const index = Math.max(0, Math.min(cursor, steps.length) - 1)
+        return { index, origIndex: orig[index] ?? -1, step: steps[index] ?? null, steps, orig }
+      },
+      replaceStep: (index: number, step: Step) => setSteps(cur => cur.map((x, k) => (k === index ? step : x))),
     }
   })
 

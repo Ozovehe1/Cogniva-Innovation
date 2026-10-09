@@ -1,4 +1,6 @@
 'use client'
+import { ReportButton, type ReportCategory, type ReportPayload, type ReportResult } from '@/components/report/report-mistake'
+import { hiddenStep, isHideable, reportTarget } from '@/lib/correctness/hide'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -239,10 +241,49 @@ export function LessonSession({
     return steps.length > 0 && !!control.current?.insertNow(steps)
   }, [lessonId])
 
+  const reported = useRef<number | null>(null)
+  /** "Report a mistake": what is on the board now (a picture complaint targets the last picture). */
+  const reportPayload = useCallback((category: ReportCategory | null): ReportPayload | null => {
+    const cur = control.current?.current()
+    if (!cur?.step) return null
+    const target = reportTarget(cur.steps, cur.index, category)
+    const st = cur.steps[target]
+    let from = 0
+    for (let k = target; k >= 0; k--) { const x = cur.steps[k]; if (x.type === 'clear' && !(x as { targets?: unknown }).targets) { from = k; break } }
+    // The board around it, without other pictures' SVG (kept small); the reported step whole.
+    const board = cur.steps.slice(from, cur.index + 1).slice(-40).map((x, k) => (from + k === target || x.type !== 'draw' || x.shape.kind !== 'figure' ? x : { ...x, shape: { ...x.shape, svg: '' } }))
+    const surface: ReportPayload['surface'] = st.type === 'draw' && st.shape.kind === 'figure' ? (st.shape.src ? 'illustration' : 'diagram') : st.type === 'stage' ? 'stage' : st.type === 'manim_clip' ? 'animation' : st.type === 'check' ? 'check' : 'lesson_step'
+    reported.current = target
+    return { surface, lessonId, stepIndex: cur.orig[target] ?? null, artefact: { step: st, steps: board, live_index: target }, clipJobId: st.type === 'manim_clip' ? st.jobId ?? null : null }
+  }, [lessonId])
+  const onReported = useCallback(() => {
+    const i = reported.current
+    const cur = control.current?.current()
+    if (i === null || !cur) return
+    if (isHideable(cur.steps[i])) control.current?.replaceStep(i, hiddenStep(cur.steps[i]))
+  }, [])
+  /** Corrected retry: the tutor fixes the reported part on the board and carries on. */
+  const correctedRetry = useCallback(async (r: ReportResult) => {
+    const played = control.current?.played() ?? []
+    history.current.push({ reason: 'reported_mistake', answer: `${r.category?.replace('_', ' ') ?? 'mistake'}${r.note ? `: ${r.note}` : ''}` })
+    genie.set('thinking', true, 'lesson')
+    const res = await fetch('/api/tutor/step', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lessonId, reason: 'explain_differently', played, history: history.current }),
+      signal: AbortSignal.timeout(35_000),
+    }).catch(() => null).finally(() => genie.set('thinking', false, 'lesson'))
+    const data = res?.ok ? await res.json().catch(() => ({})) : {}
+    const steps = Array.isArray(data.steps) ? (data.steps as Step[]) : []
+    if (steps.length) control.current?.insertNow(steps)
+  }, [lessonId])
+
   return (
     <>
     {/* The character looks down toward the board by default. */}
-    <TutorPresence variant="lesson" look={{ x: 0.2, y: 0.55 }} className="mb-2" />
+    <div className="mb-2 flex items-center gap-2">
+      <TutorPresence variant="lesson" look={{ x: 0.2, y: 0.55 }} className="min-w-0 flex-1" />
+      {mode === 'student' && <ReportButton what="this part of the lesson" payload={reportPayload} onReported={onReported} onRetry={r => void correctedRetry(r)} className="flex-shrink-0" />}
+    </div>
     <WhiteboardPlayer
       controlRef={control}
       slow={slow}

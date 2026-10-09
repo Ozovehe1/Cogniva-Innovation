@@ -7,6 +7,7 @@ import { prefetchNextLesson } from '@/lib/path'
 import { ArrowLeft } from 'lucide-react'
 import { getSessionProfile } from '@/lib/auth'
 import { validateScript } from '@/lib/lesson-schema'
+import { hiddenStep, isHideable } from '@/lib/correctness/hide'
 import { RichText } from '@/components/rich-text'
 import { LESSON_MAX_STEPS, estimateMs, formatDuration, normalizeChapters } from '@/lib/lesson-sections'
 import { Eyebrow } from '@/components/ui'
@@ -57,7 +58,14 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
   const { data: lp } = own ? await supabase.from('learner_profiles').select('age_band').eq('student_id', profile!.id).maybeSingle() : { data: null }
   const minor = lp ? ['under13', '13to17'].includes((lp as { age_band: string | null }).age_band ?? '') : null
   const drafting = own && ['outlining', 'drafting', 'paused'].includes(l.draft_status)
-  const { steps } = validateScript(l.script, { maxSteps: LESSON_MAX_STEPS })
+  const { steps: scriptSteps } = validateScript(l.script, { maxSteps: LESSON_MAX_STEPS })
+  // Pictures, live figures and clips this learner reported stay hidden for them (until triage marks a report invalid).
+  let steps = scriptSteps
+  if (profile) {
+    const { data: reps } = await supabase.from('mistake_reports').select('step_index').eq('lesson_id', id).eq('student_id', profile.id).neq('status', 'invalid').limit(100)
+    const hide = new Set(((reps ?? []) as { step_index: number | null }[]).map(r => r.step_index).filter((n): n is number => Number.isInteger(n)))
+    if (hide.size) steps = steps.map((st, i) => (hide.has(i) && isHideable(st) ? hiddenStep(st) : st))
+  }
   const chapters = normalizeChapters(l.chapters, steps.length, l.title, steps)
 
   // Resume exactly where the student stopped (any device). If the lesson changed since, fall back to the start of their section.

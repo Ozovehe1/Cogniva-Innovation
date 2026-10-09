@@ -8,8 +8,41 @@ import { AgentBlock } from './blocks'
 import { genie } from '@/components/genie/presence'
 import { syntheticMouth } from '@/components/genie/lipsync'
 import type { Block, ChatEvent } from '@/lib/agent/types'
+import { FlaggedNotice, ReportButton } from '@/components/report/report-mistake'
 
-export interface ChatMessage { role: 'user' | 'assistant'; content: string; blocks?: Block[]; tools?: { name: string; label: string; state: string }[]; error?: string | null }
+export interface ChatFlag { reportId: string; category?: string | null }
+export interface ChatMessage { role: 'user' | 'assistant'; content: string; blocks?: Block[]; tools?: { name: string; label: string; state: string }[]; error?: string | null; flagged?: ChatFlag | null }
+
+/** Teaching output a learner can report (not plans, sources or confirmations). */
+const REPORTABLE: Partial<Record<Block['kind'], { what: string; surface: 'ask' | 'diagram' | 'illustration' | 'animation' | 'stage' | 'practice' }>> = {
+  board: { what: 'this whiteboard', surface: 'ask' }, svg: { what: 'this picture', surface: 'illustration' }, sim: { what: 'this simulation', surface: 'stage' },
+  interactive: { what: 'this figure', surface: 'stage' }, clip: { what: 'this animation', surface: 'animation' }, image: { what: 'this figure', surface: 'diagram' },
+  code: { what: 'this calculation', surface: 'ask' }, practice: { what: 'these questions', surface: 'practice' },
+}
+const retryFor = (what: string, category?: string | null) => `The ${what.replace(/^(this|these) /, '')} you showed me earlier had a mistake${category ? ` (${category.replace('_', ' ')})` : ''}. Please redo it correctly and check the maths.`
+
+/** A visual in an answer, with its own "Report a mistake" and, once flagged, a calm placeholder with a corrected retry. */
+function ReportableBlock({ block, sessionId, done, onRetry }: { block: Block; sessionId: string | null; done: boolean; onRetry: (prompt: string) => void }) {
+  const meta = REPORTABLE[block.kind]
+  const [flag, setFlag] = useState<ChatFlag | null>((block as { flagged?: ChatFlag }).flagged ?? null)
+  const [show, setShow] = useState(false)
+  const [retryPrompt, setRetryPrompt] = useState<string | null>(null)
+  if (!meta) return <AgentBlock block={block} />
+  if (flag && !show) return <FlaggedNotice what={meta.what} onRetry={() => onRetry(retryPrompt ?? retryFor(meta.what, flag.category))} onShow={() => setShow(true)} />
+  return (
+    <div>
+      <AgentBlock block={block} />
+      {done && sessionId && !flag && (
+        <div className="-mb-2 mt-0.5 flex justify-end">
+          <ReportButton what={meta.what} defaultCategory={block.kind === 'svg' ? 'wrong_picture' : undefined}
+            payload={() => ({ surface: meta.surface, sessionId, blockId: block.id, artefact: { kind: block.kind } })}
+            onReported={r => { setFlag({ reportId: r.id, category: r.category }); setRetryPrompt(r.retry?.prompt ?? null) }}
+            onRetry={r => onRetry(r.retry?.prompt ?? retryFor(meta.what, r.category))} />
+        </div>
+      )}
+    </div>
+  )
+}
 
 const SUGGESTIONS = [
   'Explain how a ball thrown up comes back down, on the board',
@@ -53,6 +86,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
   const [busy, setBusy] = useState(false)
   const [safety, setSafety] = useState<{ open: boolean; minor: boolean | null }>({ open: false, minor })
   const [remaining, setRemaining] = useState<number | null>(null)
+  const [revealed, setRevealed] = useState<Set<number>>(() => new Set())
   const endRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const sentInitial = useRef(false)
@@ -155,8 +189,16 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
                     ))}
                   </div>
                 )}
-                {m.content ? <AgentText text={m.content} /> : busy && i === messages.length - 1 && !(m.blocks ?? []).length ? <p className="flex items-center gap-2 text-[14px] text-muted"><Loader2 className="h-4 w-4 animate-spin" />Thinking…</p> : null}
-                {(m.blocks ?? []).map(b => <AgentBlock key={b.id + b.kind} block={b} />)}
+                {m.content && m.flagged && !revealed.has(i) ? <FlaggedNotice what="this answer" onRetry={() => void send(retryFor('answer', m.flagged?.category))} onShow={() => setRevealed(r => new Set(r).add(i))} />
+                  : m.content ? <AgentText text={m.content} /> : busy && i === messages.length - 1 && !(m.blocks ?? []).length ? <p className="flex items-center gap-2 text-[14px] text-muted"><Loader2 className="h-4 w-4 animate-spin" />Thinking…</p> : null}
+                {(m.blocks ?? []).map(b => <ReportableBlock key={b.id + b.kind} block={b} sessionId={sessionId} done={!(busy && i === messages.length - 1)} onRetry={p => void send(p)} />)}
+                {m.content && !m.flagged && sessionId && !(busy && i === messages.length - 1) && (
+                  <div className="-mb-2 -ml-2.5 -mt-1">
+                    <ReportButton what="this answer" payload={() => ({ surface: 'ask', sessionId, text: m.content })}
+                      onReported={r => setMessages(ms => ms.map((x, k) => (k === i ? { ...x, flagged: { reportId: r.id, category: r.category } } : x)))}
+                      onRetry={r => void send(r.retry?.prompt ?? retryFor('answer', r.category))} />
+                  </div>
+                )}
                 {m.error && <p className="rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 text-[14px] text-danger">{m.error}</p>}
               </div>
             ))}

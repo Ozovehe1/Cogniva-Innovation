@@ -19,8 +19,9 @@ export default async function AskPage({ searchParams }: { searchParams: Promise<
     const { data: s } = await supabase.from('chat_sessions').select('id').eq('id', session).maybeSingle()
     if (s) {
       sessionId = s.id
-      const { data: msgs } = await supabase.from('chat_messages').select('role, content, blocks').eq('session_id', s.id).order('id').limit(60)
-      initial = ((msgs ?? []) as { role: 'user' | 'assistant'; content: string; blocks: Block[] }[]).map(m => ({ role: m.role, content: m.content, blocks: m.blocks ?? [] }))
+      const { data: msgs } = await supabase.from('chat_messages').select('role, content, blocks, meta').eq('session_id', s.id).order('id').limit(60)
+      // A reported answer stays flagged for this learner (meta.flagged; reported visuals carry block.flagged).
+      initial = ((msgs ?? []) as { role: 'user' | 'assistant'; content: string; blocks: Block[]; meta: { flagged?: ChatMessage['flagged'] } | null }[]).map(m => ({ role: m.role, content: m.content, blocks: m.blocks ?? [], flagged: m.meta?.flagged ?? null }))
     }
   }
   const { data: lp } = await supabase.from('learner_profiles').select('age_band').eq('student_id', profile.id).maybeSingle()
