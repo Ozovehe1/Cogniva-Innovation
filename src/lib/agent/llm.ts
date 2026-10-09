@@ -323,12 +323,14 @@ async function geminiChat(model: string, key: number, req: ChatRequest, onText?:
   let text = ''
   const calls: ToolCall[] = []
   let usage = { input: 0, output: 0 }
-  const take = (r: { candidates?: { content?: Content }[]; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }) => {
+  let finish = ''
+  const take = (r: { candidates?: { content?: Content; finishReason?: string }[]; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }) => {
     for (const p of r.candidates?.[0]?.content?.parts ?? []) {
       if (p.thought) continue
       if (p.functionCall) calls.push({ id: `g${calls.length}_${Date.now().toString(36)}`, name: p.functionCall.name ?? '', args: (p.functionCall.args ?? {}) as Record<string, unknown>, sig: p.thoughtSignature })
       else if (p.text) { text += p.text; onText?.(p.text) }
     }
+    if (r.candidates?.[0]?.finishReason) finish = String(r.candidates[0].finishReason)
     if (r.usageMetadata) usage = { input: r.usageMetadata.promptTokenCount ?? 0, output: r.usageMetadata.candidatesTokenCount ?? 0 }
   }
   if (onText) {
@@ -337,6 +339,8 @@ async function geminiChat(model: string, key: number, req: ChatRequest, onText?:
   } else {
     take(await client.models.generateContent({ model, contents, config }))
   }
+  // An empty answer (e.g. MALFORMED_FUNCTION_CALL on a big tool schema) is a failure: let the chain try the next model.
+  if (!text.trim() && !calls.some(c => c.name)) throw new Error(`empty answer (finish ${finish || 'unknown'})`)
   return { text, toolCalls: calls.filter(c => c.name), model, provider: 'gemini', usage }
 }
 

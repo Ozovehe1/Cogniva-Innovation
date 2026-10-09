@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { agentSecretOk } from '@/lib/agent/secret'
-import { routingCases, giveawayCases, injectionCases, staticAsyncCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
+import { turnCase, routingCases, giveawayCases, injectionCases, staticAsyncCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
 
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
@@ -20,6 +20,7 @@ export async function POST(request: Request) {
   let results: CaseResult[] = []
   if (group === 'static') results = [...staticCases(), ...(await staticAsyncCases())]
   else if (group === 'tools') results = await toolCases(admin, student, only)
+  else if (group === 'turn') results = await turnCase(admin, student, url.searchParams.get('msg') ?? '')
   else if (group === 'routing') results = await routingCases(admin, student, only)
   else if (group === 'giveaway') results = await giveawayCases(admin, student)
   else if (group === 'injection') results = await injectionCases(admin, student)
