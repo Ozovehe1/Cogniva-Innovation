@@ -12,6 +12,9 @@ import { todayWAT } from '@/lib/agent/actions'
 import { writeMemory } from '@/lib/agent/memory'
 import type { AgentCtx } from '@/lib/agent/tools'
 import type { Block, ChatEvent } from '@/lib/agent/types'
+import { fixesBlock, guardBlock, textGate } from '@/lib/correctness/chat'
+import { avoidLines } from '@/lib/correctness/blocklist'
+import type { Claim } from '@/lib/correctness/claims'
 
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
@@ -111,26 +114,44 @@ export async function POST(request: Request) {
     while (history.reduce((a, m) => a + m.content.length, 0) > 7000 && history.length > 2) history.shift()
 
     const blocks: Block[] = []
+    // Correctness guard: visuals are checked as they are emitted (a wrong board is held back and the model told why).
+    const guardIssues: string[] = []
+    const emitChecked = (b: Block) => {
+      const v = guardBlock(b, message)
+      if (v.issues.length) ctx.trace.push(...v.issues.slice(0, 4).map(i => `guard ${i.kind}${i.fixed ? ' fixed' : ' HELD'}: ${i.detail.slice(0, 100)}`))
+      if (!v.block) { guardIssues.push(...v.hold); return }
+      const k = blocks.findIndex(x => x.id === v.block!.id && x.kind === v.block!.kind)
+      if (k >= 0) blocks[k] = v.block; else blocks.push(v.block)
+      send({ t: 'block', block: v.block })
+    }
     const ctx: AgentCtx = {
       mode: 'chat', studentId, admin, userDb: supabase, runId: `chat_${randomUUID().slice(0, 12)}`, lessonId, sessionId, hasBoard: boardSteps > 0,
       origin: new URL(request.url).origin, writes: 0, maxWrites: MAX_WRITES, restricted: inj.flagged, practiceMode: false,
-      emit: b => { const k = blocks.findIndex(x => x.id === b.id && x.kind === b.kind); if (k >= 0) blocks[k] = b; else blocks.push(b); send({ t: 'block', block: b }) }, blocks, trace: [], searchUrls: new Set(), computeCalls: 0, sources: [], limits: LIMITS(),
+      emit: b => emitChecked(b), blocks, trace: [], searchUrls: new Set(), computeCalls: 0, sources: [], limits: LIMITS(), guardIssues,
     }
     if (inj.flagged) await admin.from('agent_actions').insert({ student_id: studentId, run_id: ctx.runId, source: 'agent', tool: 'injection_screen', args: { reasons: inj.reasons.slice(0, 4), score: inj.score }, summary: 'Message flagged; run restricted to read and visual tools' })
 
     let text = ''
     let model: string | null = null
+    // Numeric claims are checked sentence by sentence before they are streamed; wrong results are corrected.
+    const fixes: Claim[] = []
+    const gate = textGate(d => { text += d; send({ t: 'text', d }) }, f => { fixes.push(f); ctx.trace.push(`guard maths fixed: ${f.source.slice(0, 60)} → ${f.computed}`) })
+    const avoid = (await avoidLines(['prompt_pattern']).catch(() => [] as string[])).join('\n')
     try {
       const r = await runAgent({
-        ctx, system: `${CHAT_SYSTEM}\n\n${context}`,
+        ctx, system: `${CHAT_SYSTEM}\n\n${context}${avoid ? `\n${avoid}` : ''}`,
         messages: [...history, { role: 'user', content: message }],
-        onText: d => { text += d; send({ t: 'text', d }) },
+        onText: d => gate.push(d),
         onTool: (name, label, state) => send({ t: 'tool', name, label, state }),
         deadline: Date.now() + 240_000,
       })
+      gate.end()
       model = r.model
+      const fb = fixesBlock(fixes)
+      if (fb) { blocks.push(fb); send({ t: 'block', block: fb }) }
       if (!r.text.trim() && !blocks.length) { const d = 'I’m not sure how to help with that one. Could you say it another way?'; text += d; send({ t: 'text', d }) }
     } catch (err) {
+      gate.end()
       const busy = err instanceof AllModelsBusyError
       console.warn('Agent chat failed:', err instanceof Error ? err.message : err, ctx.trace.slice(-4))
       send({ t: 'error', message: busy ? 'GeniusMap is very busy right now (free AI quota). Try again in a minute.' : 'Something went wrong while answering. Try again.' })

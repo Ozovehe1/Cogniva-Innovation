@@ -73,6 +73,8 @@ export interface AgentCtx {
   hasBoard?: boolean
   /** Per-student daily limits. */
   limits: { animations: number; miniLessons: number; practiceSets: number; webSearches: number; pythonRuns: number }
+  /** Correctness guard: why the last visual was held back (fed to the model with the tool result, then cleared). */
+  guardIssues?: string[]
 }
 
 export interface ToolSpec {

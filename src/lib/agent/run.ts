@@ -89,6 +89,11 @@ export async function runAgent(input: {
         try {
           if (spec.tier === 'write' || spec.tier === 'confirm') ctx.writes++
           result = await withTimeout(spec.run(args, ctx), spec.tier === 'visual' ? 60_000 : 45_000)
+          // A visual the correctness guard held back: the model learns why and redraws it.
+          if (ctx.guardIssues?.length) {
+            const issues = ctx.guardIssues.splice(0)
+            result = { ...(result && typeof result === 'object' ? result as object : { result }), shown_to_learner: false, correctness_issues: issues.slice(0, 6), instruction: 'This visual was NOT shown because it is factually wrong. Call the tool again with these fixed; do not mention the broken version.' }
+          }
           const failed = !!result && typeof result === 'object' && 'error' in (result as object)
           input.onTool?.(call.name, spec.label, failed ? 'error' : 'done')
         } catch (err) {
