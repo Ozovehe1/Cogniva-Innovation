@@ -15,6 +15,7 @@ import { LessonSession } from '@/components/lesson-session'
 import { LessonPreparing } from '@/components/lesson-preparing'
 import { LessonDelete, LessonDownload } from '@/components/lesson-actions'
 import { AskSheet } from '@/components/agent/ask-sheet'
+import { needsVisualRefresh, refreshLessonVisuals } from '@/lib/lesson-refresh'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -26,11 +27,20 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
   const { supabase, profile } = await getSessionProfile()
   // RLS: shared approved lessons, or this learner's own AI lessons (no approval step).
   const { data: lesson } = await supabase
-    .from('lessons').select('id, title, subject, objectives, script, chapters, status, owner_student_id, draft_status').eq('id', id).maybeSingle()
+    .from('lessons').select('id, title, subject, objectives, script, chapters, status, owner_student_id, draft_status, style_notes').eq('id', id).maybeSingle()
   if (!lesson) notFound()
-  const l = lesson as { id: string; title: string; subject: string; objectives: string[] | null; script: unknown; chapters: unknown; status: string; owner_student_id: string | null; draft_status: string }
+  const l = lesson as { id: string; title: string; subject: string; objectives: string[] | null; script: unknown; chapters: unknown; status: string; owner_student_id: string | null; draft_status: string; style_notes: unknown }
   const own = !!profile && l.owner_student_id === profile.id
   if (!own && l.status !== 'approved') notFound()
+  // The learner's own lesson: place finished clips it never showed, queue missing ones, add real pictures for
+  // real-world structures (lesson-refresh.ts; per learner, capped so the page never waits long).
+  if (own && needsVisualRefresh(l.style_notes)) {
+    const r = await Promise.race([refreshLessonVisuals(createAdminClient(), id, profile!.id).catch(() => ({ changed: false })), new Promise<{ changed: boolean }>(res => setTimeout(() => res({ changed: false }), 12_000))])
+    if (r.changed) {
+      const { data: fresh } = await supabase.from('lessons').select('script, chapters').eq('id', id).maybeSingle()
+      if (fresh) { l.script = (fresh as { script: unknown }).script; l.chapters = (fresh as { chapters: unknown }).chapters }
+    }
+  }
   const { data: topicRow } = own ? await supabase.from('path_topics').select('id, status, path_id, position').eq('lesson_id', id).maybeSingle() : { data: null }
   // What follows this lesson on the learner's path: its mastery check until the topic is mastered, then the next
   // topic's lesson (written ahead while this one plays).

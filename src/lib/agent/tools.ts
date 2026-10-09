@@ -917,10 +917,9 @@ const ROUTES: [RegExp, string[]][] = [
   [/\b(lesson|covered|cover|learn(ed|t)|remember|last time|earlier|before|example|my (progress|path|topics?|skills?|goals?))/i, ['get_lesson_digest', 'search_my_learning', 'get_path_progress', 'get_skill_state']],
 ]
 const CORE = ['compute', 'draw_on_board', 'search_my_learning', 'get_path_progress', 'get_learner_snapshot']
-const VISUAL_DEFAULT = ['plot', 'illustrate', 'simulate']
+const VISUAL_DEFAULT = ['find_illustration', 'illustrate', 'animate_concept']
 // Free illustration library: textbook subjects route to find_illustration as well (offered alongside illustrate).
 ROUTES.push([/\b(diagram|label(l)?ed|illustrat|picture of|structure of|cells?|organ|anatomy|parts of|heart|lungs?|kidney|liver|brain|eye|ear|skeleton|skull|tooth|teeth|flower|leaf|root|stem|seed|insect|apparatus|microscope|circuit|atom|molecule|planet|solar system|moon|volcano|earthquake|lever|pulley|dna|chromosome|neuron|virus|bacteri\w*|photosynthe\w*|digestive|respirat\w*|water cycle|food (chain|web)|ecosystem)\b/i, ['find_illustration']])
-VISUAL_DEFAULT.push('find_illustration')
 
 /** The learner asked for an animation / clip / video (animate_concept, not a slider simulation). */
 export const ANIMATION_ASK = /\b(animat\w*|clip|video|movie)\b/i
@@ -935,12 +934,15 @@ export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonI
   // "Show me an animation of…": the learner asked for a clip, so the slider simulation is not offered unless they also
   // asked for sliders / a simulation ("show" alone used to pull in simulate, which then won the turn).
   const wantsClip = ANIMATION_ASK.test(lastUser) && !/\b(simulat|slider|drag|interactive|play with)/i.test(lastUser)
+  // The subject decides the visual (visual-policy.ts): a static plot is offered only when the idea is a function or
+  // the learner asked for a graph; with no readable subject the default is a picture or an animation, not a plot.
+  const read = readVisual(visualText(lastUser, ctx.visualTopic))
   if (wantsClip) want.add('animate_concept')
-  else if (!matched || /\b(explain|show|how|why|what is|teach)\b/i.test(text)) VISUAL_DEFAULT.forEach(n => want.add(n))
+  else if (!read.families.length && (!matched || /\b(explain|show|how|why|what is|teach)\b/i.test(text))) VISUAL_DEFAULT.forEach(n => want.add(n))
   if (wantsClip) { want.delete('simulate'); want.delete('interactive') }
   // Un-hinted concept questions ("explain how the heart pumps blood", "what is a derivative"): offer the visuals the
   // routing policy picks for the subject (visual-policy.ts), so the board is not the only visual the model can see.
-  if (!wantsClip) toolsForFamilies(readVisual(visualText(lastUser, ctx.visualTopic))).forEach(n => want.add(n))
+  if (!wantsClip) toolsForFamilies(read).forEach(n => want.add(n))
   if (!wantsClip && !matched && CONCEPT_ASK.test(lastUser)) want.add('animate_concept')
   if (ctx.lessonId) want.add('get_lesson_digest')
   if (ctx.hasBoard) { want.add('board_inspect'); want.add('board_edit') }

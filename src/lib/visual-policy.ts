@@ -7,15 +7,23 @@
  * Families (a text can match several):
  *   structure   a real-world object or organism (organ, cell, plant, apparatus, circuit, atom, planet) → library illustration
  *   process     something that happens in stages or cycles over time (pumping, photosynthesis, digestion) → animation
+ *   field       an invisible field or flow (magnetic/electric field lines, flux, induction, vector fields) → animation + live figure
  *   motion      a body moving under forces (thrown ball, projectile, pendulum, orbit, wave) → simulation + animation
  *   function    a function / rate / graph idea (derivative, gradient, parabola, sine) → plot or live figure (+ animation)
  *   geometry    exact maths structure (triangle, angle, vectors, sets) → math diagram / live figure
  *   derivation  working a problem step by step (solve, expand, simplify) → the board
  */
 
-export type VisualFamily = 'structure' | 'process' | 'motion' | 'function' | 'geometry' | 'derivation'
+export type VisualFamily = 'structure' | 'process' | 'motion' | 'field' | 'function' | 'geometry' | 'derivation'
 
 const STRUCTURE_TERMS: [RegExp, string][] = [
+  [/\bsolenoid/i, 'solenoid'],
+  [/\belectromagnets?\b/i, 'electromagnet'],
+  [/\b(electric )?motors?\b|\bmotor effect/i, 'electric motor'],
+  [/\bgenerators?\b|\bdynamo|\balternator/i, 'electric generator'],
+  [/\btransformers?\b/i, 'transformer'],
+  [/\bcoil\b|\binduction coil/i, 'solenoid'],
+  [/\bcurrent[- ]carrying (wire|conductor)|\bmagnetic field (around|of) a (wire|conductor)/i, 'magnetic field around a wire'],
   [/\bheart\b|\bcardiac\b|\bventricle|\batri(um|a)\b/i, 'human heart'],
   [/\blungs?\b|\balveol|\bbreathing\b|respiratory system/i, 'human lungs'],
   [/\bkidneys?\b|\bnephron/i, 'kidney'],
@@ -43,10 +51,7 @@ const STRUCTURE_TERMS: [RegExp, string][] = [
   [/\b(electric )?circuits?\b|\bresistors?\b|\bbulb\b/i, 'electric circuit'],
   [/\bbattery|\bbatteries|\bcells? in series/i, 'battery'],
   [/\bsolar (panel|cell|pv)|\bphotovoltaic/i, 'solar panel'],
-  [/\bmagnets?\b|\bmagnetic field/i, 'bar magnet field'],
-  [/\b(electric )?motor\b/i, 'electric motor'],
-  [/\bgenerator\b|\bdynamo/i, 'electric generator'],
-  [/\btransformer\b/i, 'transformer'],
+  [/\bmagnets?\b|\bmagneti[sz]ation|\bmagnetic (field|domain)/i, 'bar magnet field'],
   [/\blevers?\b/i, 'lever'],
   [/\bpulleys?\b/i, 'pulley'],
   [/\bmicroscope/i, 'microscope'],
@@ -58,8 +63,9 @@ const STRUCTURE_TERMS: [RegExp, string][] = [
   [/\bwater cycle/i, 'water cycle'],
 ]
 
-const PROCESS = /\b(how (does|do|is|are) .{2,60}\b(work|happen|move|flow|pump|form|grow|made|produced|travel|fire|spread)|pumps?|pumping|circulat\w*|flows?\b|flowing|cycles?\b|photosynthe\w*|respir\w*|digest\w*|diffusion|osmosis|transport\w*|mitosis|meiosis|fires?\b|action potential|signal\w*|charging|discharg\w*|reaction|erosion|evaporat\w*|condens\w*|stages?\b|process|life cycle|germinat\w*|pollinat\w*|replicat\w*|transcription|translation|heat (flow|transfer)|conduction|convection|current flows?|electrons? (flow|move))\b/i
+const PROCESS = /\b(how (does|do|is|are|can) .{2,60}\b(works?|happens?|moves?|flows?|pumps?|forms?|grows?|made|produced?|travels?|fires?|spreads?|make|makes|generates?|creates?|converts?|turns?|changes?)|pumps?|pumping|circulat\w*|flows?\b|flowing|cycles?\b|photosynthe\w*|respir\w*|digest\w*|diffusion|osmosis|transport\w*|mitosis|meiosis|fires?\b|action potential|signal\w*|charging|discharg\w*|reaction|erosion|evaporat\w*|condens\w*|stages?\b|process|life cycle|germinat\w*|pollinat\w*|replicat\w*|transcription|translation|heat (flow|transfer)|conduction|convection|current flows?|electrons? (flow|move))\b/i
 const MOTION = /\b(thrown|throw|falls?\b|falling|dropped|projectile|trajectory|orbit\w*|swing\w*|pendulum|oscillat\w*|waves?\b|rolls?\b|rolling|accelerat\w*|decelerat\w*|velocity|speed(s)? up|momentum|collision|gravity|free fall|comes? (back )?down|goes up|spring|bounc\w*|equations of motion|suvat|kinematics|friction|newton'?s (first|second|third|laws?))\b/i
+const FIELD = /\b(electromagnet\w*|magnetic (field|flux|force)|electric (field|flux)|field lines?|flux|induc(ed|tion|es)|faraday|lenz|amp(e|è)re|biot|gauss'?s law|maxwell|right[- ]hand (rule|grip)|left[- ]hand rule|fleming|vector fields?|line integrals?|curl|divergence|electromagnetic (wave|induction|fields?)|current-carrying)\b/i
 const FUNCTION = /\b(derivative|differentiat\w*|gradient|slope|rate of change|functions?\b|graphs?\b|quadratic|parabola|sine|cosine|sin\b|cos\b|tan\b|trig\w*|exponential|logarithm\w*|log\b|limit|integral|integrat\w*|area under|tangent|asymptote|inverse function|linear (graph|function)|straight line|y\s*=|f\(x\))/i
 const GEOMETRY = /\b(triangle|angles?\b|circle theorem|pythag\w*|polygon|bisect\w*|perpendicular|parallel lines|congruen\w*|similar triangles|vectors?\b|resultant|venn|sets?\b|subset|union|intersection|unit circle|coordinates?\b|transformation|reflection|rotation|locus)\b/i
 const DERIVATION = /\b(solve|simplify|expand|factori[sz]\w*|prove|derive|derivation|step by step|work (it )?out|calculate|evaluate|rearrange|make .{1,10} the subject|simultaneous|long division|worked example)\b/i
@@ -74,6 +80,7 @@ export function readVisual(text: string): VisualRead {
   if (hit) families.push('structure')
   if (PROCESS.test(t)) families.push('process')
   if (MOTION.test(t)) families.push('motion')
+  if (FIELD.test(t)) families.push('field')
   if (FUNCTION.test(t)) families.push('function')
   if (GEOMETRY.test(t)) families.push('geometry')
   if (DERIVATION.test(t)) families.push('derivation')
@@ -90,8 +97,9 @@ export function toolsForFamilies(r: VisualRead): string[] {
   const f = new Set(r.families)
   if (f.has('structure')) add('find_illustration', 'illustrate')
   if (f.has('process')) add('animate_concept')
-  if (f.has('motion')) add('simulate', 'animate_concept', 'plot')
-  if (f.has('function')) add('plot', 'interactive', 'animate_concept')
+  if (f.has('field')) add('animate_concept', 'find_illustration', 'interactive')
+  if (f.has('motion')) add('simulate', 'animate_concept')
+  if (f.has('function') && !f.has('field')) add('plot', 'interactive', 'animate_concept')
   if (f.has('geometry')) add('math_diagram', 'interactive')
   if (f.has('derivation')) add('draw_on_board')
   return out
@@ -107,8 +115,9 @@ export function visualPlanHint(text: string): string | null {
   const lines: string[] = []
   if (f.has('structure')) lines.push(`a real labelled picture of the ${r.structure} (find_illustration, query "${r.structure}")`)
   if (f.has('process') && !f.has('motion')) lines.push('an animation of the process unfolding in order (animate_concept: name each stage and what moves)')
+  if (f.has('field')) lines.push(`an animation of the field itself (animate_concept: field lines forming around the current or magnet, their direction shown by arrows, the thing that moves or changes — a magnet through a coil, a rotating coil, the current growing)${r.structure ? '' : ', and a real picture of the setup (find_illustration)'}; a field you can explore by dragging (interactive) when the learner should probe it. Never a plain line graph for a field`)
   if (f.has('motion')) lines.push('the object actually moving (simulate with a motion dot and its path, sliders for what the learner can change) and/or animate_concept for the full story of the motion')
-  if (f.has('function') && !f.has('motion')) lines.push('the function on axes (plot), or a live figure to drag (interactive) when the idea is about change (a tangent, a slope, a parameter); animate_concept for a secant turning into a tangent or a curve being traced')
+  if (f.has('function') && !f.has('motion') && !f.has('field')) lines.push('the function on axes (plot), or a live figure to drag (interactive) when the idea is about change (a tangent, a slope, a parameter); animate_concept for a secant turning into a tangent or a curve being traced')
   if (f.has('geometry')) lines.push('an exact diagram (math_diagram) or a figure to drag (interactive)')
   if (!lines.length) return null
   const board = f.has('derivation') ? ' Use draw_on_board for the step-by-step working.' : ' The board (draw_on_board) is for derivations and working; it is not the default here.'
@@ -122,6 +131,8 @@ export function beatVisualLine(text: string, kind: string): string | null {
   const f = new Set(r.families)
   if (f.has('structure') && (kind === 'demo' || kind === 'wrap'))
     return `This beat is about a real-world structure: show the real thing with one {"type":"illustration","query":"${r.structure}", x, y, w, h, "say"} step in the diagram region (a credited textbook drawing), then point at the parts that matter with arrows and short labels beside it. Do not build the ${r.structure} out of circles and rectangles.`
+  if (f.has('field') && kind === 'demo')
+    return 'This beat is about a field: SHOW the field, never only a curve or axes. Draw its field lines or a grid of arrows (draw arrow shapes) around the source, mark the direction of current / motion, and make it change (animate, move, pulse, scale) while the narration says what to watch; where exploring helps, use one {"type":"stage","kind":"interactive",...} step. If the setup is a real device (wire, coil, solenoid, magnet, motor, generator), show it with one {"type":"illustration","query":"..."} step first.'
   if ((f.has('function') || f.has('motion')) && kind === 'demo')
     return 'This idea is about change: let the learner explore it with one {"type":"stage","kind":"interactive",...} step (a live figure with a slider and a "play" demonstration under the narration; for motion, a point at (x(t), y(t)) moving along its path with live readouts), then continue on the board.'
   return null

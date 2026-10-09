@@ -25,7 +25,8 @@ import { expandBoardDiagrams, nextTutorSteps } from '../lesson-ai'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES, EXPLICIT_TOOL } from './run'
-import { CONCEPT_ASK, beatVisualLine, readVisual, visualPlanHint } from '../visual-policy'
+import { CONCEPT_ASK, GENERIC_REASK, beatVisualLine, readVisual, visualPlanHint, visualText } from '../visual-policy'
+import { clipTargets } from '../lesson-clip'
 import { trimRequest } from './llm'
 import { selectTools, type AgentCtx } from './tools'
 import type { Block } from './types'
@@ -199,6 +200,12 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   out.push({ id: 'pool-trim-keeps-tools', group: 'static', pass: tr.tools?.length === 1, detail: `${tr.tools?.length ?? 0} tools after trim` })
   const bl = [beatVisualLine('Inside the human heart: the four chambers', 'demo'), beatVisualLine('Gradient of a curve as a rate of change', 'demo'), beatVisualLine('Expanding brackets: 3(x + 2)', 'demo')]
   out.push({ id: 'lesson-beat-visual-line', group: 'static', pass: !!bl[0]?.includes('"illustration"') && !!bl[1]?.includes('"stage"') && !bl[2], detail: bl.map(b => b?.slice(0, 40) ?? 'none').join(' | ') })
+  // The learner's electromagnetism repro: the beat writer is told to show the field (and the device), lessons on
+  // fields get a second clip, and EM questions are offered animation + picture tools, never a plot by default.
+  const emBeat = beatVisualLine('Scalar and Vector Line Integrals (Electromagnetism). Mapping a Path in a Field. Draw a winding path across a vector field', 'demo')
+  const emClips = clipTargets({ title: 'Faraday\'s Law of Induction', subject: 'Electromagnetism' }, [0, 1, 2, 3, 4, 5].map(i => ({ position: i, title: i === 4 ? 'A magnet moving through a coil' : `Beat ${i}`, goal: '', key_points: [], kind: 'demo' })))
+  const emAsk = selectTools({ mode: 'chat', restricted: false, lessonId: null, hasBoard: false }, 'Explain electromagnetism', 'Explain electromagnetism').map(t => t.def.name)
+  out.push({ id: 'em-repro-policy', group: 'static', pass: !!emBeat?.includes('field') && emClips.length === 2 && emAsk.includes('animate_concept') && emAsk.includes('find_illustration') && !emAsk.includes('plot'), detail: `beat ${emBeat ? 'field line' : 'none'}; clips at ${emClips.join(',')}; ask offers ${emAsk.join(',')}` })
   out.push(...(await illustrationStaticCases()))
   out.push(...onboardingStaticCases())
   return out
@@ -221,7 +228,7 @@ function evalCtx(admin: SupabaseClient, studentId: string, restricted = false): 
   }
 }
 
-interface ToolCase { id: string; msg: string; expect: string[]; board?: string }
+interface ToolCase { id: string; msg: string; expect: string[]; board?: string; topic?: string }
 const TOOL_CASES: ToolCase[] = [
   { id: 'board', msg: 'Can you explain on the whiteboard how a lever lets you lift heavy things?', expect: ['draw_on_board', 'animate_concept'] },
   { id: 'plot', msg: 'Graph y = x^2 - 4 and show me where it crosses the x-axis.', expect: ['plot', 'compute', 'run_python'] },
@@ -242,6 +249,8 @@ const TOOL_CASES: ToolCase[] = [
 /** Teaching space: the in-lesson Ask sheet (same chat agent, lesson context) must reach every visual tool. */
 const BOARD_CTX_PLACEHOLDER = '@board'
 const LESSON_CTX = 'They are inside the lesson "Gradients of curves" (lesson_id 00000000-0000-4000-8000-000000000000); get_lesson_digest says what it teaches: use it for questions about the lesson, but a request to draw, show, plot or explore goes straight to the visual tool.'
+const EM_TOPIC = 'Magnetic fields of currents. Section: the field around a straight current-carrying wire; field lines are circles; right-hand grip rule; a solenoid concentrates the field'
+const EM_LESSON_CTX = `They are inside the lesson "Magnetic fields of currents" (lesson_id 00000000-0000-4000-8000-000000000001). Answer about THIS lesson\'s content, with its notation and examples, and make the visual show that content. What the lesson teaches so far:\n<data>${EM_TOPIC}</data>`
 const LESSON_CASES: ToolCase[] = [
   { id: 'board', msg: 'Can you show me on the whiteboard how the gradient of a curve changes?', expect: ['draw_on_board', 'animate_concept', 'interactive', 'plot'] },
   { id: 'board-edit', msg: 'Circle the -5 from the last step on the board and say what it means.', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX_PLACEHOLDER },
@@ -254,6 +263,9 @@ const LESSON_CASES: ToolCase[] = [
   { id: 'animate', msg: 'Make a proper animated clip of a tangent line sliding along a curve.', expect: ['animate_concept', 'draw_on_board', 'interactive'] },
   { id: 'div-heart', msg: 'Explain how the heart pumps blood', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
   { id: 'div-ball', msg: 'Why does a ball thrown up come back down?', expect: ['simulate', 'animate_concept', 'plot'] },
+  // Inside an electromagnetism lesson, generic re-asks follow the lesson's content (the learner's repro).
+  { id: 'em-another-way', msg: 'Show me this step another way', expect: ['animate_concept', 'find_illustration', 'interactive'], board: EM_LESSON_CTX, topic: EM_TOPIC },
+  { id: 'em-dont-get', msg: "I don't get it", expect: ['animate_concept', 'find_illustration', 'interactive'], board: EM_LESSON_CTX, topic: EM_TOPIC },
 ]
 
 /** Routing policy: which visual tool fits which need (one model step each), and whether its spec is valid. */
@@ -280,10 +292,17 @@ const ROUTING_CASES: ToolCase[] = [
   { id: 'div-neuron', msg: 'How does a neuron send a signal?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
   { id: 'div-sine', msg: 'What is the sine function?', expect: ['plot', 'interactive', 'animate_concept'] },
   { id: 'div-algebra-stays-board', msg: 'Solve 2(x + 3) = 14 step by step', expect: ['draw_on_board', 'compute'] },
+  // Electromagnetism (the learner's own repro, 2026-10-09: graphs and plain lines, mostly talk): animations and pictures.
+  { id: 'em-explain', msg: 'Explain electromagnetism', expect: ['animate_concept', 'find_illustration', 'interactive'] },
+  { id: 'em-wire', msg: 'What is the magnetic field around a current-carrying wire?', expect: ['animate_concept', 'find_illustration', 'interactive', 'illustrate'] },
+  { id: 'em-induction', msg: 'Explain electromagnetic induction', expect: ['animate_concept', 'find_illustration', 'interactive'] },
+  { id: 'em-motor', msg: 'How does an electric motor work?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
+  { id: 'em-generator', msg: 'How does a generator make electricity?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
+  { id: 'em-solenoid', msg: 'What is a solenoid?', expect: ['find_illustration', 'animate_concept', 'illustrate'] },
 ]
 
 export async function lessonCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
-  const out = await toolCases(admin, studentId, only, LESSON_CASES.map(c => ({ ...c, board: c.board === BOARD_CTX_PLACEHOLDER ? `${LESSON_CTX}\n\n${BOARD_CTX}` : LESSON_CTX })), 'lesson', true)
+  const out = await toolCases(admin, studentId, only, LESSON_CASES.map(c => ({ ...c, board: c.board === BOARD_CTX_PLACEHOLDER ? `${LESSON_CTX}\n\n${BOARD_CTX}` : c.board ?? LESSON_CTX })), 'lesson', true)
   // The lesson board's own tutor (the re-teach / continue script): asked to let the learner explore, it hands the
   // lesson to a live figure (stage) or draws an exact diagram, and the script validates.
   if (!only || only.includes('tutor-stage')) {
@@ -306,11 +325,11 @@ export async function toolCases(admin: SupabaseClient, studentId: string, only?:
   const out: CaseResult[] = []
   for (const c of cases.filter(x => !only || only.includes(x.id))) {
     const t0 = Date.now()
-    const tools = selectTools({ ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now') }, c.msg, c.msg).map(t => t.def)
+    const tools = selectTools({ ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now'), visualTopic: c.topic ?? null }, c.msg, c.msg).map(t => t.def)
     try {
       // Same per-turn policy as runAgent: the visual-plan note for un-hinted concept questions, and a forced first tool call.
-      const plan = visualPlanHint(c.msg)
-      const force = EXPLICIT_TOOL.test(c.msg) || (!!plan && CONCEPT_ASK.test(c.msg))
+      const plan = visualPlanHint(visualText(c.msg, c.topic))
+      const force = EXPLICIT_TOOL.test(c.msg) || (!!plan && (CONCEPT_ASK.test(c.msg) || GENERIC_REASK.test(c.msg)))
       const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, toolChoice: force ? 'required' : 'auto', messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, ...(plan && !EXPLICIT_TOOL.test(c.msg) ? [{ role: 'system' as const, content: plan }] : []), { role: 'user', content: c.msg }] })
       const names = r.toolCalls.map(x => x.name)
       out.push({ id: `${group === 'tools' ? 'tool' : group === 'lesson' ? 'lesson' : 'route'}-${c.id}`, group, pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
