@@ -113,7 +113,7 @@ def test_layout_relations_no_overlap():
 
 def test_algorithm_state_sets():
     ir = {"vars": {"lo": 0, "hi": 9, "mid": "floor((lo+hi)/2)"}, "objects": [{"type": "cells", "id": "a", "values": [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]}],
-          "checks": [["true", "lo <= hi"]], "beats": [{"say": "x", "do": [["set", {"lo": "mid+1"}], ["set", {"hi": "mid-1"}]]}]}
+          "checks": [["true", "lo <= hi"]], "beats": [{"say": "x", "do": [["show", "a"], ["set", {"lo": "mid+1"}], ["set", {"hi": "mid-1"}]]}]}
     w, r = solved(ir)
     assert r["ok"], r
     st = w.states()
@@ -144,6 +144,24 @@ def test_circuit_vector_cycle_macros():
     O, S = P(w, "S.O"), P(w, "S.S")
     assert np.allclose(S - O, [4, 3], atol=1e-6)  # a + b = (3,1) + (1,2)
     assert np.allclose(P(w, "S.V") - O, [1, 2], atol=1e-6)
+
+
+def test_named_shapes_and_labels_must_match_the_solve():
+    # the Pythagoras scene that once passed: the 'inner square' was a parallelogram, sides labelled b and c had other lengths
+    r = GW.verify_ir(json.load(open(os.path.join(HERE, "fixtures_bad", "pythagoras_wrong.json"))))
+    assert not r["ok"]
+    txt = " ".join(r["problems"])
+    assert "called a square" in txt and "labelled 'c'" in txt
+
+
+def test_never_shown_and_transient_zero_size():
+    ir = {"vars": {"t": 0}, "objects": [{"type": "point", "id": "O", "at": [0, 0]}, {"type": "point", "id": "P"},
+                                         {"type": "segment", "id": "s", "from": "O", "to": "P"}, {"type": "circle", "id": "c", "center": "O", "radius": 1}],
+          "constraints": [["polar", "P", "O", "sin(t)", 0]],
+          "beats": [{"say": "x", "do": [["show", "s"], ["animate", "t", "pi"]]}]}
+    r = GW.verify_ir(ir)
+    assert not r["ok"] and any("'c' is never shown" in p for p in r["problems"])
+    assert not any("zero length" in p for p in r["problems"])  # s is zero only at t = 0 and t = pi
 
 
 if __name__ == "__main__":

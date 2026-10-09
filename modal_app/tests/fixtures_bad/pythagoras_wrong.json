@@ -1,0 +1,298 @@
+{
+ "title": "Pythagorean Theorem Proof",
+ "vars": {
+  "a": 3,
+  "b": 4,
+  "c": "sqrt(a**2 + b**2)"
+ },
+ "objects": [
+  {
+   "type": "point",
+   "id": "A",
+   "at": [
+    0,
+    0
+   ]
+  },
+  {
+   "type": "point",
+   "id": "B"
+  },
+  {
+   "type": "point",
+   "id": "C"
+  },
+  {
+   "type": "point",
+   "id": "D"
+  },
+  {
+   "type": "point",
+   "id": "E"
+  },
+  {
+   "type": "point",
+   "id": "F"
+  },
+  {
+   "type": "point",
+   "id": "G"
+  },
+  {
+   "type": "point",
+   "id": "H"
+  },
+  {
+   "type": "polygon",
+   "id": "t1",
+   "points": [
+    "A",
+    "E",
+    "H"
+   ],
+   "color": "accent",
+   "fill": 0.15
+  },
+  {
+   "type": "polygon",
+   "id": "t2",
+   "points": [
+    "E",
+    "B",
+    "F"
+   ],
+   "color": "accent",
+   "fill": 0.15
+  },
+  {
+   "type": "polygon",
+   "id": "t3",
+   "points": [
+    "F",
+    "C",
+    "G"
+   ],
+   "color": "accent",
+   "fill": 0.15
+  },
+  {
+   "type": "polygon",
+   "id": "t4",
+   "points": [
+    "G",
+    "D",
+    "H"
+   ],
+   "color": "accent",
+   "fill": 0.15
+  },
+  {
+   "type": "polygon",
+   "id": "inner_sq",
+   "points": [
+    "E",
+    "F",
+    "G",
+    "H"
+   ],
+   "color": "highlight",
+   "fill": 0.3
+  },
+  {
+   "type": "label",
+   "for": "A-E",
+   "text": "a"
+  },
+  {
+   "type": "label",
+   "for": "E-B",
+   "text": "b"
+  },
+  {
+   "type": "label",
+   "for": "E-F",
+   "text": "c"
+  },
+  {
+   "type": "equation",
+   "id": "eq1",
+   "lines": [
+    {
+     "sym": "(a+b)**2 = 4*(0.5*a*b) + c**2"
+    },
+    {
+     "sym": "a**2 + 2*a*b + b**2 = 2*a*b + c**2"
+    },
+    {
+     "sym": "a**2 + b**2 = c**2",
+     "note": "Pythagorean Theorem"
+    }
+   ]
+  },
+  {
+   "type": "readout",
+   "id": "ro",
+   "text": "a\u00b2 + b\u00b2 = {a**2} + {b**2} = {c**2}"
+  }
+ ],
+ "constraints": [
+  [
+   "distance",
+   "A",
+   "B",
+   "a+b"
+  ],
+  [
+   "horizontal",
+   "A",
+   "B"
+  ],
+  [
+   "vertical",
+   "B",
+   "C"
+  ],
+  [
+   "distance",
+   "B",
+   "C",
+   "a+b"
+  ],
+  [
+   "horizontal",
+   "C",
+   "D"
+  ],
+  [
+   "vertical",
+   "D",
+   "A"
+  ],
+  [
+   "distance",
+   "D",
+   "A",
+   "a+b"
+  ],
+  [
+   "collinear",
+   "A",
+   "E",
+   "B"
+  ],
+  [
+   "distance",
+   "A",
+   "E",
+   "a"
+  ],
+  [
+   "collinear",
+   "B",
+   "F",
+   "C"
+  ],
+  [
+   "distance",
+   "B",
+   "F",
+   "a"
+  ],
+  [
+   "collinear",
+   "C",
+   "G",
+   "D"
+  ],
+  [
+   "distance",
+   "C",
+   "G",
+   "a"
+  ],
+  [
+   "collinear",
+   "D",
+   "H",
+   "A"
+  ],
+  [
+   "distance",
+   "D",
+   "H",
+   "a"
+  ]
+ ],
+ "checks": [
+  [
+   "eq",
+   "a**2 + b**2",
+   "c**2"
+  ],
+  [
+   "eq",
+   "(a+b)**2",
+   "4*(0.5*a*b) + c**2"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "Consider a large square of side a plus b containing four identical right triangles.",
+   "do": [
+    [
+     "show",
+     "t1",
+     "t2",
+     "t3",
+     "t4"
+    ]
+   ]
+  },
+  {
+   "say": "The remaining space in the middle forms an inner square of side c.",
+   "do": [
+    [
+     "show",
+     "inner_sq"
+    ],
+    [
+     "highlight",
+     "inner_sq"
+    ]
+   ]
+  },
+  {
+   "say": "The total area of the large square equals the four triangles plus the inner square.",
+   "do": [
+    [
+     "show",
+     "eq1"
+    ],
+    [
+     "equation",
+     "eq1",
+     0
+    ]
+   ]
+  },
+  {
+   "say": "Expanding and simplifying yields a squared plus b squared equals c squared.",
+   "do": [
+    [
+     "equation",
+     "eq1",
+     1
+    ],
+    [
+     "equation",
+     "eq1",
+     2
+    ],
+    [
+     "show",
+     "ro"
+    ]
+   ]
+  }
+ ]
+}

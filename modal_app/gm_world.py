@@ -1312,6 +1312,43 @@ class World:
                 out.append(f"check {c!r} cannot be evaluated: {type(exc).__name__}: {str(exc)[:100]}")
         return out
 
+    def visibility_report(self) -> list[str]:
+        """Objects appear only when a beat shows them: a drawn object no beat ever shows is a scene that says more than it draws."""
+        shown = set()
+        if not self.ir.get("beats"):
+            return []
+
+        def add(x):
+            for y in _as_list(x):
+                if isinstance(y, list):
+                    add(y)
+                elif isinstance(y, str):
+                    y = y.split("[", 1)[0]
+                    if y in shown:
+                        continue
+                    shown.add(y)
+                    o = self.objs.get(y) or {}
+                    if o.get("type") == "group":
+                        add(o.get("members") or [])
+        for b in self.ir.get("beats") or []:
+            for a in b.get("do") or []:
+                a = _as_list(a)
+                if not a:
+                    continue
+                if a[0] in ("show", "flow", "equation", "highlight", "trace"):
+                    add(a[1:2] if a[0] in ("equation", "trace") else a[1:])
+                elif a[0] == "morph" and len(a) > 2:
+                    add(a[2])
+        out = []
+        for oid, o in self.objs.items():
+            t = o.get("type")
+            if t in ("point", "label", "group") or o.get("_auto") or o.get("_implicit") or "." in oid:
+                continue
+            if oid not in shown:
+                name = f"the {t} {oid!r}" if not oid.startswith("_") else f"a {t} without an id (give it one)"
+                out.append(f"{name} is never shown: objects appear only when a beat's \"show\" names them")
+        return out[:6]
+
     def equation_report(self) -> list[str]:
         """Equation objects: sym lines are parsed; a chain is checked for equivalence (same solutions); a line whose symbols are
         all vars must hold for the vars; chem equations must balance. Their LaTeX is generated here (never model-written)."""
@@ -1414,7 +1451,7 @@ class World:
         """Solve every state, verify, and fit to the stage. Returns {"ok", "problems", "warnings", "states": [...], "transform"}."""
         if self.problems:
             return {"ok": False, "problems": self.problems, "warnings": self.warnings}
-        probs = list(self.equation_report())
+        probs = list(self.equation_report()) + self.visibility_report()
         sts = self.states()
         solved = []
         X = None

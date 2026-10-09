@@ -145,6 +145,7 @@ and check each one against the concept like a strict teacher, e.g.:
   (if the incident ray travels right, the refracted ray also travels right); only a reflected ray comes back on the same side;
 - a tangent touches the curve at the point with the curve's slope; vectors add head to tail; a circuit loop is closed;
 - an algorithm's states step correctly; an equation's steps are valid and the answer is not on screen before it is derived;
+- the values the concept gives (20 m/s, 45 degrees, R = 2 ohms, the array, the equation) are the vars' values exactly;
 - every beat DOES what it SAYS: if the narration says the pieces are rearranged / something slides, grows or shifts, that beat must
   morph/animate/set it (showing a caption is not a rearrangement); a proof must actually show its steps, not just state the result.
 Directions are degrees from +x (0 = right, 90 = up, -90 = down). Ignore style. Return JSON only:
@@ -301,9 +302,10 @@ def variant(description, render, *, narration, context, aspect, examples, log, i
         except Exception as exc:  # noqa: BLE001
             ver = {"ok": False, "problems": [f"engine could not read the scene: {type(exc).__name__}: {str(exc)[:200]}"]}
         rec["problems"] = ver.get("problems", [])
-        if ver.get("ok") and not rec.get("reviewed") and (not t_end or time.time() < t_end - 80):
-            # verified = consistent; the review asks whether it is the RIGHT scene (from the solver's numbers)
-            rec["reviewed"] = True
+        if ver.get("ok") and rec.get("reviewed", 0) < 2 and (not t_end or time.time() < t_end - 80):
+            # verified = consistent; the review asks whether it is the RIGHT scene (from the solver's numbers). A scene repaired
+            # after a review is reviewed once more (a repair can trade one mistake for another)
+            rec["reviewed"] = rec.get("reviewed", 0) + 1
             sem = semantic_review(description, ir, aspect, log)
             rec["review"] = sem
             if sem:
@@ -321,6 +323,16 @@ def variant(description, render, *, narration, context, aspect, examples, log, i
             rec["error"] = f"repair: {type(exc).__name__}: {str(exc)[:200]}"
             break
         rec["verify_rounds"] += 1
+    if ver and not ver.get("ok") and ver.get("problems") and all(str(p).startswith("CONCEPT REVIEW") for p in ver["problems"]):
+        # the engine verifies it and only the reviewer still objects: keep it in the running with a penalty (the vision critic
+        # and the other variant decide) rather than lose the clip to a reviewer that may be wrong
+        try:
+            v2 = GW.verify_ir(ir, aspect)
+            if v2.get("ok"):
+                rec["review_unresolved"] = ver["problems"][:3]
+                ver = v2
+        except Exception:  # noqa: BLE001
+            pass
     rec["ir"] = ir
     rec["verify"] = ver
     rec["t_verify"] = round(time.time() - t0, 1)
@@ -353,6 +365,9 @@ def variant(description, render, *, narration, context, aspect, examples, log, i
         rec["error"] = "render failed: " + rec.get("render_error", "")[-300:]
         return rec
     rec.update(ok=True, ir=ir, code=code, verify=ver, res={k: v for k, v in res.items() if k != "video"}, score=score_render(ir, res, aspect, ver))
+    if rec.get("review_unresolved"):
+        rec["score"]["score"] = round(rec["score"]["score"] - 4, 2)
+        rec["score"]["review_unresolved"] = rec["review_unresolved"]
     return rec
 
 
@@ -375,7 +390,7 @@ def run(description: str, render, *, narration: dict | None = None, context: str
         recs = [f.result() for f in futs]
         T = {"variants_s": round(time.time() - t0, 1)}
         for r in recs:
-            rep["variants"].append({k: r.get(k) for k in ("idx", "ok", "verify_rounds", "render_rounds", "error", "t_plan", "t_verify", "t_render", "score", "problems", "review")})
+            rep["variants"].append({k: r.get(k) for k in ("idx", "ok", "verify_rounds", "render_rounds", "error", "t_plan", "t_verify", "t_render", "score", "problems", "review", "review_unresolved")})
         good = sorted([r for r in recs if r.get("ok")], key=lambda r: -r["score"]["score"])
         if not good:
             rep["error"] = "no variant verified and rendered: " + " | ".join((r.get("error") or "?")[:200] for r in recs)
