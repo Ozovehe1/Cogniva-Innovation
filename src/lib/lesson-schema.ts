@@ -1,3 +1,4 @@
+import { validateInteractive, type IxSpec } from './agent/interactive'
 /**
  * Live Tutor lesson "scene script".
  *
@@ -171,6 +172,21 @@ export interface CheckStep extends StepBase {
   reteach?: Step[]
 }
 
+/**
+ * The stage: a rich, live visual (a JSXGraph figure the learner drags, with sliders that can play themselves) takes over
+ * the lesson area, then hands back to the board. Narration ("say") plays while it is open; the lesson waits until the
+ * narration is done and the learner taps "Back to the board" (a recorded video closes it after the narration).
+ */
+export interface StageStep extends StepBase {
+  type: 'stage'
+  kind: 'interactive'
+  /** The figure as authored (validated with validateInteractive; the player normalises it into an IxSpec). */
+  spec: Record<string, unknown> | IxSpec
+  /** One slider glides from its min to its max when the stage opens (a demonstration), then hands control back. */
+  play?: { slider: string; seconds?: number }
+  caption?: string
+}
+
 export interface ManimClipStep extends StepBase {
   type: 'manim_clip'
   url: string
@@ -292,9 +308,10 @@ export type Step =
   | PauseStep
   | CheckStep
   | ManimClipStep
+  | StageStep
 
 export type StepType = Step['type']
-export const STEP_TYPES: StepType[] = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'pause', 'check', 'manim_clip', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera', 'morph', 'along', 'pulse', 'annotate']
+export const STEP_TYPES: StepType[] = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'pause', 'check', 'manim_clip', 'stage', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera', 'morph', 'along', 'pulse', 'annotate']
 
 /** Step types that can also be fired as cues during another step's narration. */
 export const ACTION_TYPES = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera', 'morph', 'along', 'pulse', 'annotate'] as const
@@ -633,6 +650,21 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: Ctx, cueOf?
       }
       break
     }
+    case 'stage': {
+      if (s.kind !== 'interactive') errs.push(`${at}.kind must be "interactive"`)
+      const v = validateInteractive(s.spec)
+      if (!v.spec) errs.push(...v.errors.slice(0, 4).map(e => `${at}.spec: ${e}`))
+      else {
+        // The raw spec is kept (it re-validates the same way on every load); the player normalises it again.
+        if (s.play !== undefined) {
+          const pl = isObj(s.play) ? s.play : null
+          if (!pl || !isStr(pl.slider) || !v.spec.sliders.some(x => x.name === pl.slider)) errs.push(`${at}.play.slider must name one of the spec's sliders`)
+          else if (pl.seconds !== undefined) optNum(pl, 'seconds', errs, `${at}.play`, 1, 20)
+        }
+      }
+      optStr(s, 'caption', errs, at, 300)
+      break
+    }
     case 'manim_clip':
       reqStr(s, 'url', errs, at, 1000)
       if (isStr(s.url) && !/^https:\/\/[^\s]+$/i.test(s.url) && !s.url.startsWith('/')) errs.push(`${at}.url must be an https URL`)
@@ -938,6 +970,7 @@ Return a JSON object {"steps": Step[]}. Each Step is one of:
 - {"type":"pause","ms": 200..10000}
 - {"type":"check","kind":"understand"|"choice"|"short","prompt","options"? (choice: 2..6),"answer"? (choice: index),"accept"? (short: accepted answers),"explanation"?}
 - {"type":"manim_clip","url","caption"?} — only reuse URLs you were given; never invent one.
+- {"type":"stage","kind":"interactive","spec":{...},"play"?:{"slider","seconds"?},"say","caption"?} — hands the whole lesson area to a LIVE figure the learner drags (JSXGraph), then back to the board. spec: {"title","x_range":[a,b],"y_range":[c,d],"functions"?:[{"name","expr"}],"points"?:[{"name","x","y"}],"gliders"?:[{"name","on": function or circle name,"x"? | "angle"?}],"circles"?:[{"name"?,"center","radius"}],"sliders"?:[{"name","min","max","value"}],"segments"?:[{"from","to"}],"readouts"?:[{"label","expr"}]} (expressions in x, slider names, and point coords as px/py for point P). "play" glides one slider min→max as a demonstration while "say" narrates it. Use it when exploring by hand teaches better than watching (tangent slope, unit circle, a parameter's effect); at most one per section.
 Motion (like Manim's ValueTracker and animate):
 - {"type":"set","vars":{"h":1}} — named numeric variables (letters only, not x, e or pi). Coordinates of line/arrow/point, secant x1/x2, tangent "at", and function "expr" may use them as expressions ("1 + h", "(1+h)^2"); write/math text may show a live value with {{expr}} or {{expr:2}} (2 decimals).
 - {"type":"animate","var":"h","to":0.05,"from"?,"ease"?:"smooth|linear|there_and_back"} — glides a variable; everything that depends on it moves continuously (a point sliding along a curve, a secant turning into a tangent, a live number counting).

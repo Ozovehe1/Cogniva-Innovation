@@ -19,7 +19,8 @@ import { checkScene } from './board-review'
 import { boardSnapshotPng } from './board-render'
 import { validateInteractive, interactiveSvg } from './interactive'
 import { checkSubstance, cleanSubstance, renderMathDiagram, repairSubstance, type DiagramLibrary } from './math-diagram'
-import type { Step } from '../lesson-schema'
+import { validateScript, type Step } from '../lesson-schema'
+import { expandBoardDiagrams, nextTutorSteps } from '../lesson-ai'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES } from './run'
@@ -120,6 +121,18 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   for (const [id, raw] of IX) { const v = validateInteractive(raw); const svg = v.spec ? sanitizeSvg(interactiveSvg(v.spec)).svg : null; out.push({ id, group: 'static', pass: !!v.spec && !!svg && svg.length > 500, detail: v.errors.join('; ').slice(0, 160) || `${svg?.length ?? 0} chars fallback` }) }
   const ixBad = [validateInteractive({ title: 'x', functions: [{ expr: 'constructor.constructor("alert(1)")()' }], points: [{ name: 'A', x: 0, y: 0 }] }), validateInteractive({ title: 'x', segments: [{ from: 'A', to: 'Q' }], points: [{ name: 'A', x: 0, y: 0 }] }), validateInteractive({ title: 'x', functions: [{ expr: 'x^2' }] })]
   out.push({ id: 'ix-rejects-bad-spec', group: 'static', pass: ixBad.every(v => !v.spec), detail: ixBad.map(v => v.errors[0] ?? 'ACCEPTED').join(' | ').slice(0, 160) })
+  // Teaching space: a stage step (live figure) validates and survives a reload; a board diagram request becomes a figure.
+  const stageRaw = { type: 'stage', kind: 'interactive', say: 'Drag P round the circle.', play: { slider: 'a', seconds: 4 }, spec: { title: 'Unit circle', x_range: [-1.6, 1.6], y_range: [-1.3, 1.3], sliders: [{ name: 'a', label: 'angle', min: 0, max: 6.28, value: 0.8 }], points: [{ name: 'O', x: 0, y: 0, draggable: false }, { name: 'P', x: 'cos(a)', y: 'sin(a)' }], circles: [{ center: 'O', radius: 1 }], segments: [{ from: 'O', to: 'P' }, { from: 'P', to: ['px', 0], dashed: true }], readouts: [{ label: 'cos a', expr: 'px' }, { label: 'sin a', expr: 'py' }] } }
+  const st1 = validateScript([stageRaw]), st2 = validateScript(st1.steps)
+  out.push({ id: 'lesson-stage-step', group: 'static', pass: st1.ok && st2.ok && st2.steps[0]?.type === 'stage', detail: [...st1.errors, ...st2.errors].join('; ').slice(0, 160) || 'valid, reloads' })
+  const stBad = validateScript([{ ...stageRaw, play: { slider: 'zz' } }])
+  out.push({ id: 'lesson-stage-rejects-bad', group: 'static', pass: !stBad.ok, detail: stBad.errors[0]?.slice(0, 160) ?? 'ACCEPTED' })
+  try {
+    const ex = await expandBoardDiagrams({ steps: [{ type: 'draw', id: 'v1', shape: { kind: 'diagram', library: 'sets', substance: 'Set A, B\nIntersecting(A, B)', x: 200, y: 80, w: 400, h: 300 } }] })
+    const vd = validateScript((ex as { steps: unknown[] }).steps)
+    const sh = (vd.steps[0] as { shape?: { kind?: string } } | undefined)?.shape
+    out.push({ id: 'lesson-board-diagram', group: 'static', pass: vd.ok && sh?.kind === 'figure', detail: vd.errors.join('; ').slice(0, 160) || 'figure on the lesson board' })
+  } catch (err) { out.push({ id: 'lesson-board-diagram', group: 'static', pass: false, detail: String(err).slice(0, 160) }) }
   out.push({ id: 'md-rejects-bad-substance', group: 'static', pass: badPred.length > 0 && badType.length > 0 && notSub.errors.length > 0, detail: [...badPred, ...badType, ...notSub.errors].join('; ').slice(0, 160) })
   return out
 }
@@ -159,6 +172,21 @@ const TOOL_CASES: ToolCase[] = [
   { id: 'animate', msg: 'Make me a proper animated clip showing a 3D cube rotating to explain volume.', expect: ['animate_concept', 'draw_on_board'] },
 ]
 
+/** Teaching space: the in-lesson Ask sheet (same chat agent, lesson context) must reach every visual tool. */
+const BOARD_CTX_PLACEHOLDER = '@board'
+const LESSON_CTX = 'They are inside the lesson "Gradients of curves" (lesson_id 00000000-0000-4000-8000-000000000000); use get_lesson_digest for what it teaches.'
+const LESSON_CASES: ToolCase[] = [
+  { id: 'board', msg: 'Can you show me on the whiteboard how the gradient of a curve changes?', expect: ['draw_on_board', 'animate_concept', 'interactive', 'plot'] },
+  { id: 'board-edit', msg: 'Circle the -5 from the last step on the board and say what it means.', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX_PLACEHOLDER },
+  { id: 'diagram', msg: 'Draw a Venn diagram of A = {1,2,3} and B = {3,4} for this lesson.', expect: ['math_diagram'] },
+  { id: 'interactive', msg: 'Let me drag a point along y = x^2 and watch the tangent slope change.', expect: ['interactive'] },
+  { id: 'plot', msg: 'Graph y = x^3 - 3x so I can see where the gradient is zero.', expect: ['plot', 'interactive'] },
+  { id: 'simulate', msg: 'Make something with a slider for the launch angle so I can see how far a ball goes.', expect: ['simulate', 'interactive'] },
+  { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['illustrate', 'draw_on_board'] },
+  { id: 'rag', msg: 'What did this lesson cover so far? Remind me of the example.', expect: ['get_lesson_digest', 'search_my_learning'] },
+  { id: 'animate', msg: 'Make a proper animated clip of a tangent line sliding along a curve.', expect: ['animate_concept', 'draw_on_board', 'interactive'] },
+]
+
 /** Routing policy: which visual tool fits which need (one model step each), and whether its spec is valid. */
 const BOARD_CTX = 'Earlier in this chat you drew a whiteboard scene "Solve 2x + 3 = -7". On the board now: t1 write "Solve 2x + 3 = -7" (step 1), m1 math "2x + 3 - 3 = -7 - 3" (step 2), m2 math "2x = -10" (step 3), m3 math "x = -5" (step 4).'
 const ROUTING_CASES: ToolCase[] = [
@@ -175,26 +203,41 @@ const ROUTING_CASES: ToolCase[] = [
   { id: 'board-revise', msg: 'On the board, can you rewrite 2x = -10 as x = -10/2 before the last line?', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX },
 ]
 
+export async function lessonCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
+  const out = await toolCases(admin, studentId, only, LESSON_CASES.map(c => ({ ...c, board: c.board === BOARD_CTX_PLACEHOLDER ? `${LESSON_CTX}\n\n${BOARD_CTX}` : LESSON_CTX })), 'lesson', true)
+  // The lesson board's own tutor (the re-teach / continue script): asked to let the learner explore, it hands the
+  // lesson to a live figure (stage) or draws an exact diagram, and the script validates.
+  if (!only || only.includes('tutor-stage')) {
+    const t0 = Date.now()
+    try {
+      const steps = await nextTutorSteps({ lesson: { title: 'The unit circle', subject: 'Mathematics', objectives: ['Read cos and sin as the coordinates of a point on the unit circle'] }, played: [{ type: 'write', id: 't1', text: 'The unit circle', x: 24, y: 24, size: 'lg', say: 'This is the unit circle.' } as Step], reason: 'continue', history: [{ reason: 'explain_differently' }] })
+      const kinds = steps.map(st => st.type === 'draw' ? `draw:${(st as { shape: { kind: string } }).shape.kind}` : st.type)
+      out.push({ id: 'lesson-tutor-visual', group: 'lesson', pass: steps.length > 0 && kinds.some(k => k === 'stage' || k === 'draw:figure' || k === 'animate' || k === 'draw:circle'), detail: kinds.join(', ').slice(0, 200), ms: Date.now() - t0 })
+    } catch (err) { out.push({ id: 'lesson-tutor-visual', group: 'lesson', pass: false, detail: String(err).slice(0, 160), ms: Date.now() - t0 }) }
+  }
+  return out
+}
+
 export async function routingCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
   return toolCases(admin, studentId, only, ROUTING_CASES, 'routing')
 }
 
-export async function toolCases(admin: SupabaseClient, studentId: string, only?: string[], cases: ToolCase[] = TOOL_CASES, group = 'tools'): Promise<CaseResult[]> {
+export async function toolCases(admin: SupabaseClient, studentId: string, only?: string[], cases: ToolCase[] = TOOL_CASES, group = 'tools', inLesson = false): Promise<CaseResult[]> {
   const ctx = evalCtx(admin, studentId)
   const out: CaseResult[] = []
   for (const c of cases.filter(x => !only || only.includes(x.id))) {
     const t0 = Date.now()
-    const tools = selectTools({ ...ctx, lessonId: null, hasBoard: !!c.board }, c.msg).map(t => t.def)
+    const tools = selectTools({ ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now') }, c.msg).map(t => t.def)
     try {
       const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, { role: 'user', content: c.msg }] })
       const names = r.toolCalls.map(x => x.name)
-      out.push({ id: `${group === 'tools' ? 'tool' : 'route'}-${c.id}`, group, pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
+      out.push({ id: `${group === 'tools' ? 'tool' : group === 'lesson' ? 'lesson' : 'route'}-${c.id}`, group, pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
       // Tool-arg validity: every call parsed as JSON with required fields present.
       const bad = r.toolCalls.filter(x => '__invalid' in x.args)
       const specErr = r.toolCalls.map(x => ('__invalid' in x.args ? null : ARG_CHECKS[x.name]?.(x.args) ?? null)).find(Boolean)
-      if (r.toolCalls.length) out.push({ id: `${group === 'tools' ? 'tool' : 'route'}-args-${c.id}`, group, pass: bad.length === 0 && !specErr, detail: bad.length ? 'invalid JSON args' : specErr ? `spec: ${specErr.slice(0, 160)}` : 'valid', model: r.model })
+      if (r.toolCalls.length) out.push({ id: `${group === 'tools' ? 'tool' : group === 'lesson' ? 'lesson' : 'route'}-args-${c.id}`, group, pass: bad.length === 0 && !specErr, detail: bad.length ? 'invalid JSON args' : specErr ? `spec: ${specErr.slice(0, 160)}` : 'valid', model: r.model })
     } catch (err) {
-      out.push({ id: `${group === 'tools' ? 'tool' : 'route'}-${c.id}`, group, pass: false, detail: `error: ${err instanceof Error ? err.message.slice(0, 160) : err}`, ms: Date.now() - t0 })
+      out.push({ id: `${group === 'tools' ? 'tool' : group === 'lesson' ? 'lesson' : 'route'}-${c.id}`, group, pass: false, detail: `error: ${err instanceof Error ? err.message.slice(0, 160) : err}`, ms: Date.now() - t0 })
     }
   }
   return out

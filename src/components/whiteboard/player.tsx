@@ -3,7 +3,8 @@ import 'katex/dist/katex.min.css'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ListOrdered, Lock, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
-import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type ManimClipStep, type Step } from '@/lib/lesson-schema'
+import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type ManimClipStep, type StageStep, type Step } from '@/lib/lesson-schema'
+import { StageView } from './stage'
 import { applyAction, buildBoard, compactPartition, contentBox, segmentStart, shapeBox, textBoxAt, unionBox, type BoardState, type Box } from './board-state'
 import { ActDurations, BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, MarkElement, ShapeElement, TextElement, type NoteMarkSpec } from './elements'
 import { loadGsap, needsGsap } from './gsap-fx'
@@ -75,6 +76,11 @@ export interface WhiteboardPlayerProps {
    * the board, given a moment to think, answered by themselves and the lesson carries on; clips have no Skip.
    */
   renderMode?: boolean
+  /**
+   * A board inside a chat answer (Ask, the in-lesson sheet): no "End of lesson" card, and no transcript box when there
+   * is at most one spoken line (a diagram's title) — the chat text already carries the explanation.
+   */
+  embedded?: boolean
 }
 
 export interface PlayerControl {
@@ -133,6 +139,7 @@ export function WhiteboardPlayer({
   controlRef,
   slow = false,
   renderMode = false,
+  embedded = false,
 }: WhiteboardPlayerProps) {
   const reduced = !!useReducedMotion()
   const [steps, setSteps] = useState<Step[]>(initialSteps)
@@ -365,7 +372,8 @@ export function WhiteboardPlayer({
   const blockersFor = useCallback((i: number, list: Step[]) => {
     const s = list[i]
     setPendingCheck(s?.type === 'check' ? i : null)
-    setClipIdx(s?.type === 'manim_clip' ? i : null)
+    // A Manim clip and a stage (live figure) both take the board's place until they hand back.
+    setClipIdx(s?.type === 'manim_clip' || s?.type === 'stage' ? i : null)
     setClipEnded(false)
   }, [])
 
@@ -797,7 +805,10 @@ export function WhiteboardPlayer({
   const lines = useMemo(() => steps.slice(sectionStart, cursor).flatMap((st, i) => stepLines(st, sectionStart + i)), [steps, cursor, sectionStart])
   const currentIdx = lines.length ? lines[lines.length - 1].index : -1
 
-  const clip = clipOpen && clipIdx !== null ? (steps[clipIdx] as ManimClipStep) : null
+  const overlayStep = clipOpen && clipIdx !== null ? steps[clipIdx] : null
+  const clip = overlayStep?.type === 'manim_clip' ? (overlayStep as ManimClipStep) : null
+  const stage = overlayStep?.type === 'stage' ? (overlayStep as StageStep) : null
+  const stageNarrating = !!stage && animIdx === clipIdx && doneId !== playId && started
   const check = pendingCheck !== null ? (steps[pendingCheck] as CheckStep) : null
   const progress = steps.length ? cursor / steps.length : 0
   const atEnd = cursor >= steps.length && !blocked
@@ -1013,10 +1024,26 @@ export function WhiteboardPlayer({
       <VarsContext.Provider value={varStore}>
       <BoardScale.Provider value={scale || 1}>
         <div className="relative">
+        {/* Stage: the live figure takes the board's place (the board stays mounted underneath, hidden). */}
+        <AnimatePresence>
+          {stage && clipIdx !== null && (
+            <StageView
+              key={`stage-${clipIdx}-${playOf[clipIdx] ?? 0}`}
+              stepKey={`${clipIdx}-${playOf[clipIdx] ?? 0}`}
+              step={stage}
+              narrating={stageNarrating}
+              reduced={!!reduced}
+              recording={renderMode}
+              onBack={() => { if (stageNarrating) narratorRef.current?.cancel(); setClipEnded(true); setClipIdx(null); setPlaying(true) }}
+            />
+          )}
+        </AnimatePresence>
         <div
           ref={node => { outerRef.current = node; boardEl.current = node }}
+          aria-hidden={stage ? true : undefined}
           className={cx(
             'wb-board relative w-full overflow-hidden rounded-[14px] border border-line bg-[#FDFCF9] shadow-[var(--shadow-card)]',
+            stage && 'pointer-events-none !absolute inset-x-0 top-0 invisible',
             layout && 'min-h-[220px]',
             layout && clip && 'min-h-[260px]',
           )}
@@ -1233,7 +1260,7 @@ export function WhiteboardPlayer({
                 onRespond={onCheck}
               />
             </div>
-          ) : atEnd && started && steps.length > 0 ? (
+          ) : atEnd && started && steps.length > 0 && !embedded ? (
             <motion.div
               key="end"
               initial={{ opacity: 0, y: 6 }}
@@ -1250,7 +1277,7 @@ export function WhiteboardPlayer({
       </div>
 
       {/* Transcript */}
-      <Transcript lines={lines} currentIdx={currentIdx} reduced={reduced} heading={multi ? `Section ${section + 1} · ${sectionTitle}` : undefined} aside={transcriptAside} />
+      {!(embedded && lines.filter(l => l.kind === 'say').length <= 1) && <Transcript lines={lines} currentIdx={currentIdx} reduced={reduced} heading={multi ? `Section ${section + 1} · ${sectionTitle}` : undefined} aside={transcriptAside} />}
       </>}
     </div>
   )

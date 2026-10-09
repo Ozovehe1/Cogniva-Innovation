@@ -12,7 +12,11 @@ import type { SimSpec } from '@/lib/agent/visual'
 import { ConfirmBlock } from './confirm'
 
 // JSXGraph (~1 MB) loads only when an interactive figure is on screen.
-const InteractiveFigure = dynamic(() => import('./interactive'), { ssr: false, loading: () => <div className="mt-3 flex aspect-[3/2] w-full items-center justify-center rounded-[10px] bg-[#FBFAF7]"><Spinner /></div> })
+const InteractiveFigure = dynamic(() => import('./interactive'), { ssr: false, loading: () => <FigureSkeletonLite /> })
+/** Same shape as the figure that is coming (no spinner). */
+function FigureSkeletonLite() {
+  return <div className="relative mt-3 aspect-[3/2] w-full overflow-hidden rounded-[10px] border border-line bg-[#FBFAF7]" aria-hidden="true"><div className="absolute inset-x-4 top-1/2 h-px bg-line-strong/70" /><div className="absolute inset-y-4 left-1/2 w-px bg-line-strong/70" /><div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/60 to-transparent" /></div>
+}
 
 const frame = 'overflow-hidden rounded-[14px] border border-line bg-surface shadow-[var(--shadow-card)]'
 const label = 'text-[11px] font-medium uppercase tracking-[0.08em] text-muted'
@@ -67,7 +71,7 @@ function BoardBlock({ block }: { block: Extract<Block, { kind: 'board' }> }) {
         <span className="truncate pl-3 text-[13px] text-ink-2"><RichText text={block.title} /></span>
       </div>
       <div className="p-2 sm:p-3">
-        <WhiteboardPlayer key={`${block.id}:${block.rev ?? 0}`} steps={block.steps} title={block.title} autoPlay={!!block.plot || !!block.diagram || !!block.start} initialIndex={block.start ?? 0} allowSkipChecks />
+        <WhiteboardPlayer key={`${block.id}:${block.rev ?? 0}`} steps={block.steps} title={block.title} autoPlay={!!block.plot || !!block.diagram || !!block.start} initialIndex={block.start ?? 0} allowSkipChecks embedded />
       </div>
     </div>
   )

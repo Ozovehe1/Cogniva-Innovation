@@ -110,7 +110,7 @@ export const emptyBoard = (vars: Vars = {}): BoardState => ({ els: [], axes: {},
 
 /* ───────────── Actions: a step's own action plus its narration cues ───────────── */
 
-export type Action = Exclude<Step, { type: 'check' | 'pause' | 'manim_clip' }> | CueAction
+export type Action = Exclude<Step, { type: 'check' | 'pause' | 'manim_clip' | 'stage' }> | CueAction
 
 export interface StepAction {
   /** 0 = the step's own action, k >= 1 = cues[k - 1]. */
@@ -444,7 +444,7 @@ export function animMs(step: Step | Action): number {
 
 /** How long to dwell on a step before the next one starts, in ms. */
 export function dwellMs(step: Step): number {
-  if (step.type === 'check' || step.type === 'manim_clip') return 0
+  if (step.type === 'check' || step.type === 'manim_clip' || step.type === 'stage') return 0
   const words = step.say ? step.say.trim().split(/\s+/).length : 0
   const reading = words ? Math.min(5200, 700 + words * 210) : 0
   return Math.max(animMs(step) + 320, reading)

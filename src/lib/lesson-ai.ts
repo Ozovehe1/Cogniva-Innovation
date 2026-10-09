@@ -74,6 +74,32 @@ export const SHOW_DONT_TELL = `Show, don't tell (the core of this tutor's teachi
 
 export interface GenMeta { ms: number; repaired: boolean; model: string | null; dropped: number; trace?: string[] }
 
+/**
+ * Exact maths diagrams on the lesson board: a draw step whose shape is {"kind":"diagram","library","substance",x,y,w,h}
+ * is laid out by Penrose (the same vetted libraries as the agent's math_diagram tool) and becomes a "figure" shape.
+ * A diagram that cannot be laid out is dropped (the validator never sees the pseudo-shape).
+ */
+export async function expandBoardDiagrams(raw: unknown): Promise<unknown> {
+  const list = (raw as { steps?: unknown })?.steps
+  if (!Array.isArray(list) || !list.some(st => (st as { shape?: { kind?: unknown } })?.shape?.kind === 'diagram')) return raw
+  const { renderMathDiagram } = await import('./agent/math-diagram')
+  const out: unknown[] = []
+  for (const st of list.slice(0, 40)) {
+    const sh = (st as { shape?: Record<string, unknown> })?.shape
+    if (sh?.kind !== 'diagram') { out.push(st); continue }
+    try {
+      const d = await renderMathDiagram(String(sh.library) as 'sets', String(sh.substance ?? '').replace(/\\n/g, '\n').replace(/;\s*/g, '\n'), { timeoutMs: 5_000 })
+      const bx = { x: Number(sh.x) || 200, y: Number(sh.y) || 80, w: Math.min(760, Number(sh.w) || 400), h: Math.min(440, Number(sh.h) || 300) }
+      const k = Math.min(bx.w / d.width, bx.h / d.height)
+      const w = Math.round(d.width * k), h = Math.round(d.height * k)
+      out.push({ ...(st as object), shape: { kind: 'figure', x: Math.round(bx.x + (bx.w - w) / 2), y: Math.round(bx.y + (bx.h - h) / 2), w, h, svg: d.svg, alt: typeof sh.alt === 'string' ? sh.alt.slice(0, 300) : undefined } })
+    } catch (err) {
+      console.warn('board diagram dropped:', err instanceof Error ? err.message.slice(0, 160) : err)
+    }
+  }
+  return { ...(raw as object), steps: out }
+}
+
 export async function generateSteps(
   prompt: string,
   opts: {
@@ -105,7 +131,7 @@ export async function generateSteps(
   const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace, deadline: opts.deadline, preferFast: opts.preferFast, onModel: (m: string) => { answered = m } }
   let raw: unknown
   try {
-    raw = await generateStructuredJson(prompt, gen)
+    raw = await expandBoardDiagrams(await generateStructuredJson(prompt, gen))
   } catch (err) {
     if (err instanceof GeminiQuotaError) throw err
     // Malformed JSON: fall through to repair with the error message.
@@ -155,7 +181,7 @@ ${JSON.stringify(raw).slice(0, 12000)}
 
 Return the corrected JSON object {"steps": [...]} only.`
   try {
-    raw = await generateStructuredJson(repairPrompt, gen)
+    raw = await expandBoardDiagrams(await generateStructuredJson(repairPrompt, gen))
     result = validateScript(raw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, knownVars: opts.knownVars, maxSteps: opts.maxSteps })
   } catch (err) {
     if (err instanceof GeminiQuotaError) throw err
@@ -468,6 +494,8 @@ ${SCRIPT_SCHEMA_PROMPT}
 
 ${LAYOUT_RULES}
 - Show, don't tell: re-teach with a picture or a moving demonstration on the board (draw, animate, move, transform, highlight), narrated as it happens; text only as short labels.
+- Exact maths pictures: {"type":"draw","shape":{"kind":"diagram","library":"sets"|"geometry"|"graph"|"vectors","substance": Penrose Substance lines separated by \\n,"x","y","w","h","alt"}} lays out a precise Venn diagram, triangle construction, tree or vector sum in that box (sets: Set A, B / Element x / Intersecting(A, B) / Subset(A, B) / Disjoint(A, B) / In(x, A) / Label A "text"; geometry: Point A, B, C / Triangle(A, B, C) / Bisector(A, B, C, D) / AngleMark(A, B, C) / RightAngle(A, B, C); graph: Node r, a / Parent(r, a); vectors: Vector u, v, w / Sum(w, u, v)). Highlight or annotate it afterwards by its id.
+- When exploring by hand teaches it better (a slope changing, a point on the unit circle, a parameter's effect), hand the lesson to a live figure with one "stage" step (see the schema), then continue on the board.
 - Return 4 to 9 steps; keep it brisk. You may clear part of the board first. New ids must not clash with existing ones unless you clear them first.
 - End with a check (kind "understand", or a short "choice" question) so the student can confirm. Do not add "reteach" to it.
 Return {"steps": [...]} only.`
