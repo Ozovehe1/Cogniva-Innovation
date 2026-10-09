@@ -23,10 +23,20 @@ export const WEAK_TOPICS: { topic: RegExp; want: RegExp; avoid: RegExp }[] = [
   { topic: /^(magnet|magnetic field|bar magnet)$/, want: /magnet.*field|field lines|bar magnet/i, avoid: /mri|logo/i },
 ]
 
-function weak(topic: string) {
+/** Words that do not change what a weak topic is ("Bohr model atom", "inside the human heart", "atomic structure"). */
+const WEAK_FILLER = new Set('showing model models structure inside human parts part simple shell shells electron electrons nucleus labelled labeled diagram picture'.split(' '))
+/** A labelled picture in another language is the wrong picture for an English lesson. */
+const OTHER_LANGUAGE = /ukrainian|russian|german|french|italian|polish|arabic|chinese|japanese|korean|hebrew|catalan|portuguese|turkish|persian|hindi|\b(ru|uk|fr|es|it|pl|zh|ja|ar)\b/i
+
+export function weak(topic: string) {
   const k = topic.toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim()
-  return WEAK_TOPICS.find(w => w.topic.test(k)) ?? null
+  const whole = WEAK_TOPICS.find(w => w.topic.test(k))
+  if (whole) return whole
+  // Word by word: every word names the topic or is filler, and at least one names it ("bohr model atom" is an atom).
+  const words = topicKey(topic).split(' ').filter(Boolean)
+  return WEAK_TOPICS.find(w => words.some(x => w.topic.test(x)) && words.every(x => w.topic.test(x) || WEAK_FILLER.has(x))) ?? null
 }
+const avoided = (w: (typeof WEAK_TOPICS)[number], title: string) => w.avoid.test(title) || OTHER_LANGUAGE.test(title)
 
 /** Drop blocked items; on a weak topic put the textbook picture first and the known-bad ones last. */
 export async function vetOrder<T extends { item: LibraryItem; score: number }>(hits: T[], topic: string, admin: SupabaseClient | null, trace?: string[]): Promise<T[]> {
@@ -35,7 +45,7 @@ export async function vetOrder<T extends { item: LibraryItem; score: number }>(h
   if (out.length < hits.length) trace?.push(`guard: blocked ${hits.length - out.length} illustration(s) for "${topic}"`)
   const w = weak(topic)
   if (w) {
-    const rank = (h: T) => (w.avoid.test(h.item.t) ? 2 : w.want.test(h.item.t) ? 0 : 1)
+    const rank = (h: T) => (avoided(w, h.item.t) ? 2 : w.want.test(h.item.t) ? 0 : 1)
     out = [...out].sort((a, b) => rank(a) - rank(b) || b.score - a.score)
   }
   return out
@@ -50,7 +60,7 @@ export function titleMatches(item: LibraryItem, topic: string): boolean {
   const have = new Set(tokens(`${item.t} ${item.k} ${item.d ?? ''}`))
   const hit = main.filter(w => have.has(w) || (SCHOOL_SYN[w] ?? []).some(s => have.has(s)))
   const w = weak(topic)
-  if (w && w.avoid.test(item.t)) return false
+  if (w && avoided(w, item.t)) return false
   return hit.length >= Math.ceil(main.length * 0.66)
 }
 
@@ -86,6 +96,9 @@ Return JSON only: {"depicts": "<what it shows, under 12 words>", "matches": <tru
 /** Title/tag check, then the vision check within the remaining budget. */
 export async function vetIllustration(item: LibraryItem, svg: string, topic: string, admin: SupabaseClient | null, opts: { deadline?: number; trace?: string[]; vision?: boolean } = {}): Promise<Verdict> {
   const titled = titleMatches(item, topic)
+  // A known-wrong kind of picture for a weak topic (an icon, a quantum cloud, another language) is out before vision.
+  const w = weak(topic)
+  if (w && avoided(w, item.t)) return { ok: false, confidence: null, depicts: item.t, via: 'title' }
   if (opts.vision === false || (opts.deadline && opts.deadline - Date.now() < 3000)) return { ok: titled, confidence: null, depicts: item.t, via: 'title' }
   const v = await visionVerdict(item, svg, topic, admin, opts).catch(() => null)
   if (!v) return { ok: titled, confidence: null, depicts: item.t, via: 'title' }
