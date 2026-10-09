@@ -139,6 +139,46 @@ export async function dispatchCompose(admin: SupabaseClient, job: Pick<ManimJob,
   }
 }
 
+/**
+ * Free-form animation (modal_app/gm_freeform.py), used by the agent's animate_concept tool: the render service plans a
+ * storyboard, has the model write a full Manim scene, renders it in a network-less sandbox, repairs errors from the
+ * traceback (max 3), checks the layout (overlaps, off-frame, phone-legible text) and a few frames with a vision model,
+ * repairs once, then renders the clip. If that fails it runs the template composer (dispatchCompose's path) itself, so the
+ * callback contract is the same as /compose. A render service without /freeform (older deploy) gets /compose.
+ * Its loop report (attempts, repairs, layout issues, critique, timings) goes next to the clip as `<n>.ff.json`.
+ */
+export async function dispatchFreeform(admin: SupabaseClient, job: Pick<ManimJob, 'id' | 'attempts'> & { prompt: string }, context = '', aspect: '16:9' | '9:16' = '16:9') {
+  if (!renderServiceConfigured()) return { ok: false as const, error: 'render service not configured' }
+  const attempt = job.attempts + 1
+  const path = `${job.id}/${attempt}.mp4`
+  const base = path.replace(/\.mp4$/, '')
+  const sign = (p: string) => admin.storage.from(MANIM_BUCKET).createSignedUploadUrl(p, { upsert: true })
+  const [{ data: signed, error: signErr }, { data: penSigned }, { data: repSigned }, { data: ffSigned }] = await Promise.all([
+    sign(path), sign(penPathFor(path)), sign(`${base}.report.json`), sign(`${base}.ff.json`),
+  ])
+  if (signErr || !signed) return { ok: false as const, error: `Could not create an upload URL: ${signErr?.message ?? 'unknown error'}` }
+  await admin.from('manim_jobs').update({ status: 'rendering', error: null, attempts: attempt, video_path: path }).eq('id', job.id)
+  try {
+    const res = await fetch(`${process.env.MODAL_RENDER_URL!.replace(/\/+$/, '')}/freeform`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Render-Token': process.env.RENDER_TOKEN! },
+      body: JSON.stringify({
+        job_id: job.id, description: job.prompt.slice(0, 4000), context: context.slice(0, 3000), narration: null, aspect,
+        upload_url: signed.signedUrl, paths_upload_url: penSigned?.signedUrl ?? null, report_upload_url: repSigned?.signedUrl ?? null,
+        ff_report_upload_url: ffSigned?.signedUrl ?? null,
+      }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (res.status === 404) return dispatchCompose(admin, { ...job, attempts: job.attempts }, null, context)
+    if (!res.ok) throw new Error(`render service answered ${res.status}: ${(await res.text()).slice(0, 300)}`)
+    return { ok: true as const }
+  } catch (err) {
+    const error = `Could not reach the free-form renderer: ${err instanceof Error ? err.message : String(err)}`
+    await admin.from('manim_jobs').update({ status: 'failed', error }).eq('id', job.id)
+    return { ok: false as const, error }
+  }
+}
+
 async function vetForRender(code: string, prompt: string | null): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
   const v = vetManimCode(code)
   if (!v.error) return { ok: true, code: v.code }

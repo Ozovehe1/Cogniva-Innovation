@@ -8,7 +8,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { generateManimCode } from './lesson-ai'
-import { dispatchCompose, dispatchRender, renderServiceConfigured, type ManimJob } from './manim'
+import { dispatchFreeform, dispatchRender, renderServiceConfigured, type ManimJob } from './manim'
 import { publicClipUrl } from './supabase/admin'
 import type { Step } from './lesson-schema'
 
@@ -32,9 +32,10 @@ export async function queueLessonClip(db: SupabaseClient, lessonId: string) {
   const { data: job, error } = await db.from('manim_jobs').insert({ lesson_id: lessonId, requested_by: l.owner_student_id, prompt, status: 'queued', auto_insert: true }).select('*').single()
   if (error || !job) return
   try {
-    // General visual composer first (plans and composes the scene from primitives, validated and gated on Modal);
-    // when it cannot reach the service, the free-form Manim path below is the fallback.
-    const composed = await dispatchCompose(db, { id: (job as ManimJob).id, attempts: 0, prompt }, null, `Lesson "${l.title}" (${l.subject}).`)
+    // The render service's scene language first (the model writes objects + relations; sympy, the constraint solver and
+    // the layout engine compute everything and verify it before rendering), then free-form Manim, then the template
+    // composer (all on Modal). When the service cannot be reached, the code path below is the last resort.
+    const composed = await dispatchFreeform(db, { id: (job as ManimJob).id, attempts: 0, prompt }, `Lesson "${l.title}" (${l.subject}).`)
     if (composed.ok) return
     const code = await generateManimCode(prompt, { lessonTitle: l.title, subject: l.subject })
     await db.from('manim_jobs').update({ code }).eq('id', (job as ManimJob).id)

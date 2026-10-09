@@ -1,0 +1,268 @@
+{
+ "title": "Pythagoras by rearrangement",
+ "vars": {
+  "a": 3,
+  "b": 4,
+  "c": "sqrt(a**2+b**2)",
+  "s": "a+b"
+ },
+ "objects": [
+  {
+   "type": "point",
+   "id": "P0",
+   "at": [
+    0,
+    0
+   ]
+  },
+  {
+   "type": "point",
+   "id": "P1"
+  },
+  {
+   "type": "point",
+   "id": "P2"
+  },
+  {
+   "type": "point",
+   "id": "P3"
+  },
+  {
+   "type": "point",
+   "id": "E"
+  },
+  {
+   "type": "point",
+   "id": "F"
+  },
+  {
+   "type": "point",
+   "id": "G"
+  },
+  {
+   "type": "point",
+   "id": "H"
+  },
+  {
+   "type": "polygon",
+   "id": "big",
+   "points": [
+    "P0",
+    "P1",
+    "P2",
+    "P3"
+   ],
+   "fill": 0,
+   "color": "ink"
+  },
+  {
+   "type": "polygon",
+   "id": "T1",
+   "points": [
+    "P0",
+    "E",
+    "H"
+   ],
+   "color": "a"
+  },
+  {
+   "type": "polygon",
+   "id": "T2",
+   "points": [
+    "E",
+    "P1",
+    "F"
+   ],
+   "color": "a"
+  },
+  {
+   "type": "polygon",
+   "id": "T3",
+   "points": [
+    "F",
+    "P2",
+    "G"
+   ],
+   "color": "a"
+  },
+  {
+   "type": "polygon",
+   "id": "T4",
+   "points": [
+    "G",
+    "P3",
+    "H"
+   ],
+   "color": "a"
+  },
+  {
+   "type": "polygon",
+   "id": "inner",
+   "points": [
+    "E",
+    "F",
+    "G",
+    "H"
+   ],
+   "color": "b",
+   "fill": 0.3,
+   "tex_label": "c^2"
+  },
+  {
+   "type": "equation",
+   "id": "eq",
+   "lines": [
+    {
+     "sym": "s**2 = 4*(a*b/2) + c**2"
+    },
+    {
+     "sym": "a**2+b**2=c**2",
+     "note": "the same square, so the leftover areas match"
+    }
+   ]
+  }
+ ],
+ "constraints": [
+  [
+   "horizontal",
+   "P0",
+   "P1"
+  ],
+  [
+   "distance",
+   "P0",
+   "P1",
+   "s"
+  ],
+  [
+   "perpendicular",
+   "P0-P1",
+   "P1-P2"
+  ],
+  [
+   "distance",
+   "P1",
+   "P2",
+   "s"
+  ],
+  [
+   "perpendicular",
+   "P1-P2",
+   "P2-P3"
+  ],
+  [
+   "distance",
+   "P2",
+   "P3",
+   "s"
+  ],
+  [
+   "ccw",
+   "P0",
+   "P1",
+   "P2"
+  ],
+  [
+   "on",
+   "E",
+   "P0-P1"
+  ],
+  [
+   "distance",
+   "P0",
+   "E",
+   "a"
+  ],
+  [
+   "on",
+   "F",
+   "P1-P2"
+  ],
+  [
+   "distance",
+   "P1",
+   "F",
+   "a"
+  ],
+  [
+   "on",
+   "G",
+   "P2-P3"
+  ],
+  [
+   "distance",
+   "P2",
+   "G",
+   "a"
+  ],
+  [
+   "on",
+   "H",
+   "P3-P0"
+  ],
+  [
+   "distance",
+   "P3",
+   "H",
+   "a"
+  ]
+ ],
+ "checks": [
+  [
+   "eq",
+   "area(inner)",
+   "c**2"
+  ]
+ ],
+ "beats": [
+  {
+   "say": "Start with a big square of side a plus b.",
+   "do": [
+    [
+     "show",
+     "big"
+    ]
+   ]
+  },
+  {
+   "say": "Place four copies of the right triangle in its corners.",
+   "do": [
+    [
+     "show",
+     "T1",
+     "T2",
+     "T3",
+     "T4"
+    ]
+   ]
+  },
+  {
+   "say": "The space left in the middle is a tilted square with side c, area c squared.",
+   "do": [
+    [
+     "show",
+     "inner"
+    ],
+    [
+     "equation",
+     "eq",
+     0
+    ]
+   ]
+  },
+  {
+   "say": "So a squared plus b squared equals c squared.",
+   "do": [
+    [
+     "equation",
+     "eq",
+     1
+    ],
+    [
+     "highlight",
+     "inner"
+    ]
+   ]
+  }
+ ]
+}

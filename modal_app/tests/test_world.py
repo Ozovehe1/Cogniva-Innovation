@@ -1,0 +1,138 @@
+"""Unit tests for the scene language solver/verifier (gm_world) and the gallery scenes. Run: python modal_app/tests/test_world.py
+(no Manim needed). Golden-frame rendering of the gallery is in test_golden.py (needs Manim + LaTeX)."""
+import json
+import math
+import os
+import sys
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+import gm_world as GW  # noqa: E402
+
+STAGE = [-4.5, -2.7, 4.5, 2.7]
+
+
+def solved(ir):
+    w = GW.World(ir)
+    r = w.build(STAGE)
+    return w, r
+
+
+def P(w, k):
+    return w.pos(k)
+
+
+def test_right_triangle_and_squares():
+    ir = {"vars": {"a": 3, "b": 4},
+          "objects": [{"type": "right_triangle", "id": "T", "legs": ["a", "b"]},
+                      {"type": "square_on", "id": "Sa", "side": ["T.A", "T.B"], "away": "T.C"},
+                      {"type": "square_on", "id": "Sb", "side": ["T.C", "T.A"], "away": "T.B"},
+                      {"type": "square_on", "id": "Sc", "side": ["T.B", "T.C"], "away": "T.A"}],
+          "checks": [["eq", "area(Sa)+area(Sb)", "area(Sc)"]], "beats": []}
+    w, r = solved(ir)
+    assert r["ok"], r
+    A, B, C = P(w, "T.A"), P(w, "T.B"), P(w, "T.C")
+    assert abs((B - A) @ (C - A)) < 1e-6
+    assert abs(np.linalg.norm(B - C) - 5) < 1e-6
+    assert abs(GW._shoelace([P(w, x) for x in ["T.B", "T.C", "Sc.2", "Sc.1"]])) - 25 < 1e-5
+    # squares are outward: their far corners are on the other side of the side from the opposite vertex
+    side = lambda p, q, r_: np.sign((q - p)[0] * (r_ - p)[1] - (q - p)[1] * (r_ - p)[0])  # noqa: E731
+    assert side(B, C, P(w, "Sc.1")) != side(B, C, A)
+
+
+def test_pythagoras_rearrangement_constraints():
+    ir = json.load(open(os.path.join(HERE, "fixtures", "pythagoras.json")))
+    w, r = solved(ir)
+    assert r["ok"], r
+    assert abs(w.measure_env(w.X, w.state_vals)["area"]("inner") - 25) < 1e-6
+
+
+def test_snell_all_states():
+    ir = {"vars": {"n1": 1.0, "n2": 1.5, "t1": "40*deg", "t2": "asin(n1*sin(t1)/n2)"},
+          "objects": [{"type": "point", "id": "O", "at": [0, 0]}, {"type": "point", "id": "N", "at": [0, 2]}, {"type": "point", "id": "S"},
+                      {"type": "point", "id": "T"}, {"type": "point", "id": "M", "at": [0, -2]}],
+          "constraints": [["polar", "S", "O", 3, "pi/2+t1"], ["polar", "T", "O", 3, "-pi/2+t2"]],
+          "checks": [["eq", "angle(N,O,S)", "t1"], ["eq", "angle(M,O,T)", "t2"], ["eq", "n1*sin(angle(N,O,S))", "n2*sin(angle(M,O,T))"]],
+          "beats": [{"say": "x", "do": [["animate", "t1", "70*deg"]]}]}
+    w, r = solved(ir)
+    assert r["ok"], r
+    assert len(w.solved) >= 4  # start + 3 samples of the animation, each verified
+
+
+def test_wrong_claim_is_caught_with_hint():
+    ir = {"vars": {"t1": "30*deg"}, "objects": [{"type": "point", "id": "O", "at": [0, 0]}, {"type": "point", "id": "N", "at": [0, 2]}, {"type": "point", "id": "S"}],
+          "constraints": [["polar", "S", "O", 3, "-pi/2+t1"]], "checks": [["eq", "angle(N,O,S)", "t1"]], "beats": []}
+    w, r = solved(ir)
+    assert not r["ok"]
+    assert any("180 degrees" in p for p in r["problems"]), r["problems"]
+
+
+def test_tangent_to_function():
+    ir = {"vars": {"x0": 1},
+          "objects": [{"type": "axes", "id": "ax", "x": [-1, 3], "y": [-1, 5], "unit": [1, 0.8]}, {"type": "function", "id": "f", "on": "ax", "expr": "x**2"},
+                      {"type": "point", "id": "T", "on": "ax", "at": ["x0", "x0**2"]}, {"type": "point", "id": "U"}],
+          "constraints": [["tangent", "T-U", "f", "x0"], ["distance", "T", "U", 1.5], ["right_of", "U", "T", 0]],
+          "checks": [["eq", "deriv(f, x0)", "2*x0"]], "beats": []}
+    w, r = solved(ir)
+    assert r["ok"], r
+    T, U = P(w, "T"), P(w, "U")
+    s = (U - T)[1] / (U - T)[0] / 0.8  # world slope back to axes units
+    assert abs(s - 2) < 1e-4
+
+
+def test_equation_chain_and_chem():
+    ok = {"objects": [{"type": "equation", "id": "e", "lines": [{"sym": "3*(y-5)=12"}, {"sym": "y-5=4"}, {"sym": "y=9"}]},
+                      {"type": "equation", "id": "c", "chem": "6CO2 + 6H2O -> C6H12O6 + 6O2"}], "beats": []}
+    w, r = solved(ok)
+    assert r["ok"], r
+    assert "3" in w.objs["e"]["_lines"][0]["tex"]
+    bad = {"objects": [{"type": "equation", "id": "e", "lines": [{"sym": "3*(y-5)=12"}, {"sym": "y-5=9"}]},
+                       {"type": "equation", "id": "c", "chem": "CO2 + H2O -> C6H12O6 + O2"}], "beats": []}
+    w, r = solved(bad)
+    assert not r["ok"]
+    assert any("does not follow" in p for p in r["problems"]) and any("not balanced" in p for p in r["problems"]), r["problems"]
+
+
+def test_vars_lines_must_hold():
+    ir = {"vars": {"V": 12, "R": 2, "I": "V/R"}, "objects": [{"type": "equation", "id": "e", "lines": [{"sym": "V = I*R"}, {"sym": "I = 6"}], "chain": "none"}], "beats": []}
+    assert solved(ir)[1]["ok"]
+    ir["vars"]["I"] = "V*R"
+    assert not solved(ir)[1]["ok"]
+
+
+def test_layout_relations_no_overlap():
+    ir = {"objects": [{"type": "box", "id": k, "text": k} for k in ("sunlight", "water", "carbon dioxide", "leaf", "glucose", "oxygen")],
+          "constraints": [["column", ["sunlight", "water", "carbon dioxide"], 0.4], ["left_of", "water", "leaf", 1.2], ["right_of", "glucose", "leaf", 1.2],
+                          ["right_of", "oxygen", "leaf", 1.2], ["column", ["glucose", "oxygen"], 0.6], ["aligned", "h", ["water", "leaf"]]], "beats": []}
+    w, r = solved(ir)
+    assert r["ok"], r
+    assert not [x for x in w._apart(w.X, w.state_vals) if x > 0.05]
+
+
+def test_algorithm_state_sets():
+    ir = {"vars": {"lo": 0, "hi": 9, "mid": "floor((lo+hi)/2)"}, "objects": [{"type": "cells", "id": "a", "values": [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]}],
+          "checks": [["true", "lo <= hi"]], "beats": [{"say": "x", "do": [["set", {"lo": "mid+1"}], ["set", {"hi": "mid-1"}]]}]}
+    w, r = solved(ir)
+    assert r["ok"], r
+    st = w.states()
+    assert st[1][1]["lo"] == 5 and st[2][1]["hi"] == 6
+
+
+def test_unsafe_expressions_rejected():
+    for bad in ("__import__('os').system('id')", "().__class__", "open('x')", "a.b"):
+        ir = {"vars": {"x": bad}, "beats": []}
+        w, r = solved(ir)
+        assert not r["ok"], bad
+    assert GW.fmt_template("{__import__}", {}) == "{__import__}"
+
+
+if __name__ == "__main__":
+    n = 0
+    for k, f in list(globals().items()):
+        if k.startswith("test_") and callable(f):
+            f()
+            n += 1
+            print("ok", k)
+    print(n, "tests passed")

@@ -36,7 +36,7 @@ function run(cmd, args, { timeoutMs = 10 * 60_000, env = process.env, quiet = fa
 }
 
 const APPS = [
-  { file: 'modal_app/manim_render.py', deps: ['modal_app/pen_export.py', 'modal_app/gm_scene.py', 'modal_app/gm_compose.py', 'modal_app/gm_llm.py', 'modal_app/gm_grammar.md', 'modal_app/gm_parts.py', 'modal_app/gm_rigs.py', 'modal_app/gm_refdata.py', 'modal_app/gm_mesh3d.py', 'modal_app/gm_partcompose.py', 'modal_app/gm_memory.json', 'modal_app/lesson_video.py', 'modal_app/lesson_video_clock.js'], urlRe: /https:\/\/[a-z0-9-]+--geniusmap-manim-render[a-z0-9-]*\.modal\.run/i, env: 'MODAL_RENDER_URL' },
+  { file: 'modal_app/manim_render.py', deps: ['modal_app/pen_export.py', 'modal_app/gm_scene.py', 'modal_app/gm_compose.py', 'modal_app/gm_llm.py', 'modal_app/gm_grammar.md', 'modal_app/gm_parts.py', 'modal_app/gm_rigs.py', 'modal_app/gm_refdata.py', 'modal_app/gm_mesh3d.py', 'modal_app/gm_partcompose.py', 'modal_app/gm_memory.json', 'modal_app/gm_freeform.py', 'modal_app/gm_ffkit.py', 'modal_app/gm_ffprobe.py', 'modal_app/gm_manim_docs.json', 'modal_app/lesson_video.py', 'modal_app/lesson_video_clock.js'], urlRe: /https:\/\/[a-z0-9-]+--geniusmap-manim-render[a-z0-9-]*\.modal\.run/i, env: 'MODAL_RENDER_URL' },
   { file: 'modal_app/tts.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-tts[a-z0-9-]*\.modal\.run/i, env: 'MODAL_TTS_URL' },
   // Python sandbox for the agent's run_python tool (no network, 1 CPU, 1 GiB, 20 s per run).
   { file: 'modal_app/py_sandbox.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-py[a-z0-9-]*\.modal\.run/i, env: 'MODAL_PY_URL' },
@@ -89,14 +89,16 @@ function main() {
   const gem2 = (process.env.GEMINI_API_KEY_2 ?? '').trim()
   const gem3 = (process.env.GEMINI_API_KEY_3 ?? '').trim()
   const gem4 = (process.env.GEMINI_API_KEY_4 ?? '').trim()
-  const sec = run(py, ['-m', 'modal', 'secret', 'create', 'geniusmap-render', `RENDER_TOKEN=${process.env.RENDER_TOKEN}`, `APP_URL=${appUrl}`, ...(gem ? [`GEMINI_API_KEY=${gem}`] : []), ...(gem2 ? [`GEMINI_API_KEY_2=${gem2}`] : []), ...(gem3 ? [`GEMINI_API_KEY_3=${gem3}`] : []), ...(gem4 ? [`GEMINI_API_KEY_4=${gem4}`] : []), '--force'], { env, quiet: true, timeoutMs: 120_000 })
+  // GROQ_API_KEY: the free-form animation pipeline (modal_app/gm_freeform.py) plans and writes scenes with the Groq chain first.
+  const groq = (process.env.GROQ_API_KEY ?? '').trim()
+  const sec = run(py, ['-m', 'modal', 'secret', 'create', 'geniusmap-render', `RENDER_TOKEN=${process.env.RENDER_TOKEN}`, `APP_URL=${appUrl}`, ...(gem ? [`GEMINI_API_KEY=${gem}`] : []), ...(gem2 ? [`GEMINI_API_KEY_2=${gem2}`] : []), ...(gem3 ? [`GEMINI_API_KEY_3=${gem3}`] : []), ...(gem4 ? [`GEMINI_API_KEY_4=${gem4}`] : []), ...(groq ? [`GROQ_API_KEY=${groq}`] : []), '--force'], { env, quiet: true, timeoutMs: 120_000 })
   if (!sec.ok) {
     let safe = sec.out.split(process.env.RENDER_TOKEN).join('***')
-    if (gem) safe = safe.split(gem).join('***')
+    for (const v of [gem, gem2, gem3, gem4, groq]) if (v) safe = safe.split(v).join('***')
     warn('modal secret create failed:\n' + safe.slice(-2000))
     return
   }
-  log(`secret geniusmap-render updated (RENDER_TOKEN, APP_URL=${appUrl}${gem ? ', GEMINI_API_KEY' : ''}${gem2 ? ', GEMINI_API_KEY_2' : ''}${gem3 ? ', GEMINI_API_KEY_3' : ''}${gem4 ? ', GEMINI_API_KEY_4' : ''})`)
+  log(`secret geniusmap-render updated (RENDER_TOKEN, APP_URL=${appUrl}${gem ? ', GEMINI_API_KEY' : ''}${gem2 ? ', GEMINI_API_KEY_2' : ''}${gem3 ? ', GEMINI_API_KEY_3' : ''}${gem4 ? ', GEMINI_API_KEY_4' : ''}${groq ? ', GROQ_API_KEY' : ''})`)
 
   // Deploy. A first deploy builds the image on Modal and can take several minutes.
   for (const app of APPS.filter(a => c.files.includes(a.file))) {

@@ -19,7 +19,7 @@ import { lessonDigest, masteryContext } from '../lesson-digest'
 import { QUESTION_RULES, checkItem, rawItems } from '../question-quality'
 import { createTopicLesson, lessonFields } from '../path'
 import { runDraftWork } from '../lesson-drafting'
-import { dispatchCompose, dispatchRender, renderServiceConfigured, type ManimJob } from '../manim'
+import { dispatchFreeform, dispatchRender, renderServiceConfigured, type ManimJob } from '../manim'
 import { generateManimCode } from '../lesson-ai'
 import { chatJson } from './llm'
 import { buildPlot, makeBoardScene, makeIllustration, validateSim } from './visual'
@@ -709,18 +709,33 @@ const VISUAL: ToolSpec[] = [
     },
   },
   {
-    def: { name: 'animate_concept', description: 'Request a rendered 3Blue1Brown-style animation clip (takes 1-3 minutes; a placeholder shows until it is ready). Max 3 a day. Use for motion the board cannot show (3D, flows).', parameters: obj({ brief: { type: 'string', description: 'what the 10-25 s clip shows, in order' } }, ['brief']) },
+    def: { name: 'animate_concept', description: 'Request a rendered 3Blue1Brown-style animation clip, written as real Manim code from a storyboard and checked by rendering (takes 1-3 minutes; a placeholder shows until it is ready). Max 3 a day. Use for motion the board cannot show (3D, flows, a proof by moving pieces, a point tracing a curve).', parameters: obj({ brief: { type: 'string', description: 'the learning objective, then what the 10-25 s clip shows, in order, with the exact numbers and formulas' } }, ['brief']) },
     tier: 'visual', modes: ['chat'], label: 'Starting an animation',
     run: async (a, ctx) => {
       if (!renderServiceConfigured()) return { error: 'The animation service is not available right now. Use draw_on_board instead.' }
       if (!(await takeUsage(ctx, 'animations', ctx.limits.animations))) return { error: `Daily limit of ${ctx.limits.animations} animations reached. Use draw_on_board instead.` }
       const prompt = `${s(a.brief, 1500)} 10 to 25 seconds, one clear idea, no paragraphs of text.`
-      const { data: job, error } = await ctx.admin.from('manim_jobs').insert({ lesson_id: null, requested_by: ctx.studentId, prompt, status: 'queued', auto_insert: false }).select('*').single()
+      // Asked from inside a lesson: the clip belongs to that lesson. While the lesson is still being drafted (sections not
+      // yet released), the finished clip is also placed into the next released section of the lesson player
+      // (lesson-clip.ts attachReadyClips); either way it shows in the tutor sheet as soon as it is ready.
+      let lessonId: string | null = null
+      let autoInsert = false
+      if (ctx.lessonId) {
+        const { data: l } = await ctx.admin.from('lessons').select('id, owner_student_id, generated_by').eq('id', ctx.lessonId).maybeSingle()
+        if (l && l.owner_student_id === ctx.studentId) {
+          lessonId = l.id
+          if (l.generated_by === 'ai') {
+            const { count } = await ctx.admin.from('lesson_sections').select('id', { count: 'exact', head: true }).eq('lesson_id', l.id).neq('status', 'ready')
+            autoInsert = (count ?? 0) > 0
+          }
+        }
+      }
+      const { data: job, error } = await ctx.admin.from('manim_jobs').insert({ lesson_id: lessonId, requested_by: ctx.studentId, prompt, status: 'queued', auto_insert: autoInsert }).select('*').single()
       if (error || !job) return { error: 'Could not queue the animation.' }
       const j = job as ManimJob
       after(async () => {
         try {
-          const composed = await dispatchCompose(ctx.admin, { id: j.id, attempts: 0, prompt }, null, 'Ask GeniusMap chat explanation.')
+          const composed = await dispatchFreeform(ctx.admin, { id: j.id, attempts: 0, prompt }, lessonId ? 'Asked by the learner inside a lesson, to see this idea move.' : 'Ask GeniusMap chat explanation.')
           if (composed.ok) return
           const code = await generateManimCode(prompt)
           await ctx.admin.from('manim_jobs').update({ code }).eq('id', j.id)

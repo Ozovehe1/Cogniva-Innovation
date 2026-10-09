@@ -2,6 +2,8 @@
 GeniusMap Manim render service (Modal app "geniusmap-manim").
 
 POST /render  (header X-Render-Token must equal the RENDER_TOKEN secret)
+POST /freeform  free-form Manim for a concept (gm_freeform.py: plan -> code -> sandboxed render -> repair -> critic), template
+              composer fallback; same upload URLs and callback as /compose
 POST /video   renders a lesson as an MP4 (function lesson_video: parts in parallel on a virtual clock, see lesson_video.py)
               and calls back /api/video/callback
   body: {"job_id": str, "code": str, "scene_name": str, "upload_url": str, "paths_upload_url"?: str}
@@ -64,6 +66,18 @@ render_image = (
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_mesh3d.py"), "/root/gm_mesh3d.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_partcompose.py"), "/root/gm_partcompose.py")
     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_memory.json"), "/root/gm_memory.json")
+    # Free-form generation with a render-and-fix loop (the agent's animate_concept clips): planner -> coder -> sandbox -> critic.
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_freeform.py"), "/root/gm_freeform.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_ffkit.py"), "/root/gm_ffkit.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_ffprobe.py"), "/root/gm_ffprobe.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_manim_docs.json"), "/root/gm_manim_docs.json")
+    # The open scene language: the model writes objects + relations + vars + checks; sympy, the constraint solver and the
+    # layout engine compute everything; scenes are verified before rendering (gm_scenegen.py -> gm_world.py -> gm_stage.py).
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_world.py"), "/root/gm_world.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_stage.py"), "/root/gm_stage.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_scenegen.py"), "/root/gm_scenegen.py")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_ir_doc.md"), "/root/gm_ir_doc.md")
+    .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gm_gallery.json"), "/root/gm_gallery.json")
 )
 
 web_image = (
@@ -541,6 +555,74 @@ def compose(job_id: str, description: str, narration: dict | None, context: str,
     return report
 
 
+# ───────────── Free-form scenes (gm_freeform.py) ─────────────
+# The sandbox: model-written code runs only here, with no network, no secrets, capped CPU / memory / time, and rlimits
+# on the manim subprocess (gm_freeform.render_local). The AST allow-list runs before it, in the orchestrator.
+@app.function(image=render_image, timeout=300, cpu=4.0, memory=4096, max_containers=12, block_network=True, scaledown_window=120)
+def ff_render(code: str, quality: str = "l", aspect: str = "16:9", want_frames: bool = True, pen: bool = False) -> dict:
+    import sys
+    sys.path.insert(0, "/root")
+    import gm_freeform
+
+    return gm_freeform.render_local(code, quality, aspect, want_frames, pen, manim_bin="manim", kit_dir="/root", cpu_s=600, mem_mb=3800)
+
+
+@app.function(image=render_image, secrets=[secret], timeout=3600, cpu=1.0, memory=2048, max_containers=12)
+def freeform(job_id: str, description: str, narration: dict | None, context: str, upload_url: str, paths_upload_url: str | None,
+             report_upload_url: str | None, ff_report_upload_url: str | None, aspect: str = "16:9", fallback: bool = True, callback: bool = True) -> dict:
+    """Free-form animation: plan -> code -> sandbox render (repair errors <= 3) -> layout + vision critic -> one visual repair.
+    If it cannot produce a clip, the template composer (compose: part graph, then the grammar composer) takes over, so the
+    request never ends without a clip unless both fail (then the web app's last-resort code path runs on the failed callback)."""
+    import sys
+    import time
+
+    sys.path.insert(0, "/root")
+    import gm_freeform
+
+    if callback:
+        _callback(job_id, "rendering")
+    t0 = time.time()
+    log: list = []
+
+    def render(code, quality, asp, want_frames, pen):
+        return ff_render.remote(code, quality, asp, want_frames, pen)
+
+    # 1) the scene language (verified before rendering, best of 2), 2) free-form Manim code with the render-and-fix loop,
+    # 3) the template composer (below, on failure)
+    import gm_scenegen
+
+    r = gm_scenegen.run(description, render, narration=narration, context=context, aspect=aspect, log=log)
+    if not r.get("ok"):
+        log.append(f"scene language failed ({(r.get('error') or '')[:200]}); free-form code next")
+        first = r.get("report") or {}
+        r = gm_freeform.run(description, render, narration=narration, context=context, aspect=aspect, log=log)
+        (r.setdefault("report", {}))["scene_ir_attempt"] = {k: first.get(k) for k in ("error", "variants", "examples")}
+    rep = r.get("report") or {}
+    rep.pop("_frames", None)
+    rep.pop("_frames_v1", None)
+    rep.pop("_frames_v2", None)
+    rep["log"] = log[-40:]
+    rep["wall_s"] = round(time.time() - t0, 1)
+    rep["ok"] = bool(r.get("ok"))
+    safe = lambda o: float(o) if hasattr(o, "__float__") else str(o)  # noqa: E731
+    if r.get("ok") and _put(upload_url, r["video"], "video/mp4"):
+        if r.get("pen"):
+            _put(paths_upload_url, r["pen"], "application/json")
+        rep["bytes"] = len(r["video"])
+        _put(ff_report_upload_url or report_upload_url, json.dumps(rep, default=safe).encode(), "application/json")
+        if callback:
+            _callback(job_id, "done", None, {"composed": True, "engine": rep.get("engine", "freeform"), "code": r["code"], "timings": rep.get("timings")})
+        return json.loads(json.dumps(rep, default=safe))
+    rep["fallback"] = "template composer" if fallback else None
+    _put(ff_report_upload_url or report_upload_url, json.dumps(rep, default=safe).encode(), "application/json")
+    print(f"freeform {job_id} failed ({rep.get('error')}); fallback={fallback}")
+    if fallback:
+        compose.spawn(job_id, description, narration, context, upload_url, paths_upload_url, report_upload_url, "auto", callback, None, "auto")
+    elif callback:
+        _callback(job_id, "failed", (rep.get("error") or "free-form failed")[:3000], {"composed": True})
+    return json.loads(json.dumps(rep, default=safe))
+
+
 def gm_partcompose_code(scene: dict) -> str:
     import gm_parts
     return gm_parts.scene_code(scene)
@@ -594,6 +676,22 @@ def web():
                              req.models, req.engine)
         return {"accepted": True, "call_id": call.object_id}
 
+    class FreeformRequest(ComposeRequest):
+        ff_report_upload_url: str | None = Field(default=None, max_length=4000)
+        aspect: str = Field(default="16:9", pattern=r"^(16:9|9:16)$")
+        fallback: bool = True
+
+    @api.post("/freeform", status_code=202)
+    def freeform_endpoint(req: FreeformRequest, x_render_token: str | None = Header(default=None)):
+        # Concept in; free-form Manim with a render-and-fix loop (template composer as the fallback).
+        _auth(x_render_token)
+        for u in (req.upload_url, req.paths_upload_url, req.report_upload_url, req.ff_report_upload_url):
+            if u and not u.startswith("https://"):
+                raise HTTPException(status_code=400, detail="upload urls must be https")
+        call = freeform.spawn(req.job_id, req.description, req.narration, req.context, req.upload_url, req.paths_upload_url, req.report_upload_url,
+                              req.ff_report_upload_url, req.aspect, req.fallback, req.callback)
+        return {"accepted": True, "call_id": call.object_id}
+
     @api.get("/result/{call_id}")
     def result(call_id: str, x_render_token: str | None = Header(default=None)):
         _auth(x_render_token)
@@ -611,6 +709,7 @@ def web():
         temperature: float = 0.4
         strong: bool = False
         images: list[str] = Field(default_factory=list, max_length=4)  # base64 jpeg
+        models: str | None = Field(default=None, max_length=300)  # comma list pinning the model order for this call
 
     @api.post("/gemini")
     def gemini_proxy(req: GeminiRequest, x_render_token: str | None = Header(default=None)):
@@ -625,7 +724,8 @@ def web():
             raise HTTPException(status_code=500, detail=f"client unavailable: {exc}")
         log: list = []
         try:
-            text = _gemini_call(req.prompt, json_out=req.json_out, images=[_b64.b64decode(i) for i in req.images], temperature=req.temperature, log=log, strong=req.strong)
+            text = _gemini_call(req.prompt, json_out=req.json_out, images=[_b64.b64decode(i) for i in req.images], temperature=req.temperature, log=log, strong=req.strong,
+                                models=[m.strip() for m in (req.models or "").split(",") if m.strip()] or None)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=str(exc)[:300])
         return {"text": text, "log": log}
