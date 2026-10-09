@@ -6,6 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { searchLibrary, type Hit } from './search'
 import { prepareIllustration, searchCommonsLive, type Prepared } from './prepare'
 import { creditLine, SOURCE_NAME, type LibraryItem } from './types'
+import { vetIllustration, vetOrder } from '../correctness/illustration'
 
 export interface Found extends Prepared {
   item: LibraryItem
@@ -33,13 +34,19 @@ export async function findIllustration(
     hits = live.map((item, i) => ({ item, score: MIN_SCORE - i * 0.1, coverage: 1 }))
     via = 'commons-live'
   }
+  // Correctness guard: blocklisted ids out, weak topics re-ranked, then each candidate checked against the topic.
+  hits = await vetOrder(hits, topic, admin, trace)
   if (!hits.length) return null
   const skip = Math.max(0, Math.min(3, Math.round(args.alternative ?? 0)))
   const order = [...hits.slice(skip), ...hits.slice(0, skip)]
+  const deadline = Date.now() + 14_000
   for (const h of order.slice(0, 4)) {
     try {
       const p = await prepareIllustration(h.item, admin)
       trace?.push(`illustration: ${h.item.id} (${h.score.toFixed(1)}) ${p.cached ? 'cached' : 'fetched'} ${p.ms} ms`)
+      const v = await vetIllustration(h.item, p.svg, topic, admin, { deadline, trace })
+      trace?.push(`guard: ${h.item.id} ${v.ok ? 'ok' : 'rejected'} via ${v.via}${v.confidence !== null ? ` ${v.confidence.toFixed(2)}` : ''}${v.depicts ? ` (${v.depicts.slice(0, 60)})` : ''}`)
+      if (!v.ok) continue
       const labelled = h.item.src === 'commons' && !/blank|without text|no text|unlabel|numbered|numlabels/i.test(h.item.t)
       return {
         ...p, item: h.item, via, labelled,
