@@ -439,9 +439,9 @@ class Stage:
     def _boxmob(self, o):
         c = self._color_of(o, "a")
         if o.get("tex"):
-            inner = _m(GW.fmt_template(o["tex"], self.vals), FS["box"] + 6, o.get("text_color", "ink"))
+            inner = _m(GW.fmt_template(GW.pick_text(o["tex"], self.vals, o.get("index")), self.vals), FS["box"] + 8, o.get("text_color", "ink"))
         else:
-            inner = _t(GW.wrap(GW.fmt_template(o.get("text", ""), self.vals), int(o.get("wrap", 16))), FS["box"], o.get("text_color", "ink"))
+            inner = _t(GW.wrap(GW.fmt_template(GW.pick_text(o.get("text", ""), self.vals, o.get("index")), self.vals), int(o.get("wrap", 16))), FS["box"], o.get("text_color", "ink"))
         w, h = GW.block_size(o)
         w, h = max(w, inner.width + 0.4), max(h, inner.height + 0.3)
         r = RoundedRectangle(width=w, height=h, corner_radius=0.14, color=c, stroke_width=3, fill_color=c, fill_opacity=float(o.get("fill", 0.12)))
@@ -583,9 +583,9 @@ class Stage:
     def _label(self, o):
         vals = self.vals
         if o.get("tex"):
-            m = _m(GW.fmt_template(o["tex"], vals), FS["label"] + 10, o.get("color", "ink"))
+            m = _m(GW.fmt_template(GW.pick_text(o["tex"], vals, o.get("index")), vals), FS["label"] + 10, o.get("color", "ink"))
         else:
-            m = _t(GW.fmt_template(o.get("text", ""), vals), FS["label"], o.get("color", "ink"))
+            m = _t(GW.fmt_template(GW.pick_text(o.get("text", ""), vals, o.get("index")), vals), FS["label"], o.get("color", "ink"))
         if o.get("for"):
             self._place(m, o)
         elif o.get("at"):
@@ -1002,13 +1002,13 @@ class Stage:
                 anims.append(Transform(self.mobs[oid], new))
                 continue
             if o["type"] in ("box", "text"):
-                if "{" in str(o.get("text", "")) + str(o.get("tex", "")):
+                if "{" in str(o.get("text", "")) + str(o.get("tex", "")) or isinstance(o.get("text"), list) or isinstance(o.get("tex"), list):
                     anims.append(Transform(self.mobs[oid], self._make(o)))
                 continue
             if o["type"] == "cells":
                 continue
             old = self.mobs[oid]
-            templ = "{" in str(o.get("text", "")) + str(o.get("tex", ""))
+            templ = "{" in str(o.get("text", "")) + str(o.get("tex", "")) or isinstance(o.get("text"), list) or isinstance(o.get("tex"), list)
             new = self._make(o)
             new._anchor = self._anchor_now(o) if o.get("for") else None
             if templ or np.linalg.norm(new.get_center() - old.get_center()) > 0.05:

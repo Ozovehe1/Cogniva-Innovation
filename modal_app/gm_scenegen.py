@@ -131,6 +131,34 @@ def repair_prompt(ir: dict, problems: list[str], description: str, kind: str = "
             "\n\nFix the scene (change relations, vars or beats; never add coordinates or computed numbers; keep what works). Return the complete corrected JSON only.")
 
 
+REVIEW_PROMPT = """You check a teaching animation's scene before it is drawn. A solver computed the exact geometry; here it is in numbers.
+CONCEPT: {concept}
+SOLVED SCENE (start and end of the animation):
+{desc}
+BEATS: {beats}
+Does this scene correctly and recognisably show the concept? Think about what the shapes/curves/boxes actually are from the numbers
+(e.g. a rearrangement proof needs congruent right triangles with legs a and b inside a square of side a+b; a balance needs equal sides;
+a tangent must touch the curve; an algorithm must step correctly). Ignore style. Return JSON only:
+{{"correct": true|false, "problems": ["what is wrong, and which objects/relations to change"]}}  (problems empty when correct)"""
+
+
+def semantic_review(description: str, ir: dict, aspect: str, log: list) -> list[str]:
+    """Text-only review of the SOLVED scene (numbers from the solver, so the reviewer never computes). Returns problems."""
+    try:
+        w = GW.World(ir, aspect)
+        w.build([-4.5, -2.7, 4.5, 2.7])
+        desc = GW.describe(w)
+        beats = " | ".join(str(b.get("say", ""))[:120] for b in ir.get("beats") or [])[:700]
+        raw = chat(REVIEW_PROMPT.format(concept=description[:600], desc=desc[:3500], beats=beats), purpose="plan", json_out=True, max_tokens=900,
+                   temperature=0.1, log=log, timeout=40, reasoning="medium", est_tokens=2600)
+        r = parse_json(raw)
+        if isinstance(r, dict) and r.get("correct") is False:
+            return [str(p)[:300] for p in (r.get("problems") or [])][:5] or ["the reviewer found the scene does not show the concept"]
+    except Exception as exc:  # noqa: BLE001
+        log.append(f"semantic review skipped: {type(exc).__name__} {str(exc)[:100]}")
+    return []
+
+
 # ───────────────────────── compile ─────────────────────────
 def compile_scene(ir: dict) -> str:
     glue = ir.get("glue") if isinstance(ir.get("glue"), dict) else {}
@@ -202,11 +230,15 @@ def score_render(ir: dict, res: dict, aspect: str, verify: dict) -> dict:
     motion = sum(1 for a in acts if a in ("animate", "set", "morph", "flow", "trace"))
     beats_with_motion = sum(1 for b in ir.get("beats") or [] if any(GW._as_list(a)[:1] and GW._as_list(a)[0] in ("animate", "set", "morph", "flow", "highlight", "equation") for a in b.get("do") or []))
     n_checks = len(ir.get("checks") or [])
+    stage_types = GW.GEOM | GW.BLOCKS | GW.ON_AXES | {"flow", "pointer", "group"} | set(GW.MACROS) | {"macro"}
+    has_stage = any(isinstance(o, dict) and o.get("type") in stage_types and o.get("type") != "text" for o in ir.get("objects") or [])
     s = 10.0 - 1.5 * hi - 0.5 * med - 2.0 * min(1.0, pacing) + 0.4 * min(motion, 4) + 0.3 * min(n_checks, 3) + 0.3 * beats_with_motion
     s -= 0.5 * len(verify.get("warnings") or [])
+    if not has_stage:
+        s -= 8  # only text and equations: nothing is shown
     if not verify.get("ok"):
         s -= 20
-    return {"score": round(s, 2), "layout_high": hi, "layout_medium": med, "pacing": round(pacing, 2), "motion": motion, "checks": n_checks,
+    return {"score": round(s, 2), "has_stage": has_stage, "layout_high": hi, "layout_medium": med, "pacing": round(pacing, 2), "motion": motion, "checks": n_checks,
             "layout": lay[:8], "duration": dur}
 
 
@@ -249,6 +281,14 @@ def variant(description, render, *, narration, context, aspect, examples, log, i
         except Exception as exc:  # noqa: BLE001
             ver = {"ok": False, "problems": [f"engine could not read the scene: {type(exc).__name__}: {str(exc)[:200]}"]}
         rec["problems"] = ver.get("problems", [])
+        if ver.get("ok") and not rec.get("reviewed") and (not t_end or time.time() < t_end - 80):
+            # verified = consistent; the review asks whether it is the RIGHT scene (from the solver's numbers)
+            rec["reviewed"] = True
+            sem = semantic_review(description, ir, aspect, log)
+            rec["review"] = sem
+            if sem:
+                ver = {"ok": False, "problems": ["CONCEPT REVIEW: " + p for p in sem]}
+                rec["problems"] = ver["problems"]
         if ver.get("ok"):
             break
         if r == MAX_IR_REPAIRS or (t_end and time.time() > t_end - 40):
@@ -315,7 +355,7 @@ def run(description: str, render, *, narration: dict | None = None, context: str
         recs = [f.result() for f in futs]
         T = {"variants_s": round(time.time() - t0, 1)}
         for r in recs:
-            rep["variants"].append({k: r.get(k) for k in ("idx", "ok", "verify_rounds", "render_rounds", "error", "t_plan", "t_verify", "t_render", "score", "problems")})
+            rep["variants"].append({k: r.get(k) for k in ("idx", "ok", "verify_rounds", "render_rounds", "error", "t_plan", "t_verify", "t_render", "score", "problems", "review")})
         good = sorted([r for r in recs if r.get("ok")], key=lambda r: -r["score"]["score"])
         if not good:
             rep["error"] = "no variant verified and rendered: " + " | ".join((r.get("error") or "?")[:200] for r in recs)
@@ -327,7 +367,8 @@ def run(description: str, render, *, narration: dict | None = None, context: str
             # the critic sees the leader; when the runner-up is within a point it sees that too and the better critique wins
             crit = critique(best["res"].get("frames") or [], {"objective": description}, best["score"]["layout"], log)
             best["critique"] = crit
-            if len(good) > 1 and good[1]["score"]["score"] >= best["score"]["score"] - 1.0 and time.time() < t_end - 60:
+            low_first = isinstance(crit.get("score"), (int, float)) and crit["score"] < 6
+            if len(good) > 1 and (good[1]["score"]["score"] >= best["score"]["score"] - 1.0 or low_first) and time.time() < t_end - 60:
                 c2 = critique(good[1]["res"].get("frames") or [], {"objective": description}, good[1]["score"]["layout"], log)
                 good[1]["critique"] = c2
                 if isinstance(c2.get("score"), (int, float)) and isinstance(crit.get("score"), (int, float)) and c2["score"] > crit["score"]:
@@ -346,6 +387,10 @@ def run(description: str, render, *, narration: dict | None = None, context: str
                 ir2 = normalize(parse_ir(chat(repair_prompt(best["ir"], issues, description, "visual"), purpose="fix", json_out=True, max_tokens=3200,
                                                 temperature=0.2, log=log, timeout=75, reasoning="low", est_tokens=len(DOC) // 3.6 + 4400)))
                 v2 = GW.verify_ir(ir2, aspect)
+                if not v2.get("ok") and time.time() < t_end - 60:
+                    ir2 = normalize(parse_ir(chat(repair_prompt(ir2, v2["problems"], description, "verify"), purpose="fix", json_out=True, max_tokens=3200,
+                                                  temperature=0.2, log=log, timeout=75, reasoning="low", est_tokens=len(DOC) // 3.6 + 4400)))
+                    v2 = GW.verify_ir(ir2, aspect)
                 rep["revision"] = {"verified": v2.get("ok"), "problems": v2.get("problems", [])[:4]}
                 if v2.get("ok"):
                     code2, probs = guard(compile_scene(ir2))

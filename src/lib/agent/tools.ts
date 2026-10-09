@@ -709,7 +709,7 @@ const VISUAL: ToolSpec[] = [
     },
   },
   {
-    def: { name: 'animate_concept', description: 'Request a rendered 3Blue1Brown-style animation clip, written as real Manim code from a storyboard and checked by rendering (takes 1-3 minutes; a placeholder shows until it is ready). Max 3 a day. Use for motion the board cannot show (3D, flows, a proof by moving pieces, a point tracing a curve).', parameters: obj({ brief: { type: 'string', description: 'the learning objective, then what the 10-25 s clip shows, in order, with the exact numbers and formulas' } }, ['brief']) },
+    def: { name: 'animate_concept', description: 'Request a rendered 3Blue1Brown-style animation clip (takes 1-3 minutes; a placeholder shows until it is ready; works in Ask and inside a lesson). The render service builds it as a verified scene: every number from sympy, every position from a geometry solver, every claim checked before rendering. Max 3 a day. Use for motion the board cannot show (a proof by moving pieces, a point tracing a curve, an algorithm stepping through data, a process cycling, a quantity changing).', parameters: obj({ brief: { type: 'string', description: 'the learning objective, then what the 10-25 s clip shows, in order, with the exact numbers and formulas' } }, ['brief']) },
     tier: 'visual', modes: ['chat'], label: 'Starting an animation',
     run: async (a, ctx) => {
       if (!renderServiceConfigured()) return { error: 'The animation service is not available right now. Use draw_on_board instead.' }

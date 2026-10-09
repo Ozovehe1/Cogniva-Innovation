@@ -22,7 +22,7 @@ axes {x:[min,max], y:[min,max], unit:[ux,uy] (world units per axis unit) or size
 function {on: axesId, expr: "in x and vars", domain?: [a,b] (exprs allowed, e.g. [0,"t"] grows as t animates)}
 curve {x: expr, y: expr, param: "u", range: [u0,u1], on?: axesId}
 area {on: axesId, of: functionId, domain: [a,b], rects?: n (Riemann), rule?: left|right|mid}
-box {text or tex, wrap?: chars per line}   text {text} (free paragraph, use sparingly)
+box {text or tex, wrap?: chars per line}; text/tex may be a list ["3(y-5)", "y-5", "y"]: it shows item number <var step> (or "index": var) and changes when you ["set", {"step": 1}]   text {text} (free paragraph, use sparingly)
 icon {icon: sun|cloud|rain|drop|mountain|sea|lake|leaf|tree|plant|cell|ball|house|factory|person|earth|flask|magnet|bolt|fire|snowflake|gear|eye|lamp|atom|molecule|arrow, size?}
 cells {values:[...], cell?: width, indices?: true}  a row of boxes; refer to one cell as "id[3]" or "id[{mid}]", a range as "id[{lo}:{hi}]"
 pointer {at: "cellsId[{expr}]", text}  an arrow under a cell that moves when vars change
@@ -32,7 +32,7 @@ label {for: id or "A-B" or "cells[2]", text or tex, side?}  (templates allowed: 
 equation {lines: [{sym: "3*(y-5)=12"}, {sym: "y-5=4", note: "divide both sides by 3"}, ...], chain?: "equiv"|"equal"} (sympy syntax, the engine typesets it and checks each line follows from the previous and that lines made only of vars hold) or {chem: "6CO2 + 6H2O -> C6H12O6 + 6O2"} (checked for balance). One equation is visible at a time in the side panel.
 readout {text: "v_x = {vx:.1f} m/s"}  live value that updates while vars animate
 group {members:[ids]}
-macros (optional shortcuts, use when they fit): right_triangle {id, legs:[a,b]} -> points id.A (right angle) id.B id.C; square_on {id, side:[P,Q], away: R} -> square outward on PQ; regular_polygon {id, n, center?, radius}; balance {id, left, right, tilt} (pan balance, boxes id.L id.R); circuit {id, width, height, parts:[{type: battery|resistor|bulb|switch|meter|capacitor, side: left|top|right|bottom, label}]} -> a wired loop (show "id"; current dots: ["flow", "id.loop"]); cycle {id, items:[texts]} -> boxes id.0.. on a ring with flows id.f0..; process {id, items:[texts], direction?: row|column} -> boxes id.0.. + flows id.f0..; vector_sum {id, u:[x,y], v:[x,y]} -> vectors id.u, id.v head to tail, id.sum, dashed parallelogram sides id.v2 id.u2
+macros (optional shortcuts, use when they fit): right_triangle {id, legs:[a,b]} -> points id.A (right angle) id.B id.C; square_on {id, side:[P,Q], away: R} -> square outward on PQ; regular_polygon {id, n, center?, radius}; balance {id, left, right, tilt} (pan balance; left/right may be lists per step; boxes id.L id.R); circuit {id, width, height, parts:[{type: battery|resistor|bulb|switch|meter|capacitor, side: left|top|right|bottom, label}]} -> a wired loop (show "id"; current dots: ["flow", "id.loop"]); cycle {id, items:[texts]} -> boxes id.0.. on a ring with flows id.f0..; process {id, items:[texts], direction?: row|column} -> boxes id.0.. + flows id.f0..; vector_sum {id, u:[x,y], v:[x,y]} -> vectors id.u, id.v head to tail, id.sum, dashed parallelogram sides id.v2 id.u2
 
 Colour roles: ink muted a b c d accent highlight good bad water warm cool light.
 
@@ -50,6 +50,7 @@ BEATS (3-6). Each beat: one short "say" sentence (spoken; the beat lasts as long
 ["morph", [srcIds], [dstIds]]  (rearrangements: draw a second configuration as other polygons, then morph into it)
 ["trace", pointId] (leaves a trail during later animation) ["flow", ids, {"n": 6, "loops": 1, "color": role}] dots moving along flows/wires/curves
 ["equation", eqId, lineIndex] ["note", "short caption"] ["wait", seconds] ["glue", name] (raw Manim, only if nothing above can show it)
+The main stage must always show a picture of the idea (geometry, a graph, a diagram, a balance, cells, a circuit...); equations alone are not a scene. Do not reveal the answer before the beat that derives it.
 Show every concept by motion: something must move or change in most beats. Keep words on screen few (labels 1-3 words). Do not show the same equation twice.
 
 Return ONLY the JSON object.

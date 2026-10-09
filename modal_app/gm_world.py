@@ -332,15 +332,18 @@ def _mac_regular_polygon(o):
 
 
 def _mac_balance(o):
-    # balance {id, left: label/tex, right: label/tex, tilt: expr(rad)} -> a beam on a stand with two pans holding boxes id.L/id.R
+    # balance {id, left: tex or [tex per step], right: same, tilt: expr(rad)} -> a beam on a stand with two pans holding boxes id.L/id.R
     i = o["id"]
     objs = [{"type": "point", "id": f"{i}.P"}, {"type": "point", "id": f"{i}.base"}, {"type": "point", "id": f"{i}.l"}, {"type": "point", "id": f"{i}.r"},
             {"type": "polygon", "id": f"{i}.stand", "points": [f"{i}.P", f"{i}.base"], "color": "muted"},
             {"type": "segment", "id": f"{i}.beam", "from": f"{i}.l", "to": f"{i}.r", "color": "ink", "width": 6},
             {"type": "segment", "id": f"{i}.post", "from": f"{i}.base", "to": f"{i}.P", "color": "muted", "width": 6}]
     objs = [x for x in objs if x["id"] != f"{i}.stand"]
+    objs += [{"type": "point", "id": f"{i}.f1"}, {"type": "point", "id": f"{i}.f2"},
+             {"type": "polygon", "id": f"{i}.foot", "points": [f"{i}.base", f"{i}.f1", f"{i}.f2"], "color": "muted", "fill": 0.35}]
     half = o.get("half", 2.6)
     cons = [["vertical", f"{i}.base", f"{i}.P"], ["distance", f"{i}.base", f"{i}.P", 2.0], ["above", f"{i}.P", f"{i}.base"],
+            ["offset", f"{i}.f1", f"{i}.base", -0.6, -0.5], ["offset", f"{i}.f2", f"{i}.base", 0.6, -0.5],
             ["polar", f"{i}.l", f"{i}.P", half, f"pi + ({o.get('tilt', 0)})"], ["polar", f"{i}.r", f"{i}.P", half, f"{o.get('tilt', 0)}"]]
     for side, pt in (("left", "l"), ("right", "r")):
         v = o.get(side)
@@ -348,7 +351,7 @@ def _mac_balance(o):
             continue
         bid = f"{i}.{side[0].upper()}"
         box = {"type": "box", "id": bid, "color": o.get("color", "a")}
-        box.update({"tex": v} if isinstance(v, str) and ("\\" in v or "^" in v or "=" not in v and re.search(r"[0-9a-z]\s*[\+\-\*/]", v)) else {"text": str(v)})
+        box.update({"tex": v} if isinstance(v, list) else {"tex": v} if isinstance(v, str) and ("\\" in v or "^" in v or "=" not in v and re.search(r"[0-9a-z]\s*[\+\-\*/]", v)) else {"text": str(v)})
         objs.append(box)
         cons += [["same_x", bid, f"{i}.{pt}"], ["above", bid, f"{i}.{pt}", 0.05], ["near", bid, f"{i}.{pt}", 0.9]]
     return objs, cons
@@ -464,9 +467,9 @@ def block_size(o: dict) -> tuple[float, float]:
     t = o["type"]
     if t == "box":
         if o.get("tex"):
-            w, h = tex_size(o["tex"], BOX_FS + 4)
+            w, h = max((tex_size(str(t), BOX_FS + 4) for t in _as_list(o["tex"])), key=lambda x: x[0])
         else:
-            w, h = text_size(wrap(o.get("text", ""), int(o.get("wrap", 16))), BOX_FS)
+            w, h = max((text_size(wrap(str(t), int(o.get("wrap", 16))), BOX_FS) for t in _as_list(o.get("text", ""))), key=lambda x: x[0])
         w, h = w + 0.5, h + 0.35
         if o.get("size"):
             s = o["size"]
@@ -543,6 +546,8 @@ class World:
                 except Exception as exc:  # noqa: BLE001
                     self.problems.append(f"macro {name} {o.get('id')}: {exc}")
                     continue
+                if o.get("id") and not any(x.get("id") == o["id"] for x in a):
+                    a = a + [{"type": "group", "id": o["id"], "members": [x["id"] for x in a if x.get("type") not in ("point",)]}]
                 objs += a
                 cons += b
             else:
@@ -1514,6 +1519,54 @@ class World:
         return fc + k * (np.asarray(p, dtype=float)[:2] - wc)
 
 
+def describe(w: "World", max_lines: int = 60) -> str:
+    """What the solved scene actually is, in numbers the reviewer does not have to compute: every polygon's side lengths, angles
+    and area, congruent pieces, circles, segment lengths/directions, vectors, the values of the vars at the start and end."""
+    if not getattr(w, "solved", None):
+        return ""
+    out = []
+    for label, ov, vals, X in (w.solved[:1] + (w.solved[-1:] if len(w.solved) > 1 else [])):
+        out.append(f"[{label}] vars: " + ", ".join(f"{k}={v:.4g}" for k, v in list(vals.items())[:14]))
+        polys = {}
+        for oid, o in w.objs.items():
+            t = o["type"]
+            try:
+                if t == "polygon":
+                    P = [w.pos(p, X, vals) for p in o["points"]]
+                    n = len(P)
+                    sides = [float(np.linalg.norm(P[(i + 1) % n] - P[i])) for i in range(n)]
+                    angs = []
+                    for i in range(n):
+                        u, v = P[i - 1] - P[i], P[(i + 1) % n] - P[i]
+                        angs.append(math.degrees(math.acos(max(-1, min(1, (u @ v) / (np.linalg.norm(u) * np.linalg.norm(v) + 1e-12))))))
+                    polys[oid] = (tuple(sorted(round(x, 3) for x in sides)), round(abs(_shoelace(P)), 3))
+                    out.append(f"polygon {oid} ({'-'.join(o['points'])}): sides {', '.join(f'{x:.3g}' for x in sides)}; angles {', '.join(f'{a:.0f}' for a in angs)} deg; area {abs(_shoelace(P)):.4g}")
+                elif t == "circle":
+                    out.append(f"circle {oid}: centre {o['center']}, radius {w.radius(oid, X, vals):.3g}")
+                elif t in ("segment", "line", "ray", "vector") and o.get("from"):
+                    A, B = w.pos(o["from"], X, vals), w.end(oid, X, vals)
+                    d = B - A
+                    out.append(f"{t} {oid} {o['from']}->{o.get('to', 'comp')}: length {np.linalg.norm(d):.3g}, direction {math.degrees(math.atan2(d[1], d[0])):.0f} deg")
+                elif t == "function":
+                    out.append(f"function {oid}: y = {o.get('expr')} on {o.get('on')}")
+                elif t in ("box", "icon", "cells"):
+                    c = w.pos(oid, X, vals)
+                    out.append(f"{t} {oid} '{str(o.get('text') or o.get('tex') or o.get('icon') or o.get('values'))[:40]}' at ({c[0]:.1f}, {c[1]:.1f})")
+                elif t == "flow":
+                    out.append(f"flow {oid}: {o.get('from')} -> {o.get('to')}" + (f" '{o.get('label')}'" if o.get("label") else ""))
+            except Exception:  # noqa: BLE001
+                continue
+        groups = {}
+        for k, v in polys.items():
+            groups.setdefault(v, []).append(k)
+        same = [g for g in groups.values() if len(g) > 1]
+        if same:
+            out.append("congruent pieces (same sides and area): " + "; ".join(", ".join(g) for g in same))
+        if len(out) > max_lines:
+            break
+    return "\n".join(out[:max_lines])
+
+
 def _fit_scale(bb, box):
     w, h = max(bb[2] - bb[0], 1e-3), max(bb[3] - bb[1], 1e-3)
     return float(min((box[2] - box[0]) / w, (box[3] - box[1]) / h, 2.5))
@@ -1543,6 +1596,16 @@ def _split_args(s):
     if cur.strip():
         out.append(cur)
     return out
+
+
+def pick_text(v, vals: dict, index: str | None = None):
+    """A text or tex given as a list shows item int(vals[index or "step"]) (clamped): one box that changes as the steps go."""
+    if isinstance(v, list):
+        if not v:
+            return ""
+        k = int(round(vals.get(index or "step", 0))) if (index or "step") in vals else 0
+        return str(v[max(0, min(len(v) - 1, k))])
+    return v
 
 
 def fmt_template(s: str, vals: dict) -> str:
