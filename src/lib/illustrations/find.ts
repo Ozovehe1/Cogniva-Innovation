@@ -59,7 +59,7 @@ export async function findIllustration(
       const labelled = h.item.src === 'commons' && !/blank|without text|no text|unlabel|numbered|numlabels/i.test(h.item.t)
       return {
         ...p, item: h.item, via, labelled,
-        alt: `${h.item.t.replace(/\s+(en|EN|eng)$/, "")}${h.item.d ? ` — ${h.item.d.slice(0, 160)}` : ''} (${SOURCE_NAME[h.item.src]})`.slice(0, 280),
+        alt: `${h.item.t.replace(/\s+(en|EN|eng)$/, "")}${altDescription(h.item.d) ? ` — ${altDescription(h.item.d)}` : ''} (${SOURCE_NAME[h.item.src]})`.slice(0, 280),
         creditText: creditLine(p.credit),
         alternatives: hits.filter(x => x !== h).slice(0, 3).map(x => `${x.item.t} [${SOURCE_NAME[x.item.src]}]`),
       }
@@ -68,4 +68,13 @@ export async function findIllustration(
     }
   }
   return null
+}
+
+/** A library description is only used as alt text when it describes the picture: uploader notes ("a corrected version of
+ * an image I made", "the original quote on the image") are not descriptions and leaked into captions and zoom titles. */
+export function altDescription(d: string | null | undefined): string {
+  const t = (d ?? '').replace(/\s+/g, ' ').trim()
+  if (!t || /\b(I|I'm|I've|my|me|we|our)\b|corrected version|original (quote|version|file|image)|uploaded|this (file|image|version)|derivative (work|of)|vectori[sz]ed|redrawn|based on|source:|own work|permission|licen[sc]e/i.test(t)) return ''
+  const first = t.split(/(?<=[.!?])\s/)[0]
+  return first.length > 160 ? `${first.slice(0, 157).replace(/\s+\S*$/, '')}…` : first
 }

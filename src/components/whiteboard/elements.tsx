@@ -569,6 +569,22 @@ function inkItems(root: SVGGElement): InkItem[] {
         reset: () => { target.style.strokeDasharray = ''; target.style.strokeDashoffset = '' },
       })
       lastPoint = point
+    } else if (kind === 'figure') {
+      // A finished picture is wiped in left to right, with the pen tip riding along its bottom edge: the hand hangs
+      // below and to the right of the tip, so it never sits over the picture's labels while they appear.
+      let bb: DOMRect
+      try { bb = node.getBBox() } catch { return }
+      if (!bb.width) return
+      const clip = (p: number) => `polygon(-2% -2%, ${(-2 + p * 104).toFixed(1)}% -2%, ${(-2 + p * 104).toFixed(1)}% 102%, -2% 102%)`
+      node.style.clipPath = clip(0)
+      const point = (p: number) => svgToClient(node, bb.x + bb.width * p, bb.y + bb.height + 4)
+      out.push({
+        weight: bb.width * 1.2, min: 400,
+        apply: p => { node.style.clipPath = p >= 1 ? '' : clip(p) },
+        point,
+        reset: () => { node.style.clipPath = '' },
+      })
+      lastPoint = point
     } else if (kind === 'text') {
       // Written left to right: a clip that opens as the tip crosses it.
       let bb: DOMRect
@@ -816,7 +832,7 @@ function ShapeBody({ el, animate, reduced, vars: boardVars = NO_VARS }: ShapePro
       // A finished picture (sanitised SVG), shown as an image: nothing inside it can run. Wiped in left to right.
       const href = shape.src || `data:image/svg+xml;charset=utf-8,${encodeURIComponent(shape.svg)}`
       // Tap to zoom (small textbook labels on phones): opens the shared zoom view (ZoomHost in the app shell).
-      return <image href={href} x={shape.x} y={shape.y} width={shape.w} height={shape.h} preserveAspectRatio="xMidYMid meet" data-ink={ink ? 'text' : undefined}
+      return <image href={href} x={shape.x} y={shape.y} width={shape.w} height={shape.h} preserveAspectRatio="xMidYMid meet" data-ink={ink ? 'figure' : undefined}
         role="button" tabIndex={0} aria-label={`${shape.alt ?? 'Diagram'}. Open larger`} style={{ cursor: 'zoom-in', pointerEvents: 'auto' }}
         onClick={() => openZoom(href, shape.alt ?? 'Diagram')} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openZoom(href, shape.alt ?? 'Diagram') } }}><title>{shape.alt ?? 'diagram'}</title></image>
     }
