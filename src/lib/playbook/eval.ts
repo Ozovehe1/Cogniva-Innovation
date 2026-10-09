@@ -39,6 +39,7 @@ export function staticPlaybookCases(): CaseResult[] {
     ['A 14-year-old needs shorter beats.', []],
     ['Use the line "my answer is twelve because my teacher said so" as an example.', ['my answer is twelve because my teacher said so']],
     ['Explain like the reply "I think the bigger number always wins in fractions because it is bigger" shows.', []],
+    ['Use the reply “honestly I never understood why the bottom number makes it smaller” as the opener.', []],
   ]
   BAD.forEach(([t, f], i) => { const r = privacyCheck(t, f); add(`privacy-catches-${i + 1}`, !r.ok, `${t.slice(0, 60)} → ${r.problems.join('; ') || 'NOT CAUGHT'}`) })
   const GOOD = [
@@ -46,6 +47,7 @@ export function staticPlaybookCases(): CaseResult[] {
     'Before a check question, never state its answer in the narration; let the learner try first.',
     'For refraction into glass or water, draw the refracted ray on the far side of the normal, bent towards it.',
     'Open a fractions lesson with a picture of equal parts (a shared pizza or a ruler) before any symbols.',
+    'In Pythagoras\' theorem lessons, label the triangle\'s hypotenuse c and check the learner\'s side lengths fit a² + b² = c².',
   ]
   GOOD.forEach((t, i) => { const r = privacyCheck(t); add(`privacy-allows-${i + 1}`, r.ok, r.problems.join('; ') || 'clean') })
   // Scrub + redaction: learner-written fields never reach the reflector; names inside tutor text are replaced.
@@ -124,7 +126,8 @@ async function lifecycleCases(admin: SupabaseClient, deadline: number): Promise<
   add('a2-curate', bullets.length > 0 && bullets.every(b => b.status === 'candidate' && b.scope === 'eval' && !!b.embedding), `${cur.added.length} added, ${cur.merged.length} merged, ${cur.rejected.length} rejected; embedded ${bullets.filter(b => b.embedding).length}/${bullets.length}`, null, Date.now() - t0)
   if (!bullets.length) return out
   // Pick the bullet most about triangle labels for the walk-through.
-  const b = bullets.find(x => /hypotenuse|right angle|a² \+ b²|a\^2|pythag/i.test(x.text)) ?? bullets[0]
+  const tri = (x: Bullet) => /hypotenuse|right angle|a² \+ b²|a\^2|pythag|longest/i.test(x.text)
+  const b = bullets.find(x => x.target === 'lesson' && tri(x)) ?? bullets.find(tri) ?? bullets[0]
   // 2. Gate on a SIMILAR topic (Mistake-Notebook batch: with vs without).
   const similar = 'Finding a missing side of a right-angled triangle'
   t0 = Date.now()
@@ -135,8 +138,8 @@ async function lifecycleCases(admin: SupabaseClient, deadline: number): Promise<
   // 3. Retrieved on a similar topic, not on an unrelated one.
   t0 = Date.now()
   const statuses: Bullet['status'][] = ['live', 'candidate']
-  const near = await retrieve(admin, 'lesson', { topic: similar, subject: 'Mathematics' }, { scope: 'eval', statuses, k: 5 })
-  const far = await retrieve(admin, 'lesson', { topic: 'The water cycle: evaporation and condensation', subject: 'Geography' }, { scope: 'eval', statuses, k: 5 })
+  const near = await retrieve(admin, b.target, { topic: similar, subject: 'Mathematics' }, { scope: 'eval', statuses, k: 5 })
+  const far = await retrieve(admin, b.target, { topic: 'The water cycle: evaporation and condensation', subject: 'Geography' }, { scope: 'eval', statuses, k: 5 })
   const nearHit = near.find(s => s.b.id === b.id), farHit = far.find(s => s.b.id === b.id)
   add('a4-retrieve-similar', !!nearHit, nearHit ? `retrieved for "${similar}" (score ${nearHit.score.toFixed(3)}, sim ${nearHit.sim.toFixed(3)}, topical ${nearHit.topical})` : `not retrieved; top: ${near.map(s => s.sim.toFixed(2)).join(',')}`, null, Date.now() - t0)
   add('a5-not-retrieved-unrelated', !farHit, farHit ? `wrongly retrieved for the water cycle (sim ${farHit.sim.toFixed(3)})` : `not retrieved for "the water cycle"${far.length ? ` (others: ${far.length})` : ''}`)

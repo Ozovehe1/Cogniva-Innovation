@@ -98,7 +98,9 @@ export async function runArm(target: Target, topic: string, rules: string[], che
       const r = await pbJson(PROBE_LESSON(topic, block), { system: TUTOR_VOICE, purpose: 'json', maxTokens: 5000, deadline, temperature: 0.4 })
       model = r.model
       const v = validateScript(r.json, { maxSteps: 40 })
-      if (!v.ok || !v.steps.length) { score += 2; notes.push('invalid steps') }
+      // Invalid steps are dropped by the validator; an unusable output (most steps invalid) counts as a fault.
+      if (!v.steps.length || v.steps.length < v.total / 2) { score += 2; notes.push(`invalid steps (${v.steps.length}/${v.total} valid): ${v.errors[0]?.slice(0, 80) ?? ''}`) }
+      else if (!v.ok) notes.push(`${v.total - v.steps.length} step(s) dropped: ${v.errors[0]?.slice(0, 60) ?? ''}`)
       const g = guardSteps(v.steps)
       score += g.issues.length
       notes.push(...g.issues.slice(0, 4).map(i => `guard ${i.kind}: ${i.detail.slice(0, 80)}`))

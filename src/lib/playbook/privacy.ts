@@ -75,7 +75,8 @@ export function privacyCheck(text: string, forbidden: string[] = []): PrivacyRes
   if (new RegExp(URL.source, 'i').test(t)) problems.push('contains a link')
   for (const re of PERSONAL) if (re.test(t)) problems.push(`personal framing: "${(t.match(re)?.[0] ?? '').slice(0, 40)}"`)
   // A long quotation is someone's words, not a rule.
-  for (const m of t.matchAll(/["“”‘’']([^"“”‘’']{45,})["“”‘’']/g)) problems.push(`long quotation: "${m[1].slice(0, 40)}…"`)
+  // (double quotes only, within one line: apostrophes in "Pythagoras' theorem" are not quotation marks)
+  for (const m of t.matchAll(/["“”]([^"“”\n]{45,})["“”]/g)) problems.push(`long quotation: "${m[1].slice(0, 40)}…"`)
   const lower = t.toLowerCase()
   const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g) ?? []
   const tw = words(t).join(' ')
