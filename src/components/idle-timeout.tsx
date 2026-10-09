@@ -15,7 +15,7 @@ export function IdleTimeout() {
     await supabase.auth.signOut()
     // Come back to the same page (e.g. the lesson) after signing in again.
     const next = window.location.pathname + window.location.search
-    window.location.href = next && next !== '/' ? `/login?next=${encodeURIComponent(next)}` : '/login'
+    window.location.href = next && next !== '/' ? `/login?reason=away&next=${encodeURIComponent(next)}` : '/login?reason=away'
   }, [])
 
   useEffect(() => {

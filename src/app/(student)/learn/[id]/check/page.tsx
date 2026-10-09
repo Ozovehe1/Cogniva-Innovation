@@ -20,7 +20,7 @@ export default async function CheckPage({ params, searchParams }: { params: Prom
   const topic = t as { id: string; title: string; status: string }
   return (
     <div className="mx-auto max-w-[680px]">
-      <Link href={`/learn/${id}`} className="-ml-1 mb-4 inline-flex h-9 items-center gap-1.5 rounded-md px-1 text-sm text-muted hover:text-ink">
+      <Link href={`/learn/${id}`} className="-ml-2 mb-3 inline-flex h-11 items-center gap-1.5 rounded-[10px] px-2 text-sm text-muted hover:bg-sunken hover:text-ink">
         <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />Back to the lesson
       </Link>
       <Eyebrow className="mb-2">{recheck ? 'Checking the basics' : 'Mastery check'}</Eyebrow>

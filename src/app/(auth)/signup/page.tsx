@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
-import { Mail } from 'lucide-react'
+import { Eye, EyeOff, Mail } from 'lucide-react'
 import { Alert, Spinner, buttonClass, inputClass, labelClass } from '@/components/ui'
 
 
@@ -12,6 +12,7 @@ export default function SignupPage() {
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
   const [confirmEmail, setConfirmEmail] = useState(false)
+  const [show, setShow] = useState(false)
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -31,7 +32,7 @@ export default function SignupPage() {
     })
 
     if (authError) {
-      setError(authError.message)
+      setError(/already registered|already exists/i.test(authError.message) ? 'There’s already an account with that email. Sign in instead.' : authError.message)
       setPending(false)
       return
     }
@@ -98,8 +99,15 @@ export default function SignupPage() {
         </div>
         <div>
           <label htmlFor="password" className={labelClass}>Password</label>
-          <input id="password" name="password" type="password" required minLength={6} autoComplete="new-password"
-            className={inputClass} placeholder="At least 6 characters" />
+          <div className="relative">
+            <input id="password" name="password" type={show ? 'text' : 'password'} required minLength={6} autoComplete="new-password"
+              className={`${inputClass} pr-12`} placeholder="At least 6 characters" aria-describedby="pw-hint" />
+            <button type="button" onClick={() => setShow(v => !v)} aria-label={show ? 'Hide password' : 'Show password'} aria-pressed={show}
+              className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-[10px] text-muted hover:text-ink">
+              {show ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
+            </button>
+          </div>
+          <p id="pw-hint" className="mt-1.5 text-[12.5px] text-muted">At least 6 characters. A short phrase is easier to remember.</p>
         </div>
         {error && <Alert tone="danger">{error}</Alert>}
         <p className="text-[13px] leading-relaxed text-muted">If you’re under 18, we’ll ask for a parent or guardian’s okay before saving your answers.</p>

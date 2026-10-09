@@ -3,11 +3,12 @@ import { ReportButton } from '@/components/report/report-mistake'
 import React, { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { UpNextCard } from './up-next'
-import { ArrowRight, Check, X } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { ArrowRight, Check, Lightbulb } from 'lucide-react'
 import { RichText } from './rich-text'
 import { ItemFigure } from './item-figure'
 import type { PublicFigure } from '@/lib/assessment/spec'
-import { Alert, Spinner, buttonClass, cx } from './ui'
+import { Alert, Skeleton, Spinner, buttonClass, cx } from './ui'
 
 interface Q { i: number; q: string; options: string[]; topic?: string; figure?: PublicFigure }
 interface Quiz { items: Q[]; recheck: Q[]; attempts: number; wrongStreak: number; status: string }
@@ -58,7 +59,20 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
 
   const list = mode === 'recheck' ? quiz?.recheck ?? [] : quiz?.items ?? []
 
-  if (mode === 'loading') return <div className="mt-8 flex items-center gap-3 text-[15px] text-muted"><Spinner className="text-accent" />{startRecheck ? 'Picking a few questions on the basics…' : 'Writing four fresh questions…'}</div>
+  // Skeleton shaped like the questions that are coming (no spinner): the learner sees four short items, not a wait.
+  if (mode === 'loading') return (
+    <div className="mt-6" role="status" aria-live="polite">
+      <p className="text-[15px] text-muted">{startRecheck ? 'Picking a few questions on the basics…' : 'Writing four fresh questions, just for you…'}</p>
+      <ol className="mt-6 space-y-7" aria-hidden>
+        {[0, 1, 2, 3].map(i => (
+          <li key={i}>
+            <Skeleton className="h-4" style={{ width: `${82 - i * 9}%` }} />
+            <div className="mt-3 grid gap-2">{[0, 1, 2].map(j => <Skeleton key={j} className="h-11 rounded-[12px]" style={{ opacity: 1 - j * 0.18 }} />)}</div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
   if (mode === 'error') return <div className="mt-8"><Alert tone="danger">{error}</Alert><button type="button" onClick={() => load('start')} className={buttonClass('primary', 'md', 'mt-4')}>Try again</button></div>
 
   if (mode === 'quiz' || mode === 'recheck') {
@@ -91,7 +105,11 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
           ))}
         </ol>
         {error && <Alert tone="danger" className="mt-4">{error}</Alert>}
-        <button type="button" disabled={busy || answers.some(a => a === null)} onClick={submit} className={buttonClass('primary', 'lg', 'mt-8 w-full sm:w-auto')}>{busy ? <Spinner /> : 'Check my answers'}</button>
+        <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+          <button type="button" disabled={busy || answers.some(a => a === null)} onClick={submit} className={buttonClass('primary', 'lg', 'w-full sm:w-auto')}>{busy ? <><Spinner />Checking…</> : 'Check my answers'}</button>
+          {/* Progress visibility: how many are answered, so the disabled button never feels arbitrary. */}
+          <p className="tnum text-center text-[13px] text-muted sm:text-left" aria-live="polite">{answers.filter(a => a !== null).length} of {list.length} answered</p>
+        </div>
       </div>
     )
   }
@@ -103,7 +121,11 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
       {mode === 'result' && (r.passed ? (
         <>
         <div className="rounded-[14px] border border-accent-line bg-accent-soft p-5">
-          <h2 className="font-display text-[24px] text-ink">Mastered.</h2>
+          <h2 className="flex items-center gap-2.5 font-display text-[24px] text-ink">
+            <motion.span initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 500, damping: 20, delay: 0.1 }}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-white" aria-hidden><Check className="h-4 w-4" strokeWidth={3} /></motion.span>
+            Mastered.
+          </h2>
           <p className="mt-1 text-[15px] text-ink-2">{Math.round((r.score ?? 0) * 4)} of 4. {r.next ? <>Next up: <RichText text={r.next.title} />.</> : 'That was the last topic on your path.'}</p>
         </div>
         {r.next?.lesson_id && <UpNextCard href={`/learn/${r.next.lesson_id}?autoplay=1`} title={r.next.title} note="Next lesson on your path" />}
@@ -123,8 +145,8 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
       <ul className="mt-6 space-y-3">
         {r.results.map((x, i) => (
           <li key={i} className="flex gap-3 text-[15px] leading-relaxed">
-            {x.correct ? <Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2.25} /> : <X className="mt-1 h-4 w-4 flex-shrink-0 text-clay" strokeWidth={2.25} />}
-            <span className="min-w-0 flex-1 text-ink-2">{x.correct ? 'Correct.' : <>Answer: <RichText text={x.answer ?? ''} />.</>} {x.explain && <RichText text={x.explain} />}
+            {x.correct ? <Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2.25} /> : <Lightbulb className="mt-1 h-4 w-4 flex-shrink-0 text-clay" strokeWidth={2.25} aria-label="Not yet" />}
+            <span className="min-w-0 flex-1 text-ink-2">{x.correct ? 'Correct.' : <>The answer is <RichText text={x.answer ?? ''} />.</>} {x.explain && <RichText text={x.explain} />}
               <span className="-mb-2 -ml-2.5 block"><ReportButton what="this answer" payload={() => ({ surface: 'mastery', lessonId, artefact: { question: list[i]?.q ?? null, options: list[i]?.options ?? null, answer: x.answer ?? null, text: x.explain ?? null, index: i, topicId } })} /></span>
             </span>
           </li>

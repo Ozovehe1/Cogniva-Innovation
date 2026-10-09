@@ -50,29 +50,33 @@ export default async function LearnPage() {
               <ol className="space-y-3">
                 {entry.topics.map((t, i) => {
                   const p = t.lesson_id ? view.progress.get(t.lesson_id) : undefined
+                  // One filled button on the page: the topic that is up next (Hick's law). Everything else is secondary.
+                  const isNext = view.next?.id === t.id
                   return (
                     <li key={t.id}>
-                      <Card className={t.status === 'locked' ? 'opacity-70' : undefined}>
+                      <Card className={t.status === 'locked' ? 'bg-surface/70 shadow-none' : isNext ? 'border-accent-line ring-1 ring-accent-line' : undefined}>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="tnum text-[13px] text-faint">{String(i + 1).padStart(2, '0')}</span>
                           <Badge className={t.status === 'mastered' ? 'border-accent-line bg-accent-soft text-accent' : 'border-line bg-sunken text-ink-2'}>
                             {t.status === 'mastered' && <Check className="h-3 w-3" strokeWidth={2.25} />}{t.status === 'locked' && <Lock className="h-3 w-3" strokeWidth={2} />}{STATUS[t.status]}
                           </Badge>
+                          {isNext && <Badge className="border-accent-line bg-accent-soft text-accent">Up next</Badge>}
                           {t.due_on && t.status !== 'mastered' && <span className="tnum text-[12px] text-faint">by {formatDue(t.due_on)}</span>}
                         </div>
-                        <h3 className="mt-2 font-display text-[21px] leading-snug text-ink"><RichText text={t.title} /></h3>
+                        <h3 className={`mt-2 font-display text-[21px] leading-snug ${t.status === 'locked' ? 'text-ink-2' : 'text-ink'}`}><RichText text={t.title} /></h3>
                         {t.summary && <p className="mt-1 text-sm leading-relaxed text-muted"><RichText text={t.summary} /></p>}
+                        {t.status === 'locked' && <p className="mt-3 flex items-center gap-1.5 text-[13px] text-muted"><Lock className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />Opens when the topic before it is mastered.</p>}
                         {t.status !== 'locked' && (
                           <div className="mt-4 flex flex-wrap items-center gap-3">
                             {t.lesson_id ? (
                               <>
-                                <Link href={`/learn/${t.lesson_id}`} className={buttonClass(p?.completed_at ? 'secondary' : 'primary', 'md')}>
+                                <Link href={`/learn/${t.lesson_id}`} className={buttonClass(isNext && !p?.completed_at ? 'primary' : 'secondary', 'md')}>
                                   {p?.completed_at ? 'Review lesson' : (p?.step_index ?? 0) > 0 ? 'Continue' : 'Start lesson'}<ArrowRight className="h-4 w-4" strokeWidth={2} />
                                 </Link>
-                                {t.status !== 'mastered' && <Link href={`/learn/${t.lesson_id}/check`} className={buttonClass(p?.completed_at ? 'primary' : 'ghost', 'md')}>Mastery check</Link>}
+                                {t.status !== 'mastered' && <Link href={`/learn/${t.lesson_id}/check`} className={buttonClass(isNext && p?.completed_at ? 'primary' : 'ghost', 'md')}>Mastery check</Link>}
                                 <span className="ml-auto"><LessonDelete lessonId={t.lesson_id} title={t.title} compact inPath /></span>
                               </>
-                            ) : <TopicStart topicId={t.id} />}
+                            ) : <TopicStart topicId={t.id} variant={isNext ? 'primary' : 'secondary'} />}
                           </div>
                         )}
                       </Card>

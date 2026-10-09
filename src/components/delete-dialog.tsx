@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Trash2 } from 'lucide-react'
 import { RichText, toPlainText } from './rich-text'
-import { Spinner, buttonClass, cx, inputClass } from './ui'
+import { SheetGrabber, Spinner, buttonClass, cx, inputClass } from './ui'
 
 /**
  * The one delete control in the app: a trash button and a Keep / Delete confirmation. The request goes
@@ -80,6 +80,7 @@ export function DeleteButton({ what, title, body, endpoint, keepLabel, confirmLa
             <motion.div className="absolute inset-0 bg-ink/30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !pending && setOpen(false)} />
             <motion.div className="pb-safe relative w-full max-w-md rounded-t-[18px] border border-line bg-surface p-6 shadow-[var(--shadow-raised)] sm:rounded-[18px]"
               initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} transition={{ duration: 0.2 }}>
+              <SheetGrabber className="-mt-4 mb-4" />
               <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-danger">Delete {what}</p>
               <h2 id={`${ids}-t`} className="mt-1.5 font-display text-[22px] leading-snug text-ink"><RichText text={title} /></h2>
               <div id={`${ids}-d`} className="mt-3 text-[15px] leading-relaxed text-ink-2">{body}</div>

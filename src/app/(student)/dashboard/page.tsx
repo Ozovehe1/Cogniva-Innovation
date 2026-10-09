@@ -81,6 +81,26 @@ export default async function Dashboard() {
       <PageHeader eyebrow="Home" title={<>Hello, {firstName}</>}
         actions={<Link href="/start?new=1" className={buttonClass('secondary', 'md')}><Plus className="h-4 w-4" strokeWidth={2} />Learn something new</Link>} />
 
+      {/* Next step first: the one thing to do now sits at the top, before plans and stats (Hick's law: one primary
+          action per screen; Zeigarnik: an unfinished lesson says "Continue"). */}
+      {next && (
+        <section className="mb-6 overflow-hidden rounded-[16px] border border-accent-line bg-accent-soft shadow-[var(--shadow-card)]" aria-labelledby="up-next-title">
+          <div className="p-5 md:p-6">
+            <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{next.status === 'review' ? 'Back to basics' : nextLessonDone ? 'Ready for the check' : nextStarted ? 'Pick up where you left off' : 'Up next'}</p>
+            <h2 id="up-next-title" className="mt-1.5 font-display text-[26px] leading-snug text-ink md:text-[28px]"><RichText text={next.title} /></h2>
+            {next.summary && <p className="mt-1.5 text-[15px] leading-relaxed text-ink-2"><RichText text={next.summary} /></p>}
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+              {next.lesson_id ? (
+                nextLessonDone
+                  ? <Link href={`/learn/${next.lesson_id}/check`} className={buttonClass('primary', 'lg', 'w-full sm:w-auto')}>Take the mastery check<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
+                  : <Link href={`/learn/${next.lesson_id}`} className={buttonClass('primary', 'lg', 'w-full sm:w-auto')}>{nextStarted ? 'Continue lesson' : 'Start lesson'}<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
+              ) : <TopicStart topicId={next.id} size="lg" />}
+              {next.due_on && <span className="tnum text-[13px] text-muted">Aim to finish by {formatDue(next.due_on)}</span>}
+            </div>
+          </div>
+        </section>
+      )}
+
       {diagnosing && (
         <section className="mb-6 flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-5 sm:flex-row sm:items-center">
           <p className="flex-1 text-[15px] leading-relaxed text-ink">Your short check for <span className="font-medium"><RichText text={diagnosing.goal} /></span> is waiting. Finish it to add this path.</p>
@@ -125,23 +145,6 @@ export default async function Dashboard() {
         })}
       </section>
 
-      {/* Next step */}
-      {next && (
-        <section className="mb-6 rounded-[14px] border border-accent-line bg-accent-soft p-5 md:p-6">
-          <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{next.status === 'review' ? 'Back to basics' : 'Up next'}</p>
-          <h2 className="mt-1.5 font-display text-[24px] leading-snug text-ink"><RichText text={next.title} /></h2>
-          {next.summary && <p className="mt-1.5 text-[15px] leading-relaxed text-ink-2"><RichText text={next.summary} /></p>}
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            {next.lesson_id ? (
-              nextLessonDone
-                ? <Link href={`/learn/${next.lesson_id}/check`} className={buttonClass('primary', 'md')}>Take the mastery check<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
-                : <Link href={`/learn/${next.lesson_id}`} className={buttonClass('primary', 'md')}>{nextStarted ? 'Continue lesson' : 'Start lesson'}<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>
-            ) : <TopicStart topicId={next.id} />}
-            {next.due_on && <span className="tnum text-[13px] text-muted">Aim to finish by {formatDue(next.due_on)}</span>}
-          </div>
-        </section>
-      )}
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <section className="space-y-6 lg:col-span-3">
           {paths.map(entry => (
@@ -183,13 +186,14 @@ export default async function Dashboard() {
             <SectionTitle>What you know now</SectionTitle>
             <Card>
               {knownNow.length ? <ul className="space-y-2 text-[15px] text-ink">{knownNow.map(k => <li key={k} className="flex gap-2"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={title(k)} /></li>)}</ul>
-                : <p className="text-[15px] text-muted">We’re building this from the first step.</p>}
+                : <p className="text-[15px] leading-relaxed text-muted">Nothing ticked off yet. Each topic you master lands here.</p>}
             </Card>
           </section>
           <section>
             <SectionTitle>What’s next</SectionTitle>
             <Card>
-              <ul className="space-y-2 text-[15px] text-ink">{upNext.map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
+              {upNext.length ? <ul className="space-y-2 text-[15px] text-ink">{upNext.map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
+                : <p className="text-[15px] text-muted">Everything open is mastered. Add a new goal when you’re ready.</p>}
             </Card>
           </section>
         </aside>

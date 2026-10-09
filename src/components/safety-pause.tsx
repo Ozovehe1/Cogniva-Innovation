@@ -3,7 +3,7 @@ import React from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Phone } from 'lucide-react'
 import { HELPLINES } from '@/lib/safety'
-import { buttonClass } from './ui'
+import { SheetGrabber, buttonClass } from './ui'
 
 /**
  * Shown when something a learner typed suggests distress. The lesson or intake is
@@ -20,6 +20,7 @@ export function SafetyPause({ open, minor, onContinue }: { open: boolean; minor?
             className="pb-safe relative max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-[18px] border border-line bg-surface p-6 shadow-[var(--shadow-raised)] sm:rounded-[18px] sm:p-8"
             initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
           >
+            <SheetGrabber className="-mt-4 mb-4" />
             <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Let’s pause here</p>
             <h2 id="safety-title" className="mt-2 font-display text-[26px] leading-tight text-ink">It sounds like things might be really hard right now.</h2>
             <p className="mt-3 text-[15px] leading-relaxed text-ink-2">

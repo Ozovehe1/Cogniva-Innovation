@@ -10,7 +10,7 @@ import { validateScript } from '@/lib/lesson-schema'
 import { hiddenStep, isHideable } from '@/lib/correctness/hide'
 import { RichText } from '@/components/rich-text'
 import { LESSON_MAX_STEPS, estimateMs, formatDuration, normalizeChapters } from '@/lib/lesson-sections'
-import { Eyebrow } from '@/components/ui'
+import { Eyebrow, buttonClass } from '@/components/ui'
 import { LessonSession } from '@/components/lesson-session'
 import { LessonPreparing } from '@/components/lesson-preparing'
 import { LessonDelete, LessonDownload } from '@/components/lesson-actions'
@@ -95,7 +95,7 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
 
   return (
     <div className="mx-auto max-w-[920px]">
-      <Link href="/learn" className="-ml-1 mb-4 inline-flex h-9 items-center gap-1.5 rounded-md px-1 text-sm text-muted hover:text-ink">
+      <Link href="/learn" className="-ml-2 mb-3 inline-flex h-11 items-center gap-1.5 rounded-[10px] px-2 text-sm text-muted hover:bg-sunken hover:text-ink">
         <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
         Your lessons
       </Link>
@@ -123,9 +123,10 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
         </>
       )}
       {topicRow && steps.length > 0 && (
-        <section className="mt-6 flex flex-col gap-3 rounded-[14px] border border-accent-line bg-accent-soft p-5 sm:flex-row sm:items-center">
-          <p className="flex-1 text-[15px] leading-relaxed text-ink">When you’ve finished, a four-question mastery check unlocks the next topic.</p>
-          <Link href={`/learn/${l.id}/check`} className="inline-flex h-10 items-center justify-center rounded-[10px] bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover">Mastery check</Link>
+        <section className="mt-6 flex flex-col gap-3 rounded-[14px] border border-line bg-surface p-5 sm:flex-row sm:items-center">
+          <p className="flex-1 text-[15px] leading-relaxed text-ink-2">When you’ve finished, a four-question mastery check unlocks the next topic. No timer; you can retake it.</p>
+          {/* Secondary: while the lesson plays, Play is the one filled control on the page (§1). */}
+          <Link href={`/learn/${l.id}/check`} className={buttonClass('secondary', 'md')}>Mastery check</Link>
         </section>
       )}
       {profile && steps.length > 0 && <AskSheet lessonId={l.id} minor={minor} />}

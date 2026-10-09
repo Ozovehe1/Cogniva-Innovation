@@ -1,7 +1,7 @@
 'use client'
 import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Spinner } from './ui'
+import { buttonClass } from './ui'
 
 /**
  * Shown while the AI writes a learner's lesson. Polls the status route (which also
@@ -34,19 +34,38 @@ export function LessonPreparing({ lessonId, own, compact = false, readySteps = 0
   // Mid-lesson nothing is shown: later sections stream in behind the one being taught.
   if (compact) return null
   const paused = state?.status === 'paused'
+  const ready = state?.sectionsReady ?? 0
+  // A board-shaped skeleton that "writes" itself (shaped like what is coming: reduced uncertainty), the honest status
+  // in words, and nothing to do but wait or leave (autonomy): the lesson opens by itself the moment part 1 exists.
   return (
-    <div className="rounded-[14px] border border-line bg-surface p-6 md:p-8">
+    <div className="overflow-hidden rounded-[14px] border border-line bg-surface shadow-[var(--shadow-card)]" role="status" aria-live="polite">
       {state?.error ? (
-        <p className="text-[15px] text-danger">{state.error}</p>
+        <div className="p-6 md:p-8">
+          <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-clay">This lesson hit a snag</p>
+          <p className="mt-2 text-[15px] leading-relaxed text-ink-2">{state.error}</p>
+          <button type="button" onClick={() => router.refresh()} className={buttonClass('secondary', 'md', 'mt-4')}>Check again</button>
+        </div>
       ) : (
         <>
-          <Spinner className="h-5 w-5 text-accent" />
-          <h2 className="mt-4 font-display text-[24px] leading-snug text-ink">{paused ? 'Your tutor is taking a short pause.' : 'Your tutor is writing this lesson for you.'}</h2>
-          <p className="mt-2 max-w-[34rem] text-[15px] leading-relaxed text-muted">
-            {paused
-              ? 'The AI service is busy right now. Writing picks up again automatically in a few minutes; you can leave this page and come back.'
-              : 'It’s pitched at your level, with examples from your interests, and sized to your week. The first part is usually ready in under a minute; the rest is written while you learn.'}
-          </p>
+          <div className="relative aspect-[16/9] w-full border-b border-line bg-[#FDFCF9]" aria-hidden>
+            {[38, 56, 30, 46].map((w, i) => (
+              <span key={i} className="absolute left-[8%] h-3.5 origin-left rounded-full bg-line-strong/60 motion-safe:animate-[gm-write_2.8s_ease-in-out_infinite]"
+                style={{ top: `${18 + i * 16}%`, width: `${w}%`, animationDelay: `${i * 0.35}s` }} />
+            ))}
+            <span className="absolute bottom-[16%] right-[10%] h-16 w-24 rounded-[10px] border border-dashed border-line-strong" />
+          </div>
+          <div className="p-5 md:p-6">
+            <p className="flex items-center gap-2 text-[12px] font-medium uppercase tracking-[0.08em] text-accent">
+              <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full rounded-full bg-accent/50 motion-safe:animate-ping" /><span className="relative inline-flex h-2 w-2 rounded-full bg-accent" /></span>
+              {paused ? 'Short pause' : ready > 0 ? `Part ${ready + 1} on its way` : 'Writing part 1'}
+            </p>
+            <h2 className="mt-2 font-display text-[24px] leading-snug text-ink">{paused ? 'Your tutor is taking a short pause.' : 'Your tutor is writing this lesson for you.'}</h2>
+            <p className="mt-2 max-w-[34rem] text-[15px] leading-relaxed text-muted">
+              {paused
+                ? 'The AI service is busy right now. Writing picks up again by itself in a few minutes; you can leave this page and come back.'
+                : 'It’s pitched at your level, with examples from your interests, and sized to your week. The first part is usually ready in under a minute and opens here by itself; the rest is written while you learn.'}
+            </p>
+          </div>
         </>
       )}
     </div>
