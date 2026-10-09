@@ -15,7 +15,8 @@ URL (and, when paths_upload_url is given, the clip's pen paths as JSON, see
 pen_export.py: every Create / Write / DrawBorderThenFill / GrowArrow stroke with its
 bezier points in frame coordinates and how much of it is revealed over time, so the
 whiteboard hand can trace the lines as they appear), then calls back POST {APP_URL}/api/manim/callback with
-{"job_id", "status": "done"|"failed", "error"} and the same X-Render-Token.
+{"job_id", "status": "done"|"failed", "error", "verdict"?} and the same X-Render-Token. verdict = the deterministic scene
+verifier's result {ok, failed: [...]} (ok None when the engine has no verifier); ok False blocks the clip in the web app.
 
 Secrets (Modal secret "geniusmap-render"): RENDER_TOKEN, APP_URL.
 Deployed from the Vercel production build (scripts/deploy-modal.mjs).
@@ -252,7 +253,7 @@ def render(job_id: str, code: str, scene_name: str, upload_url: str, paths_uploa
         except Exception as exc:  # noqa: BLE001
             print(f"pen paths upload failed: {exc}")
 
-    _callback(job_id, "done")
+    _callback(job_id, "done", None, {"verdict": {"ok": None, "failed": [], "verifier": "none (code given by the app)"}})
     return {"ok": True, "bytes": len(data), "pen_bytes": pen_bytes}
 
 
@@ -551,7 +552,8 @@ def compose(job_id: str, description: str, narration: dict | None, context: str,
     report = json.loads(json.dumps(report, default=lambda o: float(o) if hasattr(o, "__float__") else str(o)))  # numpy-free for the web container
     if callback:
         code = r.get("code") or gm_compose.scene_code(r["spec"])
-        _callback(job_id, "done", None, {"composed": True, "code": code, "issues": r.get("issues"), "timings": r.get("timings")})
+        verdict = {"ok": None, "failed": [], "verifier": f"none ({r.get('engine') or 'template'} composer)"}
+        _callback(job_id, "done", None, {"composed": True, "code": code, "issues": r.get("issues"), "timings": r.get("timings"), "verdict": verdict})
     return report
 
 
@@ -611,7 +613,11 @@ def freeform(job_id: str, description: str, narration: dict | None, context: str
         rep["bytes"] = len(r["video"])
         _put(ff_report_upload_url or report_upload_url, json.dumps(rep, default=safe).encode(), "application/json")
         if callback:
-            _callback(job_id, "done", None, {"composed": True, "engine": rep.get("engine", "freeform"), "code": r["code"], "timings": rep.get("timings")})
+            # the deterministic verifier's verdict rides on 'done' (ok False blocks the clip in the web app); free-form code has
+            # no scene verifier, so its verdict says so (ok None, never a false pass)
+            verdict = r.get("verdict") or {"ok": None, "failed": [], "verifier": "none (free-form code)"}
+            _callback(job_id, "done", None, {"composed": True, "engine": rep.get("engine", "freeform"), "code": r["code"], "timings": rep.get("timings"),
+                                             "verdict": verdict})
         return json.loads(json.dumps(rep, default=safe))
     rep["fallback"] = "template composer" if fallback else None
     _put(ff_report_upload_url or report_upload_url, json.dumps(rep, default=safe).encode(), "application/json")

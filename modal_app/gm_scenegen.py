@@ -462,6 +462,19 @@ def variant(description, render, *, narration, context, aspect, examples, log, i
 
 
 # ───────────────────────── the loop ─────────────────────────
+def final_verdict(description: str, ir: dict, aspect: str = "16:9") -> dict:
+    """The deterministic verifier's verdict on the scene that ships ({ok, failed}): the engine's checks (geometry, given
+    numbers, concept terms) re-run on the final IR. Sent with the 'done' callback; ok False blocks the clip in the web app."""
+    try:
+        v = GW.verify_ir(ir, aspect)
+        failed = list(v.get("problems") or [])
+        if v.get("ok"):
+            failed += given_values_report(description, ir) + concept_terms_report(description, ir)
+        return {"ok": not failed, "failed": [str(p)[:300] for p in failed][:12], "warnings": [str(w)[:200] for w in (v.get("warnings") or [])][:6], "verifier": "scene-ir"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "failed": [f"verifier error: {type(exc).__name__}: {str(exc)[:200]}"], "verifier": "scene-ir"}
+
+
 def run(description: str, render, *, narration: dict | None = None, context: str = "", aspect: str = "16:9", log: list | None = None,
         n_variants: int = 2, budget_s: float = 240.0, vision: bool = True, learn: bool = True, examples: list | None = None) -> dict:
     """render(code, quality, aspect, want_frames, pen) -> {"ok", "error", "probe", "duration", "frames", "video"?}.
@@ -535,6 +548,12 @@ def run(description: str, render, *, narration: dict | None = None, context: str
             except Exception as exc:  # noqa: BLE001
                 rep["revision"] = {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
         T["revision_s"] = round(time.time() - t0, 1)
+        verdict = final_verdict(description, best["ir"], aspect)
+        rep["verdict"] = verdict
+        if not verdict["ok"]:
+            rep["error"] = "verifier failed the final scene: " + "; ".join(verdict["failed"][:4])
+            rep["timings"] = T
+            return {"ok": False, "error": rep["error"], "verdict": verdict, "report": rep}
         fin = render(best["code"], "m", aspect, False, True)
         T["final_s"] = round(time.time() - t0, 1)
         rep["timings"] = T
@@ -549,7 +568,7 @@ def run(description: str, render, *, narration: dict | None = None, context: str
         cs = crit.get("score") if crit else None
         if learn and isinstance(cs, (int, float)) and cs >= 7 and best["score"]["layout_high"] == 0:
             rep["gallery"] = gallery_add(description, best["ir"], cs)
-        return {"ok": True, "code": best["code"], "ir": best["ir"], "video": fin.get("video"), "pen": fin.get("pen"), "report": rep}
+        return {"ok": True, "code": best["code"], "ir": best["ir"], "video": fin.get("video"), "pen": fin.get("pen"), "verdict": verdict, "report": rep}
     except Exception as exc:  # noqa: BLE001
         rep["error"] = f"{type(exc).__name__}: {exc}"[:600]
         return {"ok": False, "error": rep["error"], "report": rep}
