@@ -18,7 +18,7 @@ circle {center, radius: expr or a point id on it}   arc {center, radius, start, 
 angle {points:[A,B,C]} marks angle ABC (square if 90°); label it with a template e.g. "label": "{t1/deg:.0f}°"
 brace {from, to, label}
 vector {from, to} or {from, comp:[dxExpr, dyExpr], on?: axesId, scale?}   (world units, or axes units with on)
-axes {x:[min,max], y:[min,max], unit:[ux,uy] (world units per axis unit) or size:[w,h], origin?: pointId placed at (0,0), x_label, y_label, x_pi?: true}
+axes {x:[min,max], y:[min,max], unit:[ux,uy] (world units per axis unit) or size:[w,h], origin?: pointId placed at (0,0) (then 1 axis unit = 1 world unit unless unit/size is given, so world vectors and points read true on the axes), x_label, y_label, x_pi?: true}
 function {on: axesId, expr: "in x and vars", domain?: [a,b] (exprs allowed, e.g. [0,"t"] grows as t animates)}
 curve {x: expr, y: expr, param: "u", range: [u0,u1], on?: axesId}
 area {on: axesId, of: functionId, domain: [a,b], rects?: n (Riemann), rule?: left|right|mid}

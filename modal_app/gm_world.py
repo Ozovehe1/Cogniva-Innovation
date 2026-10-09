@@ -502,6 +502,10 @@ def _axes_units(o):
         u = o["unit"]
         u = u if isinstance(u, (list, tuple)) else [u, u]
         return float(u[0]), float(u[1])
+    if o.get("origin") and not o.get("size"):
+        # axes laid over world geometry (origin = a world point): one axes unit is one world unit, so a vector drawn with
+        # offset (3, 1) ends at (3, 1) on the axes
+        return 1.0, 1.0
     size = o.get("size") or [6.0, 4.0]
     return float(size[0]) / max(1e-6, x1 - x0), float(size[1]) / max(1e-6, y1 - y0)
 
