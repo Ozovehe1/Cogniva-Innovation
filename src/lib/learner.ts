@@ -212,7 +212,7 @@ Return JSON: {"reflection": string, "prior": string, "contexts": [string], "purp
   const goals = (Array.isArray(raw?.goals) ? raw.goals : []).flatMap(g => {
     if (!g || typeof g !== 'object') return []
     const o = g as Record<string, unknown>
-    return typeof o.goal === 'string' && o.goal.trim() ? [{ goal: o.goal.trim().slice(0, 140), subject: typeof o.subject === 'string' ? o.subject.trim().slice(0, 60) : '', stem: o.stem === true }] : []
+    return typeof o.goal === 'string' && o.goal.trim() ? [{ goal: o.goal.trim().replace(/\.$/, '').slice(0, 140), subject: typeof o.subject === 'string' ? o.subject.trim().slice(0, 60) : '', stem: o.stem === true }] : []
   }).slice(0, 4)
   const prior = raw?.prior === 'none' || raw?.prior === 'some' ? raw.prior : 'unclear'
   const contexts = (Array.isArray(raw?.contexts) ? raw.contexts : []).filter((x): x is string => typeof x === 'string' && !!x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 2)

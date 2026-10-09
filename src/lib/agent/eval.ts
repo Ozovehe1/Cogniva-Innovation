@@ -27,6 +27,7 @@ import { runAgent, CHAT_SYSTEM, MAX_WRITES } from './run'
 import { selectTools, type AgentCtx } from './tools'
 import type { Block } from './types'
 import { illustrationStaticCases, illustrationVisualCases } from '../illustrations/eval'
+import { onboardingStaticCases } from '../onboarding-eval'
 
 export interface CaseResult { id: string; group: string; pass: boolean; detail: string; model?: string | null; ms?: number }
 
@@ -145,6 +146,7 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   } catch (err) { out.push({ id: 'lesson-board-diagram', group: 'static', pass: false, detail: String(err).slice(0, 160) }) }
   out.push({ id: 'md-rejects-bad-substance', group: 'static', pass: badPred.length > 0 && badType.length > 0 && notSub.errors.length > 0, detail: [...badPred, ...badType, ...notSub.errors].join('; ').slice(0, 160) })
   out.push(...(await illustrationStaticCases()))
+  out.push(...onboardingStaticCases())
   return out
 }
 

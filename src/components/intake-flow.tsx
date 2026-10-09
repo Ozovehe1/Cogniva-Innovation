@@ -37,7 +37,7 @@ type Signals = { efficacy: number; anxious: boolean; underconfident?: boolean } 
 interface Suggestions { goals: { goal: string; subject: string; stem: boolean }[]; reflection?: string; prior?: string; contexts?: string[]; purpose?: string | null }
 
 const STEM_GUESS = /\b(math|maths|algebra|equation|quadratic|calculus|geometry|trigonometr|statistic|physics|chemistr|solar|pv|circuit|electric|engineer|coding|code|program|python|java|data|science|biology)\b/i
-const STARTERS = ['Quadratic equations', 'How electricity works', 'Python for beginners', 'Size solar panels for a home', 'Chemistry basics', 'Statistics for data']
+const STARTERS = ['Quadratic equations', 'How electricity works', 'Python basics', 'Solar panels for a home', 'Chemistry basics']
 const STAGES: { id: string; label: string; match: (v: string) => boolean }[] = [
   { id: 'primary', label: 'Primary', match: v => v.startsWith('Primary') },
   { id: 'secondary', label: 'Secondary', match: v => /^(JSS|SS)\d/.test(v) },
@@ -250,19 +250,23 @@ export function IntakeFlow({
               )
             })}
           </div>
+          <div className="mt-2 flex justify-between text-[12px] text-faint">
+            <span>{steps[Math.min(4, Math.floor(step))]}</span>
+            <span className="tnum">{phase === 'intake' ? (screen?.id === 'goal' ? 'About a minute to set up' : screen?.id === 'purpose' ? 'Almost there' : `${Math.max(1, 4 - Math.floor(step))} quick ${4 - Math.floor(step) === 1 ? 'step' : 'steps'} left`) : phase === 'diag' ? 'Short check' : phase === 'result' ? 'Done' : ''}</span>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[640px] flex-1 flex-col px-5 pt-4 sm:px-6 sm:pt-8">
+      <main className="mx-auto flex w-full max-w-[640px] flex-1 flex-col px-5 pt-3 sm:px-6 sm:pt-8">
         <AnimatePresence mode="wait" initial={false}>
           {phase === 'intake' && screen && (
             <motion.section key={screen.id} initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? { opacity: 0 } : { opacity: 0, x: -24 }}
               transition={{ duration: reduce ? 0.01 : 0.28, ease }} className="flex flex-1 flex-col">
-              <div className="mb-3 flex h-11 items-center">
-                {idx > 0 && screen.id !== 'purpose'
-                  ? <button type="button" onClick={back} className="-ml-3 inline-flex h-11 items-center gap-1 rounded-[10px] px-3 text-[14px] text-muted hover:bg-sunken hover:text-ink"><ArrowLeft className="h-4 w-4" strokeWidth={1.75} />Back</button>
-                  : null}
-              </div>
+              {idx > 0 && screen.id !== 'purpose' && (
+                <div className="-mt-1 mb-2 flex items-center">
+                  <button type="button" onClick={back} className="-ml-3 inline-flex h-11 items-center gap-1 rounded-[10px] px-3 text-[14px] text-muted hover:bg-sunken hover:text-ink"><ArrowLeft className="h-4 w-4" strokeWidth={1.75} />Back</button>
+                </div>
+              )}
               {screen.id === 'goal' && <GoalScreen firstName={firstName} answers={answers} busy={busy} isNewGoal={edit && startAt === 'goal' && !!answers.age} onSubmit={p => submitScreen(p)} />}
               {screen.id === 'about' && <AboutScreen answers={answers} busy={busy} onSubmit={p => submitScreen(p)} />}
               {screen.id === 'consent' && <ConsentScreen busy={busy} onSubmit={email => submitScreen({ consent: { v: true }, age: answers.age, ...(answers.level ? { level: answers.level } : {}) }, { consent: { guardianEmail: email } })} />}
@@ -278,6 +282,7 @@ export function IntakeFlow({
           {(phase === 'ready' || phase === 'building' || phase === 'finishing') && (
             <motion.section key="building" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-1 flex-col pt-6">
               <TutorLine>{phase === 'finishing' ? 'Picking where you start and writing your first lesson…' : fresh ? 'Laying out the ideas from the very first one up to your goal.' : 'Mapping the skills between where you are and your goal.'}</TutorLine>
+              <Title>{phase === 'finishing' ? 'Your path is taking shape' : 'Your map is taking shape'}</Title>
               <MapSkeleton reduce={!!reduce} />
               <p className="mt-6 text-[14px] leading-relaxed text-muted" aria-live="polite">{error ? '' : 'Usually well under a minute. In a moment you’ll see what you already know.'}</p>
               {error && (
@@ -313,10 +318,10 @@ export function IntakeFlow({
 /** The tutor speaking in the first person: warm relatedness, kept short. */
 function TutorLine({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cx('flex items-start gap-3', className)}>
+    <motion.div className={cx('flex items-start gap-3', className)} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, delay: 0.08, ease }}>
       <span aria-hidden className="mt-0.5 inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent font-display text-[15px] text-white shadow-[var(--shadow-card)]">G</span>
       <p className="min-w-0 rounded-[14px] rounded-tl-[4px] bg-surface px-3.5 py-2.5 text-[15px] leading-relaxed text-ink-2 shadow-[var(--shadow-card)] ring-1 ring-line">{children}</p>
-    </div>
+    </motion.div>
   )
 }
 
@@ -332,7 +337,7 @@ function Title({ children, sub }: { children: React.ReactNode; sub?: React.React
 /** Bottom-anchored action bar (thumb zone): one primary action, an optional quiet secondary. */
 function ActionBar({ children, note }: { children: React.ReactNode; note?: React.ReactNode }) {
   return (
-    <div className="sticky bottom-0 -mx-5 mt-auto bg-gradient-to-t from-canvas via-canvas to-canvas/0 px-5 pb-[calc(16px+env(safe-area-inset-bottom))] pt-6 sm:-mx-6 sm:px-6">
+    <div className="sticky bottom-0 -mx-5 mt-auto bg-canvas px-5 pb-[calc(16px+env(safe-area-inset-bottom))] pt-3 before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-gradient-to-t before:from-canvas before:to-canvas/0 sm:-mx-6 sm:px-6">
       {note && <p className="mb-3 text-center text-[12px] leading-snug text-faint">{note}</p>}
       <div className="flex items-center gap-2">{children}</div>
     </div>
@@ -360,13 +365,13 @@ function GoalScreen({ firstName, answers, busy, isNewGoal, onSubmit }: { firstNa
     <>
       <TutorLine>{isNewGoal ? 'Something new? Great. Tell me what, and I’ll map a path for it.' : <>Hi {firstName}, I’m your tutor. Four quick steps, then we start learning. You can skip anything after this one.</>}</TutorLine>
       <Title sub="In your own words. A few words is plenty.">What do you want to learn?</Title>
-      <textarea ref={ref} value={text} maxLength={600} rows={3} autoFocus aria-label="What you want to learn"
+      <textarea ref={ref} value={text} maxLength={600} rows={2} autoFocus aria-label="What you want to learn"
         placeholder="e.g. Solve quadratic equations without getting stuck" onChange={e => setText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
         className="mt-6 block w-full resize-none rounded-[14px] border border-line bg-surface px-4 py-3.5 font-display text-[20px] leading-snug text-ink shadow-[var(--shadow-card)] placeholder:text-faint focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/10" />
       <p className="mt-5 text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Or start from one of these</p>
       <div className="mt-2.5 flex flex-wrap gap-2">
-        {STARTERS.map(s => <Chip key={s} on={text === s} onClick={() => { setText(s); ref.current?.focus() }} className="text-[14px]">{s}</Chip>)}
+        {STARTERS.map(s => <Chip key={s} on={text === s} onClick={() => { setText(s); ref.current?.focus() }} className="px-3.5 text-[14px]">{s}</Chip>)}
       </div>
       <ActionBar note={<span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" strokeWidth={2} />Private to you. About a minute to set up.</span>}>
         <button type="button" disabled={!ok || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}>{busy ? <Spinner /> : <>Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></>}</button>
@@ -531,13 +536,12 @@ function PurposeScreen({ answers, guess, mapState, fresh, busy, onSubmit }: {
         {ready ? (fresh ? 'Your path is ready' : 'Your check is ready') : fresh ? 'Laying out your path…' : 'Mapping the skills to your goal…'}
       </div>
       <Title sub="Optional, but it shapes the examples and the pace.">While I map it out: what’s it for?</Title>
-      <div className="mt-5 grid gap-2" role="radiogroup" aria-label="What it’s for">
+      <div className="mt-5 flex flex-wrap gap-2" role="radiogroup" aria-label="What it’s for">
         {PURPOSES.map(p => (
-          <button key={p.value} type="button" role="radio" aria-checked={purpose === p.value} onClick={() => setPurpose(x => (x === p.value ? null : p.value))}
-            className={cx('flex min-h-[52px] items-center justify-between gap-3 rounded-[12px] border bg-surface px-4 py-2.5 text-left transition-colors', purpose === p.value ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-line-strong')}>
-            <span><span className="block text-[15px] font-medium text-ink">{p.label}</span>{p.hint && <span className="block text-[13px] leading-snug text-muted">{p.hint}</span>}</span>
-            {guess === p.value && purpose === p.value && <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent"><Sparkles className="h-3 w-3" strokeWidth={2} />My guess</span>}
-          </button>
+          <Chip key={p.value} role="radio" aria-checked={purpose === p.value} on={purpose === p.value} onClick={() => setPurpose(x => (x === p.value ? null : p.value))} title={p.hint}>
+            {p.label}
+            {guess === p.value && <span className={cx('ml-0.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]', purpose === p.value ? 'bg-white/20 text-white' : 'bg-accent-soft text-accent')}><Sparkles className="h-2.5 w-2.5" strokeWidth={2.5} />guess</span>}
+          </Chip>
         ))}
       </div>
       <fieldset className="mt-6">
@@ -564,15 +568,15 @@ function PurposeScreen({ answers, guess, mapState, fresh, busy, onSubmit }: {
 function MapSkeleton({ reduce }: { reduce: boolean }) {
   const rows = [0.62, 0.48, 0.7, 0.4, 0.56]
   return (
-    <div className="mt-8 rounded-[14px] border border-line bg-surface p-5 shadow-[var(--shadow-card)]" aria-hidden>
+    <div className="mt-6 rounded-[14px] border border-line bg-surface p-5 shadow-[var(--shadow-card)]" aria-hidden>
       {rows.map((w, i) => (
         <motion.div key={i} className="flex items-center gap-3 py-2.5" initial={{ opacity: 0.25 }} animate={reduce ? { opacity: 0.6 } : { opacity: [0.25, 0.85, 0.25] }}
           transition={reduce ? { duration: 0 } : { duration: 1.8, repeat: Infinity, delay: i * 0.18, ease: 'easeInOut' }}>
           <span className="relative flex h-6 w-6 flex-shrink-0 items-center justify-center">
             {i < rows.length - 1 && <span className="absolute top-6 h-5 w-px bg-line-strong" />}
-            <span className="h-3.5 w-3.5 rounded-full border-2 border-accent-line bg-accent-soft" />
+            <span className="h-3.5 w-3.5 rounded-full border-2 border-accent bg-accent-soft" />
           </span>
-          <span className="h-3 rounded bg-sunken" style={{ width: `${w * 100}%` }} />
+          <span className="h-3 rounded-full bg-line" style={{ width: `${w * 100}%` }} />
         </motion.div>
       ))}
     </div>
@@ -610,9 +614,9 @@ function DiagQuestion({ view, busy, error, reduce, onAnswer, onSkipRest }: { vie
         ))}
       </div>
       {error && <Alert tone="danger" className="mt-4">{error}</Alert>}
-      <p className="mt-6 text-[13px] text-muted">
-        Rather not finish? <button type="button" disabled={busy} onClick={onSkipRest} className="inline-flex min-h-11 items-center font-medium text-accent underline-offset-4 hover:underline">Skip the rest</button> and I’ll build your path from what I’ve seen.
-      </p>
+      <button type="button" disabled={busy} onClick={onSkipRest} className="mt-4 inline-flex min-h-11 items-center self-start text-[13px] text-muted hover:text-ink">
+        Rather not finish? <span className="ml-1 font-medium text-accent">Skip the rest</span>
+      </button>
       <ActionBar>
         <AnimatePresence mode="wait" initial={false}>
           {choice === null ? (
