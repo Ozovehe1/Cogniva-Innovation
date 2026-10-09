@@ -7,7 +7,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export type MemoryKind = 'lesson_summary' | 'misconception' | 'chat_summary' | 'checkin_note' | 'goal'
+export type MemoryKind = 'lesson_summary' | 'misconception' | 'chat_summary' | 'checkin_note' | 'goal' | 'teaching_note'
 export interface MemoryRow { kind: MemoryKind; title: string; content: string; path_id?: string | null; node_id?: string | null; lesson_id?: string | null; source_key?: string | null }
 
 const EMBED_URL = () => `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/embed`

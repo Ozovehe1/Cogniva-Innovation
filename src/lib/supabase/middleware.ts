@@ -45,7 +45,9 @@ export async function updateSession(request: NextRequest) {
     // Agent queue drain (pg_cron) and eval runner: Bearer AGENT_SECRET.
     path === '/api/agent/tick' || path === '/api/agent/eval' ||
     // LLM pool health: Bearer AGENT_SECRET or an admin session (checked in the route).
-    path === '/api/admin/llm-pool'
+    path === '/api/admin/llm-pool' ||
+    // Teaching Playbook background job (pg_cron): Bearer AGENT_SECRET.
+    path === '/api/playbook/tick'
   if (!user && !isPublic) {
     const login = new URL('/login', request.url)
     // Pages (not API calls) come back to where they were after signing in.
