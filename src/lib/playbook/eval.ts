@@ -78,9 +78,12 @@ export function staticPlaybookCases(): CaseResult[] {
   add('caps-drop-lowest', cut.length === 2 && cut.includes('c9') && cut.includes('c0'), cut.join(','))
   // Retrieval scoring: topic words count; an unrelated topic-specific bullet is not injected without high similarity.
   const pyth = fakeBullet({ topic: 'Pythagoras theorem', topic_key: topicKey('Pythagoras theorem right triangle sides'), skill: 'labelling triangle sides' })
-  const s1 = scoreBullet(pyth, { key: topicKey('right triangle missing side') }, null)
-  const s2 = scoreBullet(pyth, { key: topicKey('the water cycle') }, null)
-  add('retrieval-topic-match', relevant(s1, false) && !relevant(s2, false), `right-triangle topical=${s1.topical}; water-cycle topical=${s2.topical}`)
+  const s1 = scoreBullet(pyth, { key: 'Finding a missing side of a right-angled triangle' }, null)
+  const s2 = scoreBullet(pyth, { key: 'The water cycle' }, null)
+  const s3 = scoreBullet(pyth, { key: 'Solving linear equations' }, null)
+  add('retrieval-topic-match', relevant(s1, false) && !relevant(s2, false) && !relevant(s3, false), `right-triangle topical=${s1.topical}; water-cycle topical=${s2.topical}; linear-equations topical=${s3.topical}`)
+  const sim = (b: Bullet, v: number) => ({ b, sim: v, score: v, topical: false })
+  add('retrieval-thresholds', relevant(sim(pyth, 0.86), true) && !relevant(sim(pyth, 0.82), true) && relevant(sim(fakeBullet({}), 0.72), true), `topic-specific 0.86 in, 0.82 out; general 0.72 in`)
   return out
 }
 

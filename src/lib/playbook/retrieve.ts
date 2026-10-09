@@ -15,27 +15,50 @@ import type { Bullet, Target } from './types'
 
 export interface Scored { b: Bullet; score: number; sim: number; topical: boolean }
 
-/** Similarity above which a bullet applies even without a topic-word match (gte-small cosines run high). */
-export const SIM_ANY = 0.86
-/** Similarity a topic-matched or general bullet needs. */
-export const SIM_TOPIC = 0.74
+/*
+ * Thresholds calibrated on gte-small (2026-10-09): a topic-specific rule vs related topics scored 0.85-0.88, vs
+ * unrelated topics of the same subject up to 0.82 and other subjects 0.73-0.78; a general rule (no topic) scored a flat
+ * 0.72-0.74 against everything, so general rules are ranked, not filtered.
+ */
+/** Similarity above which a topic-specific bullet applies without a topic-word match. */
+export const SIM_ANY = 0.845
+/** Similarity a topic-word-matched bullet needs. */
+export const SIM_TOPIC = 0.75
+/** Similarity a general (topic "") bullet needs: effectively always, ranked by score. */
+export const SIM_GENERAL = 0.68
+
+const STEM_STOP = new Set('a an the of and or in on to for with by from at as is are be how why what using use finding find intro introduction basics basic simple'.split(' '))
+function stems(s: string): Set<string> {
+  return new Set((s.toLowerCase().replace(/[-_]/g, ' ').match(/[a-z0-9]+/g) ?? [])
+    .filter(w => w.length > 2 && !STEM_STOP.has(w))
+    .map(w => w.replace(/(ing|ed|es|s)$/, '').replace(/ion$/, '')).filter(w => w.length > 2))
+}
+/** Topic match on word stems: two shared stems, or half of the shorter topic's stems. */
+export function topicMatch(a: string, b: string): boolean {
+  const A = stems(a), B = stems(b)
+  if (!A.size || !B.size) return false
+  let n = 0
+  for (const w of A) if (B.has(w)) n++
+  return n >= 2 || n / Math.min(A.size, B.size) >= 0.5
+}
 
 export function scoreBullet(b: Bullet, q: { key: string; skill?: string }, qv: number[] | null): Scored {
   const sim = qv && b.embedding ? cosine(qv, b.embedding) : 0
-  const bKey = b.topic_key || topicKey(`${b.topic} ${b.skill}`)
-  const topical = !!(q.key && bKey && (sameTopic(bKey, q.key) || sameTopic(q.key, bKey)))
+  const bKey = `${b.topic} ${b.skill} ${b.topic_key}`
+  const topical = !!(q.key && b.topic.trim() && (topicMatch(bKey, q.key) || sameTopic(b.topic_key || topicKey(b.topic), q.key)))
   const general = !b.topic.trim()
-  const skill = !!(q.skill && b.skill && sameTopic(topicKey(b.skill), topicKey(q.skill)))
+  const skill = !!(q.skill && b.skill && topicMatch(b.skill, q.skill))
   const counters = Math.log1p(Math.max(0, b.helpful)) * 0.03 - Math.min(5, b.harmful) * 0.04 + Math.min(4, b.evidence - 1) * 0.01
-  const score = sim + (topical ? 0.2 : 0) + (skill ? 0.08 : 0) + (general ? 0.03 : 0) + counters
+  const score = sim + (topical ? 0.2 : 0) + (skill ? 0.08 : 0) + (general ? 0.1 : 0) + counters
   return { b, score, sim, topical }
 }
 
 /** Is a scored bullet relevant enough to inject? */
 export function relevant(s: Scored, semantic: boolean): boolean {
-  if (!semantic) return s.topical || !s.b.topic.trim()
-  if (s.topical) return s.sim >= SIM_TOPIC - 0.06
-  if (!s.b.topic.trim()) return s.sim >= SIM_TOPIC
+  const general = !s.b.topic.trim()
+  if (!semantic) return s.topical || general
+  if (general) return s.sim >= SIM_GENERAL
+  if (s.topical) return s.sim >= SIM_TOPIC
   return s.sim >= SIM_ANY
 }
 
@@ -44,7 +67,7 @@ export async function retrieve(admin: SupabaseClient, target: Target, q: { topic
   if (!pool.length) return []
   const text = [q.subject, q.topic, q.skill].filter(Boolean).join(' · ')
   const qv = opts.queryVec !== undefined ? opts.queryVec : await embedOne(text, 1800)
-  const key = topicKey(`${q.topic} ${q.skill ?? ''}`)
+  const key = `${q.topic} ${q.skill ?? ''}`
   return pool.map(b => scoreBullet(b, { key, skill: q.skill }, qv)).filter(s => relevant(s, !!qv)).sort((a, b) => b.score - a.score).slice(0, opts.k ?? 5)
 }
 

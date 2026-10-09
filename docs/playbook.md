@@ -143,12 +143,16 @@ playbook holds rules about how to teach, not content.
 ## 5. Retrieval: where rules are injected
 
 `playbookBlock(target, fallbackText, ctx)` in `retrieve.ts`:
-- **Scoring:** live bullets for the target, scored by cosine similarity (gte-small) + topic-word match (`sameTopic`) +
-  skill match + counters.
-- **Relevance thresholds:**
-  - topic-matched: sim ≥ 0.68
-  - general (topic ""): sim ≥ 0.74
-  - otherwise: sim ≥ 0.86
+- **Scoring:** live bullets for the target, scored by cosine similarity (gte-small) + topic-word match (word stems: two
+  shared, or half of the shorter topic) + skill match + counters.
+- **Relevance thresholds:** a bullet is injected when it is
+  - topic-matched with sim ≥ 0.75
+  - general (topic "") with sim ≥ 0.68, i.e. general bullets are ranked, not filtered
+  - otherwise only at sim ≥ 0.845
+
+  Calibrated on gte-small on 2026-10-09: a topic rule scored 0.85–0.88 against related topics, up to 0.82 against
+  unrelated topics in the same subject, and 0.73–0.78 against other subjects. A general rule scored a flat 0.72–0.74
+  against everything.
 - **Learner notes:** when the context names a learner (or the lesson's owner), adds up to 3 of their private notes.
 - **Caching:** 10 minutes per target + lesson/session.
 - **Fast path:** skips the embedding entirely when there are no live bullets and the learner has no notes, so the
