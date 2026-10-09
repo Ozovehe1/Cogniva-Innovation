@@ -5,7 +5,7 @@
  * and purpose. Server only.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { generateStructuredJson } from './gemini'
+import { GeminiQuotaError, generateStructuredJson } from './gemini'
 import { inferStatus, levelLine, type Answers } from './intake'
 import { inferSignals, type DiagSignals } from './onboarding-signals'
 import { cleanGraph, descendants, ancestors, topoOrder, type DiagGraph, type DiagState, type DiagItem } from './diagnostic-core'
@@ -455,7 +455,10 @@ ${curriculumLines(curriculum)}${avoid}
 Return JSON {"items": [${ITEM_JSON}]}.`
   const opts = { timeoutMs: 45_000, primaryTimeoutMs: 30_000, temperature: 0.5, priority: 'live' as const }
   const ctx = { surface: 'mastery' as const, curriculum, taught, goal: goalWords, level: levelLine(input.learner), skill: `${input.topicTitle} ${input.summary}`, requireCalc: true }
-  const first = await gateItems(parseItems((await generateStructuredJson(prompt(4, ''), opts) as Record<string, unknown>)?.items), ctx, { admin: input.admin })
+  // A malformed first answer (bad JSON) is not fatal: the re-ask rounds below write the missing questions.
+  const first = await generateStructuredJson(prompt(4, ''), opts)
+    .then(raw => gateItems(parseItems((raw as Record<string, unknown>)?.items), ctx, { admin: input.admin }))
+    .catch(err => { if (err instanceof GeminiQuotaError) throw err; console.warn('Mastery writer:', err instanceof Error ? err.message : err); return { good: [] as AssessItem[], rejected: [] as Rejected[], verdicts: [] } })
   const good: AssessItem[] = [...first.good]
   // Up to two re-asks for the missing questions, each with what was wrong.
   let rejected = first.rejected

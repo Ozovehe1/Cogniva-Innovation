@@ -26,7 +26,13 @@ export function graphSvg(spec0: Record<string, unknown>): { svg: string | null; 
   if (!v.spec) return { svg: null, error: v.errors[0] ?? 'invalid graph' }
   // One curve: the stem names it, so no in-plot label to collide with the curve. Points are static (not draggable).
   const spec = { ...v.spec, sliders: [], functions: v.spec.functions.length === 1 ? v.spec.functions.map(f => ({ ...f, label: '' })) : v.spec.functions, points: v.spec.points.map(p => ({ ...p, drag: false, color: p.color === 'clay' ? 'accent' as const : p.color })) }
-  try { return { svg: phoneSvg(interactiveSvg(spec)) } } catch (err) { return { svg: null, error: err instanceof Error ? err.message : String(err) } }
+  try {
+    // Labels on top: tick numbers are drawn before the curves, so lift every label above them (with its halo).
+    const raw = phoneSvg(interactiveSvg(spec))
+    const texts = raw.match(/<text[^>]*>[^<]*<\/text>/g) ?? []
+    const body = texts.reduce((acc, t) => acc.replace(t, ''), raw)
+    return { svg: body.replace(/<\/svg>\s*$/, `${texts.join('')}</svg>`) }
+  } catch (err) { return { svg: null, error: err instanceof Error ? err.message : String(err) } }
 }
 
 /**
