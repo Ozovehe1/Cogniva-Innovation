@@ -54,12 +54,12 @@ export default function InteractiveFigure({ spec, alt }: { spec: IxSpec; alt: st
           for (const [n, p] of Object.entries(pts)) { e[`${n.toLowerCase()}x`] = p.X(); e[`${n.toLowerCase()}y`] = p.Y() }
           return e
         }
-        const pointStyle = (color: string, drag: boolean, label: string) => ({ name: label, size: drag ? 6 : 3.5, fillColor: color, strokeColor: drag ? '#ffffff' : color, strokeWidth: drag ? 2 : 0, fixed: !drag, showInfobox: false, label: { fontSize: 15, color, offset: [10, 10] }, highlightFillColor: color, precision: { touch: 30, mouse: 6 } })
+        const pointStyle = (color: string, drag: boolean, label: string) => ({ name: label, size: drag ? 6 : 3.5, fillColor: color, strokeColor: drag ? '#ffffff' : color, strokeWidth: drag ? 2 : 0, fixed: !drag, showInfobox: false, label: { fontSize: 15, color, offset: [10, 10], autoPosition: true, autoPositionMinDistance: 14, autoPositionMaxDistance: 40 }, highlightFillColor: color, precision: { touch: 30, mouse: 6 } })
         if (is3d) {
           const zf = k.surface!
           const zr = spec.surface!.z ?? (() => { const vs: number[] = []; for (let i = 0; i <= 12; i++) for (let j = 0; j <= 12; j++) vs.push(zf(spec.x[0] + (spec.x[1] - spec.x[0]) * i / 12, { ...sliders.current, y: spec.y[0] + (spec.y[1] - spec.y[0]) * j / 12 })); const f = vs.filter(Number.isFinite); const lo = Math.min(...f), hi = Math.max(...f); return [lo, hi > lo ? hi : lo + 1] as [number, number] })()
-          const view = board.create('view3d', [[-6, -5], [11, 11], [spec.x, spec.y, zr]], { xPlaneRear: { visible: false }, yPlaneRear: { visible: false }, projection: 'parallel', trackball: { enabled: true } })
-          view.create('functiongraph3d', [(x: number, y: number) => zf(x, { ...sliders.current, y }), spec.x, spec.y], { strokeWidth: 0.6, strokeColor: IX_HEX.accent, stepsU: 28, stepsV: 28 })
+          const view = board.create('view3d', [[-5.5, -5], [10, 10], [spec.x, spec.y, zr]], { xPlaneRear: { visible: false }, yPlaneRear: { visible: false }, projection: 'parallel', trackball: { enabled: true } })
+          view.create('functiongraph3d', [(x: number, y: number) => zf(x, { ...sliders.current, y }), spec.x, spec.y], { strokeWidth: 0.7, strokeColor: IX_HEX.accent, strokeOpacity: 0.75, stepsU: 20, stepsV: 20 })
         } else {
           for (const p of spec.points) {
             const k2 = k
@@ -116,7 +116,7 @@ export default function InteractiveFigure({ spec, alt }: { spec: IxSpec; alt: st
       {failed ? (
         <p className="rounded-[10px] bg-sunken px-3 py-2 text-[13px] text-muted">The live figure could not load here. {alt}</p>
       ) : (
-        <div id={`${ids}-${nonce}`} ref={boxRef} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] border-0 bg-[#FBFAF7]" style={{ aspectRatio: spec.surface ? '1 / 0.9' : '3 / 2', maxHeight: 440 }} role="img" aria-label={alt} />
+        <div id={`${ids}-${nonce}`} ref={boxRef} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: spec.surface ? '1 / 0.9' : '3 / 2', maxHeight: 440 }} role="img" aria-label={alt} />
       )}
       {spec.sliders.length > 0 && (
         <div className="mt-3 space-y-3">
