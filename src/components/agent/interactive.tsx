@@ -193,7 +193,9 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, demo, play])
-  const dragNames = [...spec.points.filter(p => p.drag).map(p => p.label), ...spec.gliders.map(g => g.label)]
+  const dragAll = [...spec.points.filter(p => p.drag).map(p => p.label), ...spec.gliders.map(g => g.label)].filter(Boolean)
+  // A scene with many handles (a magnet and coil turns) reads "Drag the points", not a list of internal names.
+  const dragNames = dragAll.length > 3 ? ['the points'] : dragAll
 
   return (
     <div>
