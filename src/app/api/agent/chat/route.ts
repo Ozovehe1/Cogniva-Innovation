@@ -15,7 +15,9 @@ import { writeMemory } from '@/lib/agent/memory'
 import type { AgentCtx } from '@/lib/agent/tools'
 import type { Block, ChatEvent } from '@/lib/agent/types'
 import { fixesBlock, guardBlock, textGate } from '@/lib/correctness/chat'
-import { avoidLines } from '@/lib/correctness/blocklist'
+import { avoidLines, topicKey } from '@/lib/correctness/blocklist'
+import { playbookBlock } from '@/lib/playbook/retrieve'
+import { noteGuardCatches } from '@/lib/playbook/signals'
 import type { Claim } from '@/lib/correctness/claims'
 
 export const maxDuration = 300
@@ -139,7 +141,9 @@ export async function POST(request: Request) {
     // Numeric claims are checked sentence by sentence before they are streamed; wrong results are corrected.
     const fixes: Claim[] = []
     const gate = textGate(d => { text += d; send({ t: 'text', d }) }, f => { fixes.push(f); ctx.trace.push(`guard maths fixed: ${f.source.slice(0, 60)} → ${f.computed}`) })
-    const avoid = (await avoidLines(['prompt_pattern']).catch(() => [] as string[])).join('\n')
+    // + the Teaching Playbook (Ask tutor + diagram rules for this topic, this learner's private notes): docs/playbook.md.
+    const pbTopic = (lessonRow as { title?: string } | null)?.title ?? topicKey(message)
+    const avoid = [...(await avoidLines(['prompt_pattern']).catch(() => [] as string[])), await playbookBlock(['ask', 'diagram'], '', { lessonId, sessionId, studentId, topic: pbTopic })].filter(Boolean).join('\n')
     try {
       // Static instructions first and alone (provider prompt caching reuses that prefix; cached tokens do not count
       // against Groq limits); this learner's context comes after it, never cached across learners.
@@ -154,6 +158,7 @@ export async function POST(request: Request) {
       gate.end()
       model = r.model
       if (compact.savedChars) void poolStore().count('saved_history_tokens', Math.round(compact.savedChars / 3.6))
+      if (fixes.length || guardIssues.length) noteGuardCatches([...fixes.map(f => ({ kind: 'maths', detail: `${f.source} → ${f.computed}`, fixed: true })), ...guardIssues.map(g => ({ kind: 'visual', detail: g, fixed: false }))], 'ask', { topic: pbTopic, lessonId, sessionId })
       const fb = fixesBlock(fixes)
       if (fb) { blocks.push(fb); send({ t: 'block', block: fb }) }
       if (!r.text.trim() && !blocks.length) { const d = 'I’m not sure how to help with that one. Could you say it another way?'; text += d; send({ t: 'text', d }) }

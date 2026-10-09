@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { manimContext } from './playbook/retrieve'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { MANIM_BUCKET, publicClipUrl } from './supabase/admin'
 import { MANIM_SCENE_NAME, fixManimCode, vetManimCode } from './lesson-ai'
@@ -109,6 +110,8 @@ export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 
  */
 export async function dispatchCompose(admin: SupabaseClient, job: Pick<ManimJob, 'id' | 'attempts'> & { prompt: string }, narration?: { text: string; ms?: number; words?: { w: string; s: number; e: number }[] } | null, context = '') {
   if (!renderServiceConfigured()) return { ok: false as const, error: 'render service not configured' }
+  // Teaching Playbook rules for the Manim planner ride in the context (gm_compose PLAN_PROMPT reads context[:1500]).
+  context = await manimContext(context, job.prompt)
   const attempt = job.attempts + 1
   const path = `${job.id}/${attempt}.mp4`
   const [{ data: signed, error: signErr }, { data: penSigned }, { data: repSigned }] = await Promise.all([

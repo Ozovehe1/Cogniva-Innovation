@@ -3,6 +3,8 @@ import { guardSteps, issueLines } from './correctness/steps'
 import { balanceCheckKeys, checkStepIssues } from './assessment/validate'
 import { CHECK_ITEM_RULES } from './assessment/spec'
 import { avoidLines } from './correctness/blocklist'
+import { playbookBlock } from './playbook/retrieve'
+import { noteGuardCatches } from './playbook/signals'
 import { llmContext } from './agent/pool'
 
 /** Animation code is async (rendered later): background in the LLM pool unless a caller marked it otherwise. */
@@ -136,6 +138,7 @@ export async function generateSteps(
     // Correctness guard: wrong numbers corrected, answers said before a check removed, units evened (correctness/steps).
     const guarded = guardSteps(steps)
     steps = guarded.steps
+    if (guarded.issues.length) noteGuardCatches(guarded.issues)
     // Choice-check keys spread over positions (no position cue).
     steps = balanceCheckKeys(steps, offset)
     if (guarded.issues.length) meta.trace?.push(...guarded.issues.slice(0, 6).map(i => `guard ${i.kind}${i.fixed ? ' fixed' : ''}: ${i.detail.slice(0, 120)}`))
@@ -148,7 +151,8 @@ export async function generateSteps(
   let answered: string | null = null
   // Library illustrations the writer asked for become credited figure steps before validation.
   // Confirmed past mistakes (admin-triaged reports) the writer must not repeat.
-  const avoid = (await avoidLines(['prompt_pattern']).catch(() => [] as string[])).join('\n')
+  // + the Teaching Playbook: learned rules for this topic and this learner's private notes (docs/playbook.md).
+  const avoid = [...(await avoidLines(['prompt_pattern']).catch(() => [] as string[])), await playbookBlock('lesson', prompt)].filter(Boolean).join('\n')
   const genJson = async (p: string, g: GenerateOptions) => expandBoardDiagrams(await resolveIllustrationSteps(await generateStructuredJson(avoid ? `${p}\n\n${avoid}` : p, g), meta.trace))
   const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace, deadline: opts.deadline, preferFast: opts.preferFast, onModel: (m: string) => { answered = m } }
   let raw: unknown

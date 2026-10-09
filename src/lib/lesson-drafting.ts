@@ -19,6 +19,7 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
+import { withPlaybook } from './playbook/context'
 import { GeminiQuotaError, isRetryable } from './gemini'
 import { withLlmContext } from './agent/pool'
 import type { GenMeta } from './lesson-ai'
@@ -201,6 +202,11 @@ const sayOf = (steps: Step[]) => steps.map(s => s.say ?? '').filter(Boolean).joi
  * of times concurrently: only the holder of the lease does anything.
  */
 export async function runDraftWork(lessonId: string, opts: { origin?: string } = {}): Promise<string> {
+  // Teaching Playbook context: the writer's prompt hook knows the lesson (topic + owner's private notes).
+  return withPlaybook({ lessonId }, () => runDraftWorkInner(lessonId, opts))
+}
+
+async function runDraftWorkInner(lessonId: string, opts: { origin?: string } = {}): Promise<string> {
   const db = createAdminClient()
   const t0 = Date.now()
   const hardEnd = t0 + HARD_END_MS

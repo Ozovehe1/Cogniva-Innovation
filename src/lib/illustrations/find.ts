@@ -7,6 +7,7 @@ import { searchLibrary, type Hit } from './search'
 import { prepareIllustration, searchCommonsLive, type Prepared } from './prepare'
 import { creditLine, SOURCE_NAME, type LibraryItem } from './types'
 import { vetIllustration, vetOrder } from '../correctness/illustration'
+import { applyIllustrationHints, illustrationHints } from '../playbook/retrieve'
 
 export interface Found extends Prepared {
   item: LibraryItem
@@ -42,6 +43,8 @@ export async function findIllustration(
     hits = hits.filter(h => !ex.has(h.item.id))
     if (hits.length < n) trace?.push(`guard: skipped ${n - hits.length} illustration(s) this learner reported`)
   }
+  // Teaching Playbook hints (learned from confirmed wrong-picture reports): a nudge; the vision check still decides.
+  hits = applyIllustrationHints(hits, await illustrationHints(topic, admin))
   if (!hits.length) return null
   const skip = Math.max(0, Math.min(3, Math.round(args.alternative ?? 0)))
   const order = [...hits.slice(skip), ...hits.slice(0, skip)]
