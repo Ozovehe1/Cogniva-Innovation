@@ -468,7 +468,11 @@ Return JSON {"items": [${ITEM_JSON}]}.`
       if (good.length < 3) throw err
     }
   }
-  if (good.length < 3) throw new Error('The AI could not write mastery questions that pass the checks')
+  if (good.length < 3) {
+    const why = first.rejected.map(r => r.problems[0]).filter(Boolean)
+    console.warn('Mastery items rejected:', JSON.stringify(first.rejected.map(r => r.problems)).slice(0, 1500))
+    throw new Error(`The AI could not write mastery questions that pass the checks (${good.length} passed; ${why.slice(0, 4).join(' | ').slice(0, 600)})`)
+  }
   return finishSet(good.slice(0, 4))
 }
 

@@ -34,15 +34,16 @@ export async function gateItems<T extends AssessItem = AssessItem>(raws: (RawIte
   const rejected: Rejected[] = []
   const verdicts: ItemVerdict[] = []
   await Promise.all(raws.map(async raw => {
-    let v = validateItem(raw, ctx)
+    let src = raw
+    let v = validateItem(src, ctx)
     const figOnly = v.findings.filter(f => f.severity === 'block').every(f => f.code === 'figure-unneeded' || f.code === 'figure-unreferenced')
-    if (!v.ok && raw.figure && figOnly && v.findings.some(f => f.code === 'figure-unneeded')) v = validateItem(withoutFigure(raw), ctx)
+    if (!v.ok && raw.figure && figOnly && v.findings.some(f => f.code === 'figure-unneeded')) { src = withoutFigure(raw); v = validateItem(src, ctx) }
     if (v.ok && v.item.figure && opts.render !== false) {
       const figProblems = await renderItemFigure(v.item, { admin: opts.admin, trace: opts.trace })
       if (figProblems.length) { v = { ...v, ok: false, problems: figProblems, findings: [...v.findings, ...figProblems.map(d => ({ code: 'figure-render', severity: 'block' as const, detail: d }))] } }
     }
     verdicts.push(v)
-    if (v.ok) good.push({ ...raw, ...v.item } as unknown as T)
+    if (v.ok) good.push({ ...src, ...v.item } as unknown as T)
     else rejected.push({ raw, problems: v.problems })
   }))
   return { good, rejected, verdicts }
