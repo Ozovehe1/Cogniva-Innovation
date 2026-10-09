@@ -34,7 +34,7 @@ export function TriageActions({ id, status, inRegression }: { id: string; status
         {status === 'invalid' && <button type="button" disabled={!!busy} onClick={() => act('reopen')} className={cx(buttonClass('ghost', 'md'), 'min-h-11')}>{busy === 'reopen' ? <Spinner /> : <RotateCcw className="h-4 w-4" />}Reopen</button>}
         {!inRegression && status !== 'invalid' && <button type="button" disabled={!!busy} onClick={() => act('regress')} className={cx(buttonClass('primary', 'md'), 'col-span-2 min-h-11')}>{busy === 'regress' ? <Spinner /> : <FlaskConical className="h-4 w-4" />}Add to regression set</button>}
       </div>
-      {inRegression && !msg && <p className="mt-2 inline-flex items-center gap-1.5 text-[13px] text-ink-2"><FlaskConical className="h-4 w-4 text-accent" />In the regression set: it runs with the <code className="rounded bg-sunken px-1 text-[12px]">regression</code> eval group.</p>}
+      {inRegression && !msg && <p className="mt-2 flex items-start gap-1.5 text-[13px] leading-snug text-ink-2"><FlaskConical className="mt-px h-4 w-4 flex-shrink-0 text-accent" /><span>In the regression set: it runs with the <code className="rounded bg-sunken px-1 text-[12px]">regression</code> eval group.</span></p>}
       {msg && <p className="mt-2 text-[13px] text-ink-2" role="status">{msg}</p>}
     </div>
   )
