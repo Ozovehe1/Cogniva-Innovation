@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { agentSecretOk } from '@/lib/agent/secret'
 import { regressionCases } from '@/lib/correctness/regression'
+import { poolCases } from '@/lib/agent/pool-eval'
 import { turnCase, routingCases, lessonCases, giveawayCases, injectionCases, staticAsyncCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
 
 export const maxDuration = 300
@@ -15,7 +16,7 @@ export async function POST(request: Request) {
   const url = new URL(request.url)
   const group = url.searchParams.get('group') ?? 'static'
   const student = url.searchParams.get('student') ?? ''
-  if (group !== 'static' && !/^[0-9a-f-]{36}$/i.test(student)) return Response.json({ error: 'student (a test profile id) is required' }, { status: 400 })
+  if (group !== 'static' && group !== 'pool' && !/^[0-9a-f-]{36}$/i.test(student)) return Response.json({ error: 'student (a test profile id) is required' }, { status: 400 })
   const admin = createAdminClient()
   const only = url.searchParams.get('only')?.split(',')
   let results: CaseResult[] = []
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
   else if (group === 'injection') results = await injectionCases(admin, student)
   else if (group === 'visual') results = await visualCases(admin, student)
   else if (group === 'regression') results = await regressionCases(admin, student, only)
+  else if (group === 'pool') results = await poolCases()
   else return Response.json({ error: 'unknown group' }, { status: 400 })
   return Response.json({ group, summary: summarise(results), results, groq: !!process.env.GROQ_API_KEY })
 }

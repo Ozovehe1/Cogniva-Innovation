@@ -5,6 +5,7 @@ import { validateScript, type CheckStep, type Step } from '@/lib/lesson-schema'
 import { warmTts } from '@/lib/tts-server'
 import { loadLearner, learnerLite } from '@/lib/learner'
 import { detectDistress } from '@/lib/safety'
+import { withLlmContext } from '@/lib/agent/pool'
 
 export const maxDuration = 60
 
@@ -66,7 +67,8 @@ export async function POST(request: Request) {
   const l = lesson as { title: string; subject: string; objectives: string[] | null }
   const meta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
   try {
-    const steps = await nextTutorSteps({
+    // The learner is inside the lesson waiting for the tutor: live priority in the LLM pool.
+    const steps = await withLlmContext({ priority: 'live', learnerId: profile.id, label: 'tutor-step' }, () => nextTutorSteps({
       meta,
       lesson: { title: l.title, subject: l.subject, objectives: l.objectives ?? [] },
       played: played.slice(0, checkIndex + 1),
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
       answer,
       profile: studentProfile,
       history,
-    })
+    }))
     return NextResponse.json({ steps, meta })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

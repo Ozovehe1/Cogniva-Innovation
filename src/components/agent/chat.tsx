@@ -5,13 +5,14 @@ import { RichText } from '@/components/rich-text'
 import { SafetyPause } from '@/components/safety-pause'
 import { cx } from '@/components/ui'
 import { AgentBlock } from './blocks'
+import { BusyRetry } from './busy-retry'
 import { genie } from '@/components/genie/presence'
 import { syntheticMouth } from '@/components/genie/lipsync'
 import type { Block, ChatEvent } from '@/lib/agent/types'
 import { FlaggedNotice, ReportButton } from '@/components/report/report-mistake'
 
 export interface ChatFlag { reportId: string; category?: string | null }
-export interface ChatMessage { role: 'user' | 'assistant'; content: string; blocks?: Block[]; tools?: { name: string; label: string; state: string }[]; error?: string | null; flagged?: ChatFlag | null }
+export interface ChatMessage { role: 'user' | 'assistant'; content: string; blocks?: Block[]; tools?: { name: string; label: string; state: string }[]; error?: string | null; flagged?: ChatFlag | null; retry?: { at: number; ms: number; text: string } | null }
 
 /** Teaching output a learner can report (not plans, sources or confirmations). */
 const REPORTABLE: Partial<Record<Block['kind'], { what: string; surface: 'ask' | 'diagram' | 'illustration' | 'animation' | 'stage' | 'practice' }>> = {
@@ -145,7 +146,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
           else if (e.t === 'block') { patch(a => { const bs = a.blocks ?? []; const k = bs.findIndex(b => b.id === e.block.id && b.kind === e.block.kind); return { ...a, blocks: k >= 0 ? bs.map((b, j) => (j === k ? e.block : b)) : [...bs, e.block] } }); scroll() }
           else if (e.t === 'safety') { setSafety({ open: true, minor: e.minor }); setMessages(m => m.slice(0, -2)) }
           else if (e.t === 'limit') patch(a => ({ ...a, content: e.message }))
-          else if (e.t === 'error') patch(a => ({ ...a, error: e.message }))
+          else if (e.t === 'error') patch(a => (e.retryAfterMs ? { ...a, retry: { at: Date.now() + e.retryAfterMs, ms: e.retryAfterMs, text: message } } : { ...a, error: e.message }))
           else if (e.t === 'done' && typeof e.remaining === 'number') setRemaining(e.remaining)
         }
       }
@@ -207,6 +208,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
                   </div>
                 )}
                 {(m.blocks ?? []).map(b => <ReportableBlock key={b.id + b.kind} block={b} sessionId={sessionId} done={!(busy && i === messages.length - 1)} onRetry={p => void send(p)} />)}
+                {m.retry && !m.error && <BusyRetry compact={compact} retryAt={m.retry.at} totalMs={m.retry.ms} onRetry={() => { if (!busy) { setMessages(ms => ms.filter((_, j) => j !== i && j !== i - 1)); void send(m.retry!.text) } }} />}
                 {m.error && <p className="rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 text-[14px] text-danger">{m.error}</p>}
               </div>
             ))}

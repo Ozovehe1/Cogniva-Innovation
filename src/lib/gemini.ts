@@ -1,12 +1,9 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai'
+import { GEMINI_TEXT_MODELS, PoolBusyError, discoverKeys, geminiLimits, runOnPool, type Priority } from './agent/pool'
 
 // Verified from production on 2026-10-07: every model below answered (or was only rate-limited)
 // for this key, each with its own free-tier quota. 2.0-flash and 2.5-flash-lite are retired (404).
-const MODEL_CHAIN = [
-  'gemini-3.8-flash', 'gemini-2.5-flash',
-  'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
-  'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
-] as const
+const MODEL_CHAIN = GEMINI_TEXT_MODELS
 
 // Primary model first; fall back when Google returns overload/quota errors or the
 // model is not available to this key. The lite models have their own free-tier quotas.
@@ -37,10 +34,6 @@ export class GeminiQuotaError extends Error {
   }
 }
 
-function retryDelayMs(msg: string): number | null {
-  const m = /retry(?:Delay)?["'\s:]*(?:in\s*)?["']?(\d+(?:\.\d+)?)\s*s/i.exec(msg)
-  return m ? Math.round(Number(m[1]) * 1000) : null
-}
 
 export interface GenerateOptions {
   /** Ask the model for strict JSON output (responseMimeType application/json). */
@@ -63,33 +56,16 @@ export interface GenerateOptions {
   onModel?: (model: string) => void
   /** Latency first: try the flash-lite models (fast, 15 RPM / 500 RPD free) before the flash models. */
   preferFast?: boolean
+  /** LLM-pool priority (live > ask > background); defaults to the surrounding withLlmContext(), else 'ask'. */
+  priority?: Priority
+  /** The learner this call serves (fair-share budget); defaults to the surrounding withLlmContext(). */
+  learnerId?: string | null
 }
 
-/* ───────────── Free-tier pacing ─────────────
- * Free-tier limits per model (AI Studio, 2026-10-07): flash models 5 requests a minute,
- * flash-lite models 15. Calls are spread so one instance never bursts past them: a model
- * whose last-minute window is full is skipped for the next model in the chain, and when
- * every model is full the call waits for the first free slot. Other instances are
- * covered by the 429 handling (skipUntil + backoff). */
-const RPM_LITE = 15
-const RPM_FLASH = 5
-export function modelRpm(model: string) { return /lite/.test(model) ? RPM_LITE : RPM_FLASH }
-const recent = new Map<string, number[]>()
-/** ms until `model` has a free request slot in this instance (0 = free now). */
-export function slotWaitMs(model: string, now = Date.now()) {
-  const list = (recent.get(model) ?? []).filter(t => now - t < 60_000)
-  recent.set(model, list)
-  if (list.length < modelRpm(model)) return 0
-  return 60_000 - (now - list[0]) + 50
-}
-function takeSlot(model: string) {
-  const list = recent.get(model) ?? []
-  list.push(Date.now())
-  recent.set(model, list)
-}
-
-/** Per-instance memory of models that are out of quota or missing, so later calls skip them quickly. */
-const skipUntil = new Map<string, number>()
+/** Per-model RPM on the free tier (kept for callers/diagnostics; the shared pool enforces the real limits). */
+export function modelRpm(model: string) { return geminiLimits(model).rpm }
+/** Kept for compatibility: the pool now paces calls across instances, so there is never an in-instance wait. */
+export function slotWaitMs(): number { return 0 }
 
 /** Which model produced the last successful response (for diagnostics). */
 export let lastGeminiModel: string | null = null
@@ -108,79 +84,54 @@ export function thinkingFor(model: string, thinking: GenerateOptions['thinking']
   return undefined
 }
 
-/** Calls Gemini with the primary model and falls back on overload/quota/not-found errors. Returns raw text. */
+const clientsByKey = new Map<string, GoogleGenAI>()
+function clientFor(apiKey: string) {
+  let c = clientsByKey.get(apiKey)
+  if (!c) { c = new GoogleGenAI({ apiKey }); clientsByKey.set(apiKey, c) }
+  return c
+}
+
+/**
+ * One Gemini call on the best slot of the shared LLM pool (every GEMINI_API_KEY_n × model, shared budgets and
+ * health in Postgres), failing over on overload / quota / missing-model errors. Returns raw text.
+ * Priority and learner come from opts or the surrounding withLlmContext() (lesson drafting sets them).
+ */
 export async function generateText(prompt: string, opts: GenerateOptions = {}): Promise<string> {
-  let lastErr: unknown
-  let quotaCount = 0
-  let retryAfter: number | null = null
-  let daily = false
-  let otherFailures = 0
-  // Each model on each API key is its own free-tier quota: expand to key slots ("model#1" = second key).
-  const chain = expandKeys(opts.models ?? GEMINI_MODELS)
-  const now = Date.now()
-  const live = chain.filter(m => (skipUntil.get(m) ?? 0) <= now)
-  // If everything is marked as skipped, try the whole chain anyway (quota may have reset).
-  let order = opts.models ? [...chain] : live.length ? live : [...chain]
-  if (opts.preferFast) order = [...order.filter(m => /lite/.test(m)), ...order.filter(m => !/lite/.test(m))]
-  // Spread calls under the free-tier per-minute limits: prefer models with a free slot,
-  // and when none has one, wait for the first slot (bounded by the deadline).
-  for (let waits = 0; waits < 3; waits++) {
-    const free = order.filter(m => slotWaitMs(m) === 0)
-    if (free.length) { order = [...free, ...order.filter(m => !free.includes(m))]; break }
-    const wait = Math.min(...order.map(m => slotWaitMs(m)))
-    if (opts.deadline && Date.now() + wait > opts.deadline - 5_000) break
-    await new Promise(r => setTimeout(r, Math.min(wait, 30_000)))
-  }
-  let attempted = 0
-  for (const slot of order) {
-    const [model, keyIdx] = splitSlot(slot)
-    let timeout = (attempted === 0 ? opts.primaryTimeoutMs : undefined) ?? opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS
-    if (opts.deadline) {
-      const left = opts.deadline - Date.now()
-      if (left < 6_000) break
-      timeout = Math.min(timeout, left)
-    }
-    attempted++
-    takeSlot(slot)
-    try {
-      const thinkingConfig = thinkingFor(model, opts.thinking)
-      const response = await clients[keyIdx].models.generateContent({
-        model,
+  // Output is not known up front: lesson JSON runs 1.5-4K tokens, plain text ~1.5K.
+  const est = Math.ceil((prompt.length + (opts.systemInstruction?.length ?? 0)) / 3.6) + (opts.json ? 3500 : 1500)
+  try {
+    const r = await runOnPool<string>({
+      purpose: 'lesson', priority: opts.priority, learnerId: opts.learnerId, estTokens: est, providers: ['gemini'],
+      models: opts.models, preferFast: opts.preferFast, deadline: opts.deadline, trace: opts.trace, maxAttempts: 12,
+      timeoutMs: opts.timeoutMs ?? ATTEMPT_TIMEOUT_MS, firstTimeoutMs: opts.primaryTimeoutMs,
+      stopOn: err => !isRetryable(err),
+    }, async (slot, o) => {
+      const thinkingConfig = thinkingFor(slot.model, opts.thinking)
+      const response = await clientFor(slot.apiKey).models.generateContent({
+        model: slot.model,
         contents: prompt,
         config: {
-          httpOptions: { timeout },
+          httpOptions: { timeout: o.timeoutMs },
           ...(thinkingConfig ? { thinkingConfig } : {}),
           ...(opts.json ? { responseMimeType: 'application/json' } : {}),
           ...(opts.systemInstruction ? { systemInstruction: opts.systemInstruction } : {}),
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         },
       })
-      lastGeminiModel = keyIdx ? `${model} (key ${keyIdx + 1})` : model
-      opts.onModel?.(model)
-      return response.text ?? ''
-    } catch (err) {
-      lastErr = err
-      const msg = err instanceof Error ? err.message : String(err)
-      opts.trace?.push(`${slot}: ${msg.slice(0, 160)}`)
-      if (!isRetryable(err)) throw err
-      if (isQuotaError(err)) {
-        quotaCount++
-        const d = retryDelayMs(msg)
-        if (d !== null) retryAfter = retryAfter === null ? d : Math.min(retryAfter, d)
-        const isDaily = /PerDay|per day|daily/i.test(msg)
-        if (isDaily) daily = true
-        skipUntil.set(slot, Date.now() + (isDaily ? 10 * 60_000 : Math.min(d ?? 30_000, 60_000)))
-      } else if (/\b404\b|NOT_FOUND|not found|not supported|unsupported/i.test(msg)) {
-        skipUntil.set(slot, Date.now() + 6 * 3600_000)
-      } else otherFailures++
-      console.warn(`Gemini ${slot} unavailable, trying next model:`, msg.slice(0, 200))
+      const u = response.usageMetadata
+      return { value: response.text ?? '', usage: u ? { input: u.promptTokenCount ?? 0, output: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0), cached: u.cachedContentTokenCount ?? 0 } : undefined }
+    })
+    lastGeminiModel = r.slot.key > 1 ? `${r.slot.model} (key ${r.slot.key})` : r.slot.model
+    opts.onModel?.(r.slot.model)
+    return r.value
+  } catch (err) {
+    if (err instanceof PoolBusyError) {
+      // Every slot is busy, out of quota, or (background) held back for learners: callers pause and retry.
+      const daily = err.retryAfterMs >= 10 * 60_000 || /daily/.test(err.message)
+      throw new GeminiQuotaError(`Gemini quota reached on every model (${err.message.slice(0, 300)})`, err.retryAfterMs, daily)
     }
+    throw err
   }
-  // Every model that exists for this key is out of quota: report it as a quota error.
-  if (quotaCount > 0 && otherFailures === 0) {
-    throw new GeminiQuotaError(`Gemini quota reached on every model (${quotaCount} of ${order.length} tried)`, retryAfter, daily)
-  }
-  throw lastErr ?? new Error('Gemini: no model could be tried before the deadline (timed out)')
 }
 
 async function generateJson(prompt: string, opts: GenerateOptions = {}) {
@@ -192,20 +143,9 @@ export async function generateStructuredJson(prompt: string, opts: Omit<Generate
   return generateJson(prompt, { ...opts, json: true })
 }
 
-/** API keys in fallback order: GEMINI_API_KEY, then GEMINI_API_KEY_2, _3 … (each a separate project and free quota). */
-export const GEMINI_KEYS = [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_2, process.env.GEMINI_API_KEY_3, process.env.GEMINI_API_KEY_4]
-  .map(k => (k ?? '').trim()).filter(Boolean)
-const clients = (GEMINI_KEYS.length ? GEMINI_KEYS : ['']).map(apiKey => new GoogleGenAI({ apiKey }))
-export const ai = clients[0]
-function expandKeys(models: readonly string[]) {
-  const out: string[] = []
-  clients.forEach((_, k) => models.forEach(m => out.push(k ? `${m}#${k}` : m)))
-  return out
-}
-function splitSlot(slot: string): [string, number] {
-  const i = slot.indexOf('#')
-  return i < 0 ? [slot, 0] : [slot.slice(0, i), Number(slot.slice(i + 1)) || 0]
-}
+/** API keys in key-number order: GEMINI_API_KEY, GEMINI_API_KEY_2 … any n (each ideally its own project and free quota). */
+export const GEMINI_KEYS = discoverKeys('GEMINI_API_KEY').map(k => k.value)
+export const ai = new GoogleGenAI({ apiKey: GEMINI_KEYS[0] ?? '' })
 
 export function parseGeminiJson(raw: string) {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()

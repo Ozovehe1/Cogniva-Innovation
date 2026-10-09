@@ -1,6 +1,10 @@
 import { GeminiQuotaError, generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
 import { guardSteps, issueLines } from './correctness/steps'
 import { avoidLines } from './correctness/blocklist'
+import { llmContext } from './agent/pool'
+
+/** Animation code is async (rendered later): background in the LLM pool unless a caller marked it otherwise. */
+const clipPriority = () => llmContext().priority ?? 'background'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, validateScript, type CheckStep, type Step } from './lesson-schema'
 import { normalizeLessonMath } from './lesson-math'
 import { autoFixLayout, layoutIssues } from './lesson-layout'
@@ -701,11 +705,11 @@ The lesson needs this animation:
 """${description.slice(0, 2000)}"""
 ${manimContextBlock(context)}
 ${MANIM_RULES}`
-  const first = vetManimCode(await generateText(prompt, { timeoutMs: 60_000 }))
+  const first = vetManimCode(await generateText(prompt, { timeoutMs: 60_000, priority: clipPriority() }))
   const firstTiming = first.error ? null : runtimeProblem(first.code, context?.narration)
   if (!first.error && !firstTiming) return first.code
   const why = first.error ? `Your previous code was rejected before rendering:\n${first.error}` : `Your previous code is valid but mistimed:\n${firstTiming}`
-  const second = vetManimCode(await generateText(`${prompt}\n\n${why}\nPrevious code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 60_000 }))
+  const second = vetManimCode(await generateText(`${prompt}\n\n${why}\nPrevious code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 60_000, priority: clipPriority() }))
   if (second.error) {
     // A valid but mistimed first draft beats a broken second one.
     if (!first.error) return first.code
@@ -732,9 +736,9 @@ ${code.slice(0, 15000)}
 
 Fix the error, and also replace any other call in the code that is not valid Manim Community v0.19 (check every line against the API sheet below; the next render must not fail on a different old-API call). Keep the intent and the visual design.
 ${keep}${MANIM_RULES}`
-  const first = vetManimCode(await generateText(prompt, { timeoutMs: 40_000 }))
+  const first = vetManimCode(await generateText(prompt, { timeoutMs: 40_000, priority: clipPriority() }))
   if (!first.error) return first.code
-  const second = vetManimCode(await generateText(`${prompt}\n\nYour fixed code was rejected before rendering:\n${first.error}\nRejected code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 40_000 }))
+  const second = vetManimCode(await generateText(`${prompt}\n\nYour fixed code was rejected before rendering:\n${first.error}\nRejected code:\n${first.code.slice(0, 15000)}`, { timeoutMs: 40_000, priority: clipPriority() }))
   if (second.error) throw new Error(second.error)
   return second.code
 }

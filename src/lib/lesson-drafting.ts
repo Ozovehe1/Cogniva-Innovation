@@ -20,6 +20,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './supabase/admin'
 import { GeminiQuotaError, isRetryable } from './gemini'
+import { withLlmContext } from './agent/pool'
 import type { GenMeta } from './lesson-ai'
 import { EXTRA_PREFIX, HOOK_SECONDS, MAX_BEATS, MAX_EXTRA_BEATS, draftBeat, extraBeat, hookPlan, planLessonBeats, traceSummary, type BeatKind, type BeatPlan } from './lesson-beats'
 import { flattenSections, type Chapter } from './lesson-sections'
@@ -90,10 +91,11 @@ interface LessonJobRow {
   draft_retry_at: string | null
   draft_lock_until: string | null
   generated_by?: string | null
+  owner_student_id?: string | null
   created_at?: string | null
 }
 
-const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, generated_by, created_at'
+const JOB_COLS = 'id, title, subject, objectives, target_minutes, draft_status, draft_notes, draft_retry_at, draft_lock_until, generated_by, created_at, owner_student_id'
 
 /* ───────────── Internal auth for the self-chain ───────────── */
 
@@ -255,10 +257,11 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
         let planModel: string | null = null
         const planTrace: string[] = []
         const deadline = Math.min(Date.now() + BEAT_DEADLINE_MS, hardEnd - 20_000)
-        const [planR, hookR] = await Promise.allSettled([
+        // A learner is (or soon will be) waiting on the opening: live priority in the LLM pool.
+        const [planR, hookR] = await withLlmContext({ priority: 'live', learnerId: lesson.owner_student_id ?? null, label: 'lesson-open' }, () => Promise.allSettled([
           planLessonBeats(lite, lesson.target_minutes ?? 15, notes, { deadline, onModel: m => { planModel = m }, trace: planTrace }),
           draftBeat({ lesson: lite, plan: [hook], index: 0, board: [], recentSay: '', notes, meta: hookMeta, deadline, chapterStart: true, opening: true }),
-        ])
+        ]))
         if (planR.status === 'rejected') {
           const err = planR.reason
           if (err instanceof GeminiQuotaError) { if (await onQuota(err) === 'paused') return 'paused'; continue }
@@ -373,7 +376,10 @@ export async function runDraftWork(lessonId: string, opts: { origin?: string } =
       await db.from('lesson_sections').update({ status: 'drafting', error: null }).eq('id', next.id)
       const meta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
       try {
-        let steps = await draftBeat({ lesson: lite, plan, index, board, recentSay, notes, meta, chapterStart, deadline: Math.min(Date.now() + BEAT_DEADLINE_MS, hardEnd - 15_000) })
+        // The next few beats may be needed soon by a learner playing the lesson (Ask class); drafting further ahead
+        // is background work, the first to be deferred when the pool is under pressure.
+        const priority = ready.length < HEAD_START_BEATS + 2 ? 'ask' as const : 'background' as const
+        let steps = await withLlmContext({ priority, learnerId: lesson.owner_student_id ?? null, label: 'lesson-beat' }, () => draftBeat({ lesson: lite, plan, index, board, recentSay, notes, meta, chapterStart, deadline: Math.min(Date.now() + BEAT_DEADLINE_MS, hardEnd - 15_000) }))
         if (chapterStart && before.length > 0 && !(steps[0]?.type === 'clear' && !(steps[0] as { targets?: string[] }).targets)) steps = [{ type: 'clear' }, ...steps]
         const len = lengthReport(steps, (next.seconds ?? 60) / 60)
         await db.from('lesson_sections').update({

@@ -45,5 +45,5 @@ export type ChatEvent =
   | { t: 'block'; block: Block }
   | { t: 'safety'; minor: boolean | null }
   | { t: 'limit'; message: string }
-  | { t: 'error'; message: string }
+  | { t: 'error'; message: string; retryAfterMs?: number }
   | { t: 'done'; model?: string; remaining?: number }

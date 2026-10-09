@@ -208,7 +208,7 @@ Also give "prior": what their words say about how much they already know of this
 Also "contexts": 0 to 2 short real-life settings the learner THEMSELVES mentioned that examples could be set in (e.g. "solar installations", "football", "their family shop"); [] when they mention none. Never invent one.
 Also "purpose": what it seems to be for, only when their words make it clear: "exam" (a test, class or course), "project" (building or making something), "career" (a job), "helping" (teaching someone else) or "curiosity"; otherwise null.
 Return JSON: {"reflection": string, "prior": string, "contexts": [string], "purpose": string|null, "goals": [{"goal": string, "subject": string (the school or field subject in 1-3 words, e.g. "Mathematics", "Solar PV", "Chemistry"), "stem": boolean (true for maths, physics, chemistry, engineering, computing, statistics)}]}`
-  const raw = await generateStructuredJson(prompt, { timeoutMs: 25_000, primaryTimeoutMs: 15_000, thinking: 'minimal' }) as Record<string, unknown>
+  const raw = await generateStructuredJson(prompt, { timeoutMs: 25_000, primaryTimeoutMs: 15_000, thinking: 'minimal', priority: 'live' as const }) as Record<string, unknown>
   const goals = (Array.isArray(raw?.goals) ? raw.goals : []).flatMap(g => {
     if (!g || typeof g !== 'object') return []
     const o = g as Record<string, unknown>
@@ -227,7 +227,7 @@ Asked "Why does this matter to you?", they said:
 Reply as a warm, brief tutor using motivational-interviewing reflection: one sentence (under 28 words) that reflects their reason back in plain words, e.g. "So you need this for your solar project by December, and you want to really get it." No praise, no emoji, no advice.
 Also classify the main value: "intrinsic" (interest, enjoyment), "attainment" (identity, doing well), "utility" (useful for a goal, job, exam, project) or "mixed".
 Return JSON {"reflection": string, "valueType": string}.`
-  const raw = await generateStructuredJson(prompt, { timeoutMs: 20_000, primaryTimeoutMs: 12_000, thinking: 'minimal' }) as Record<string, unknown>
+  const raw = await generateStructuredJson(prompt, { timeoutMs: 20_000, primaryTimeoutMs: 12_000, thinking: 'minimal', priority: 'live' as const }) as Record<string, unknown>
   const vt = typeof raw?.valueType === 'string' && ['intrinsic', 'attainment', 'utility', 'mixed'].includes(raw.valueType) ? raw.valueType : 'mixed'
   return { reflection: typeof raw?.reflection === 'string' ? raw.reflection.slice(0, 240) : '', valueType: vt }
 }
@@ -251,7 +251,7 @@ For each skill give:
 ${QUESTION_RULES}
 Also "goalNode": the id of the goal skill, "subject": the subject in 1-3 words, "stem": true for maths/science/engineering/computing.
 Neutral, global wording; examples may use Nigerian context. Return JSON {"subject", "stem", "goalNode", "nodes": [...]} only.`
-  const raw = await generateStructuredJson(prompt, { timeoutMs: 110_000, primaryTimeoutMs: 80_000, temperature: 0.4 })
+  const raw = await generateStructuredJson(prompt, { timeoutMs: 110_000, primaryTimeoutMs: 80_000, temperature: 0.4, priority: 'live' as const })
   await gateGraphItems(raw)
   return cleanGraph(raw, l.subject ?? '')
 }
@@ -277,7 +277,7 @@ For each skill give:
 - "level": "below", "at" or "above" relative to the learner's stated level
 Also "goalNode": the id of the goal skill (the last one), "subject": the subject in 1-3 words, "stem": true for maths/science/engineering/computing.
 Neutral, global wording. Return JSON {"subject", "stem", "goalNode", "nodes": [...]} only.`
-  const raw = await generateStructuredJson(prompt, { timeoutMs: 45_000, primaryTimeoutMs: 25_000, temperature: 0.4, thinking: 'minimal', preferFast: true })
+  const raw = await generateStructuredJson(prompt, { timeoutMs: 45_000, primaryTimeoutMs: 25_000, temperature: 0.4, thinking: 'minimal', preferFast: true, priority: 'live' as const })
   return cleanGraph(raw, l.subject ?? '', { noItems: true })
 }
 
@@ -310,7 +310,7 @@ ${feedbackFor(rejected)}
 Skills (by number above): ${rejected.map((r, i) => `${i + 1}=${String(r.node.title ?? r.node.id ?? '')}`).join('; ')}
 Each replacement: {"n": the number above, "q": string, "options": [4 strings], "answer": index, "explain": one short sentence, "calc": string or null}.
 ${QUESTION_RULES}
-Return JSON {"items": [...]} only.`, { timeoutMs: 60_000, primaryTimeoutMs: 40_000, temperature: 0.3 }) as { items?: unknown[] }
+Return JSON {"items": [...]} only.`, { timeoutMs: 60_000, primaryTimeoutMs: 40_000, temperature: 0.3, priority: 'live' }) as { items?: unknown[] }
       const list = Array.isArray(fix?.items) ? fix.items : []
       for (const x of list) {
         const n = x && typeof x === 'object' ? Number((x as { n?: unknown }).n) : NaN
@@ -436,7 +436,7 @@ Learner: ${levelLine(input.learner) || 'level unknown'}; goal: ${input.goal}.${i
 ${basis ? basis + '\n' : ''}Each question tests whether they can DO the skill (apply it, not recall a definition), at their level, answerable in about a minute. Every question is physically and mathematically correct and has exactly one right answer. 4 options each; vary the correct position.
 ${QUESTION_RULES}${avoid}
 Return JSON {"items": [{"q": string, "options": [4 strings], "answer": index, "explain": one sentence showing the key step, "calc": string or null}]}.`
-  const opts = { timeoutMs: 45_000, primaryTimeoutMs: 30_000, temperature: 0.5 }
+  const opts = { timeoutMs: 45_000, primaryTimeoutMs: 30_000, temperature: 0.5, priority: 'live' as const }
   const first = rawItems((await generateStructuredJson(prompt(4, ''), opts) as Record<string, unknown>)?.items)
   const good: DiagItem[] = []
   const rejected: { raw: RawItem; problems: string[] }[] = []

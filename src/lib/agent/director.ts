@@ -14,6 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'
 import { AllModelsBusyError } from './llm'
+import { withLlmContext } from './pool'
 import { runAgent, DIRECTOR_SYSTEM, MAX_WRITES } from './run'
 import { savePlan, type AgentCtx } from './tools'
 import type { Block, PlanItem } from './types'
@@ -76,7 +77,8 @@ export async function handleEvent(admin: SupabaseClient, ev: AgentEvent, opts: {
   let fallback = false
   try {
     if (opts.forceFallback) throw new AllModelsBusyError('forced')
-    const r = await runAgent({ ctx, system: DIRECTOR_SYSTEM, messages: [{ role: 'user', content: facts.prompt }], deadline: opts.deadline ?? Date.now() + 150_000 })
+    // Background in the LLM pool: shed first under pressure (the rule-based fallback below then handles the event).
+    const r = await withLlmContext({ priority: 'background', learnerId: ev.student_id, label: 'director' }, () => runAgent({ ctx, system: DIRECTOR_SYSTEM, messages: [{ role: 'user', content: facts.prompt }], deadline: opts.deadline ?? Date.now() + 150_000 }))
     summary = r.text.trim().slice(0, 400) || `Handled ${ev.kind}.`
     model = r.model
   } catch (err) {

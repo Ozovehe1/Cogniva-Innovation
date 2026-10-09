@@ -1,18 +1,18 @@
 /**
- * Provider layer for the agent: one call shape over Groq (OpenAI-compatible, free tier, primary) and
- * Gemini (the existing free keys, fallback), with an ordered fallback chain per purpose, streaming,
- * tool calling, and a per-model budget guard shared by every server instance (Postgres counters, see
- * agent_budget_take). Without GROQ_API_KEY every chain is Gemini only. Server only.
+ * Provider layer for the agent: one call shape over Groq (OpenAI-compatible) and Gemini, drawing every call from
+ * the shared LLM pool (pool.ts): every key × model is a slot with its real free-tier limits, budgets and health
+ * are shared across instances in Postgres, and routing weighs quality per purpose × headroom × health.
+ * Server only.
  *
- * Purposes and their chains (Groq models spread the load; each has its own free quota):
- *   chat      qwen3.8-27b → gpt-oss-120b → gpt-oss-20b → Gemini flash-lite → Gemini flash
- *   director  gpt-oss-120b → qwen3.8-27b → gpt-oss-20b → Gemini flash-lite → Gemini flash
- *   light     gpt-oss-20b → qwen3.8-27b → Gemini flash-lite        (routing, summaries, classifiers)
- *   json      gpt-oss-120b → qwen3.8-27b → Gemini (lesson chain)    (visual sub-generation)
+ * Purposes (quality order inside the pool, see pool.ts quality()):
+ *   chat      qwen3.8-27b ≈ gpt-oss-120b > Gemini flash > flash-lite > gpt-oss-20b   (tutor turns with tools)
+ *   director  gpt-oss-120b > qwen > Gemini flash > …                                   (background, shed first)
+ *   light     gpt-oss-20b > Gemini flash-lite > …                                     (classify, summarise, short JSON)
+ *   json      gpt-oss-120b > qwen ≈ Gemini flash > …                                   (visual sub-generation)
+ * Priority comes from the request or the surrounding withLlmContext() (live lesson > Ask > background).
  */
 import { GoogleGenAI, ThinkingLevel, type Content, type Part } from '@google/genai'
-import { GEMINI_KEYS, isQuotaError, isRetryable } from '../gemini'
-import { createAdminClient } from '../supabase/admin'
+import { runOnPool, inventory, groqModels, estTokens as poolEst, PoolBusyError, llmContext, poolStore, type Priority, type PoolPurpose, type SlotDef } from './pool'
 
 export type Purpose = 'chat' | 'director' | 'light' | 'json'
 
@@ -43,129 +43,110 @@ export interface ChatRequest {
   deadline?: number
   /** Notes on models skipped or failed (diagnostics / eval). */
   trace?: string[]
+  /** Priority class; defaults to the surrounding withLlmContext() or by purpose (director = background). */
+  priority?: Priority
+  /** The learner this call serves (fair-share budget). Defaults to the surrounding withLlmContext(). */
+  learnerId?: string | null
 }
 export interface ChatResult {
   text: string
   toolCalls: ToolCall[]
   model: string
   provider: 'groq' | 'gemini'
-  usage: { input: number; output: number }
+  usage: { input: number; output: number; cached?: number }
   /** Groq built-in tool executions (browser_search / code_interpreter). */
   executed?: { type: string; arguments?: string; output?: string; search_results?: { results?: { title?: string; url?: string; content?: string }[] } }[]
+  /** Pool slot that answered, and whether the degradation ladder was used. */
+  slot?: string
+  degraded?: 'trimmed' | 'lighter'
 }
 
 export class AllModelsBusyError extends Error {
-  constructor(msg: string) { super(msg); this.name = 'AllModelsBusyError' }
+  /** When the pool expects capacity again (ms). */
+  retryAfterMs: number
+  /** True when this was background work deferred to keep capacity for learners. */
+  deferred: boolean
+  constructor(msg: string, retryAfterMs = 60_000, deferred = false) { super(msg); this.name = 'AllModelsBusyError'; this.retryAfterMs = retryAfterMs; this.deferred = deferred }
 }
 
-/* ───────────── Models and limits ───────────── */
+/* ───────────── Models ───────────── */
 
-const env = (k: string, d: string) => (process.env[k] ?? '').trim() || d
-export const GROQ_MODELS = {
-  qwen: env('GROQ_MODEL_CHAT', 'qwen/qwen3.8-27b'),
-  big: env('GROQ_MODEL_DIRECTOR', 'openai/gpt-oss-120b'),
-  small: env('GROQ_MODEL_LIGHT', 'openai/gpt-oss-20b'),
-  guard: env('GROQ_MODEL_GUARD', 'meta-llama/llama-prompt-guard-2-86m'),
-}
-/** Free-tier limits per Groq model (2026-10-08): 30 RPM, 1K RPD, 8K TPM, 200K TPD. */
-const GROQ_LIMITS = {
-  rpm: Number(env('GROQ_RPM', '30')), rpd: Number(env('GROQ_RPD', '1000')),
-  tpm: Number(env('GROQ_TPM', '8000')), tpd: Number(env('GROQ_TPD', '200000')),
-}
+export const GROQ_MODELS = { ...groqModels(), guard: (process.env.GROQ_MODEL_GUARD ?? '').trim() || 'meta-llama/llama-prompt-guard-2-86m' }
 const GEMINI_LITE = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']
-const GEMINI_FLASH = ['gemini-3.8-flash', 'gemini-2.5-flash']
 
-export const groqEnabled = () => !!(process.env.GROQ_API_KEY ?? '').trim()
-
-type Slot = { provider: 'groq'; model: string } | { provider: 'gemini'; model: string; key: number }
-
-function chainFor(purpose: Purpose): Slot[] {
-  const g = (m: string): Slot => ({ provider: 'groq', model: m })
-  const groq: Slot[] = !groqEnabled() ? [] :
-    purpose === 'chat' ? [g(GROQ_MODELS.qwen), g(GROQ_MODELS.big), g(GROQ_MODELS.small)]
-    : purpose === 'director' ? [g(GROQ_MODELS.big), g(GROQ_MODELS.qwen), g(GROQ_MODELS.small)]
-    : purpose === 'light' ? [g(GROQ_MODELS.small), g(GROQ_MODELS.qwen)]
-    : [g(GROQ_MODELS.big), g(GROQ_MODELS.qwen)]
-  const keys = GEMINI_KEYS.length ? GEMINI_KEYS.map((_, i) => i) : [0]
-  const gem: Slot[] = []
-  for (const m of purpose === 'light' ? GEMINI_LITE : [...GEMINI_LITE, ...GEMINI_FLASH]) for (const k of keys) gem.push({ provider: 'gemini', model: m, key: k })
-  return [...groq, ...gem]
-}
-
-const slotName = (s: Slot) => s.provider === 'groq' ? s.model : `${s.model}${s.key ? `#${s.key + 1}` : ''}`
-
-/** In-instance memory of models that answered 429 / are missing, so the next call skips them at once. */
-const skipUntil = new Map<string, number>()
+export const groqEnabled = () => inventory().some(s => s.provider === 'groq')
 
 /** Rough token estimate (≈3.6 characters per token for English + JSON). */
-export function estTokens(s: string) { return Math.ceil(s.length / 3.6) }
+export const estTokens = poolEst
 
-/** Shared per-model budget (RPM, RPD, TPM, TPD) across instances. Fails open when the DB is unreachable. */
-async function takeBudget(model: string, tokens: number): Promise<boolean> {
-  try {
-    const db = createAdminClient()
-    const { data, error } = await db.rpc('agent_budget_take', { p_model: model, p_tokens: tokens, p_rpm: GROQ_LIMITS.rpm, p_rpd: GROQ_LIMITS.rpd, p_tpm: GROQ_LIMITS.tpm, p_tpd: GROQ_LIMITS.tpd })
-    if (error) return true
-    return data !== false
-  } catch { return true }
+/** Output caps per purpose (tokens): the caller's request is clipped to these. */
+const MAX_OUT: Record<Purpose, number> = { chat: 1200, director: 1200, light: 700, json: 6000 }
+
+/** Default priority per purpose when nothing says otherwise. */
+function priorityFor(req: ChatRequest): Priority {
+  if (req.priority) return req.priority
+  const c = llmContext().priority
+  if (c) return c
+  return req.purpose === 'director' ? 'background' : 'ask'
 }
-async function adjustBudget(model: string, delta: number) {
-  if (!delta) return
-  try { await createAdminClient().rpc('agent_budget_adjust', { p_model: model, p_delta: delta }) } catch { /* best effort */ }
+
+/**
+ * The trimmed variant of a request (rung 2 of the degradation ladder): keep the system prompt, the first user
+ * turn's context and the last 3 messages, shorten old tool results, and cut max_tokens to 60 %.
+ */
+export function trimRequest(req: ChatRequest): ChatRequest {
+  const sys = req.messages.filter(m => m.role === 'system')
+  const rest = req.messages.filter(m => m.role !== 'system')
+  // Never split an assistant tool call from its results: cut only at a user message.
+  let cut = Math.max(0, rest.length - 3)
+  while (cut > 0 && rest[cut].role !== 'user') cut--
+  const kept = rest.slice(cut).map((m, i, a) => m.role === 'tool' && i < a.length - 2 ? { ...m, content: m.content.slice(0, 1800) } : m)
+  const dropped = rest.slice(0, cut)
+  const note: Msg[] = dropped.length ? [{ role: 'system', content: `Earlier in this conversation (shortened): ${dropped.filter(m => m.role === 'user').map(m => m.content.slice(0, 120)).join(' / ').slice(0, 600)}` }] : []
+  return { ...req, messages: [...sys, ...note, ...kept], maxTokens: Math.max(300, Math.round((req.maxTokens ?? 1200) * 0.6)) }
+}
+
+function estimate(req: ChatRequest) {
+  return estTokens(JSON.stringify(req.messages) + JSON.stringify(req.tools ?? [])) + (req.maxTokens ?? 1200) + (req.builtin === 'browser_search' ? 28_000 : req.builtin ? 4000 : 0)
 }
 
 /* ───────────── Public entry ───────────── */
 
-/** One model step with fallback across the purpose's chain. Throws AllModelsBusyError when nothing could answer. */
-export async function chat(req: ChatRequest): Promise<ChatResult> {
-  const chain = chainFor(req.purpose)
-  const now = Date.now()
-  const live = chain.filter(s => (skipUntil.get(slotName(s)) ?? 0) <= now)
-  const order = live.length ? live : chain
-  const errors: string[] = []
+/** One model step on the best pool slot, failing over across slots. Throws AllModelsBusyError when nothing could answer. */
+export async function chat(input: ChatRequest): Promise<ChatResult> {
+  const req: ChatRequest = { ...input, maxTokens: Math.min(input.maxTokens ?? 1200, MAX_OUT[input.purpose]) }
+  const priority = priorityFor(req)
+  const trimmed = trimRequest(req)
+  const est = estimate(req)
+  const estTrim = estimate(trimmed)
   let emitted = false
   const onText = req.onText ? (d: string) => { emitted = true; req.onText!(d) } : undefined
-  for (const slot of order) {
-    if (req.deadline && Date.now() > req.deadline - 3000) break
-    if (req.builtin && !(slot.provider === 'groq' && /gpt-oss/.test(slot.model))) {
-      // Built-in tools exist only on Groq gpt-oss; callers fall back to their own implementation.
-      if (slot.provider === 'gemini') break
-      continue
-    }
-    const name = slotName(slot)
-    try {
-      if (slot.provider === 'groq') {
-        const est = estTokens(JSON.stringify(req.messages) + JSON.stringify(req.tools ?? [])) + (req.maxTokens ?? 1200) + (req.builtin === 'browser_search' ? 28_000 : 0)
-        if (!(await takeBudget(slot.model, est))) { errors.push(`${name}: budget`); req.trace?.push(`${name}: over its free-tier budget, skipped`); continue }
-        const r = await groqChat(slot.model, req, onText)
-        void adjustBudget(slot.model, r.usage.input + r.usage.output - est)
-        return r
-      }
-      return await geminiChat(slot.model, slot.key, req, onText)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      errors.push(`${name}: ${msg.slice(0, 160)}`)
-      req.trace?.push(`${name}: ${msg.slice(0, 160)}`)
+  const purpose: PoolPurpose = req.builtin ? 'builtin' : req.purpose
+  try {
+    const r = await runOnPool<ChatResult>({
+      purpose, priority, learnerId: req.learnerId, estTokens: est, trimmedEstTokens: estTrim < est * 0.85 ? estTrim : undefined,
+      providers: req.builtin ? ['groq'] : undefined, deadline: req.deadline, trace: req.trace,
+      preferFast: req.purpose === 'light',
+      timeoutMs: req.builtin ? 45_000 : undefined,
       // Text already streamed to the learner cannot be taken back: surface the error instead of re-answering.
-      if (emitted) throw err
-      if (/\b429\b|rate.?limit|RESOURCE_EXHAUSTED|quota/i.test(msg) || isQuotaError(err)) {
-        const m = /try again in ([\d.]+)s/i.exec(msg)
-        skipUntil.set(name, Date.now() + Math.min(120_000, m ? Number(m[1]) * 1000 + 500 : 30_000))
-      } else if (/\b404\b|not found|does not exist|decommissioned|NOT_FOUND/i.test(msg)) {
-        skipUntil.set(name, Date.now() + 3600_000)
-      } else if (!isRetryable(err) && !/\b(400|413|5\d\d)\b|tool|parse|fetch failed|timeout|aborted|JSON/i.test(msg)) {
-        // Unknown error class: still try the next model, but remember briefly.
-        skipUntil.set(name, Date.now() + 10_000)
-      }
-    }
+      stopOn: () => emitted,
+    }, async (slot, o) => {
+      const use = o.trimmed ? trimmed : req
+      const res = slot.provider === 'groq' ? await groqChat(slot, use, onText, o.timeoutMs) : await geminiChat(slot, use, onText, o.timeoutMs)
+      return { value: { ...res, slot: slot.id }, usage: res.usage }
+    })
+    if (r.trimmed && estTrim < est) void poolStore().count('saved_trim_tokens', est - estTrim)
+    return { ...r.value, degraded: r.lighter ? 'lighter' : r.trimmed ? 'trimmed' : undefined }
+  } catch (err) {
+    if (err instanceof PoolBusyError) throw new AllModelsBusyError(err.message, err.retryAfterMs, err.name === 'PoolDeferredError')
+    throw err
   }
-  throw new AllModelsBusyError(`No model could answer (${errors.slice(0, 6).join(' | ') || 'all skipped'})`)
 }
 
 /** Strict JSON from the 'json' chain. */
-export async function chatJson(prompt: string, opts: { system?: string; maxTokens?: number; purpose?: Purpose; trace?: string[]; deadline?: number } = {}): Promise<unknown> {
+export async function chatJson(prompt: string, opts: { system?: string; maxTokens?: number; purpose?: Purpose; trace?: string[]; deadline?: number; priority?: Priority } = {}): Promise<unknown> {
   const messages: Msg[] = [...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []), { role: 'user', content: prompt }]
-  const ask = () => chat({ purpose: opts.purpose ?? 'json', json: true, maxTokens: opts.maxTokens ?? 3000, temperature: 0.4, trace: opts.trace, deadline: opts.deadline, messages })
+  const ask = () => chat({ purpose: opts.purpose ?? 'json', json: true, maxTokens: opts.maxTokens ?? 3000, temperature: 0.4, trace: opts.trace, deadline: opts.deadline, priority: opts.priority, messages })
   const r = await ask()
   try { return parseJsonLoose(r.text) } catch (err) {
     // One retry with the parse error (often a stray backslash or a truncated array).
@@ -185,6 +166,18 @@ export function parseJsonLoose(raw: string): unknown {
   throw new Error('The model returned malformed JSON')
 }
 
+/** Abort after `firstMs` unless the first byte/chunk arrived; then allow up to `totalMs`. */
+function firstByteTimer(firstMs: number, totalMs: number) {
+  const ac = new AbortController()
+  let t = setTimeout(() => ac.abort(new Error(`timed out waiting ${Math.round(firstMs / 1000)} s for the first token`)), firstMs)
+  let started = false
+  return {
+    signal: ac.signal,
+    started() { if (started) return; started = true; clearTimeout(t); t = setTimeout(() => ac.abort(new Error(`timed out after ${Math.round(totalMs / 1000)} s`)), totalMs) },
+    done() { clearTimeout(t) },
+  }
+}
+
 /* ───────────── Groq (OpenAI-compatible) ───────────── */
 
 function toOpenAI(messages: Msg[]) {
@@ -197,7 +190,8 @@ function toOpenAI(messages: Msg[]) {
   })
 }
 
-async function groqChat(model: string, req: ChatRequest, onText?: (d: string) => void): Promise<ChatResult> {
+async function groqChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) => void, firstMs = 30_000): Promise<ChatResult> {
+  const model = slot.model
   const stream = !!onText && !req.builtin
   const body: Record<string, unknown> = {
     model,
@@ -212,23 +206,28 @@ async function groqChat(model: string, req: ChatRequest, onText?: (d: string) =>
   if (req.json && !req.tools?.length && !req.builtin && (req.maxTokens ?? 1200) <= 1500) body.response_format = { type: 'json_object' }
   if (/gpt-oss/.test(model)) { body.reasoning_effort = 'low'; body.include_reasoning = false }
   else if (/qwen/.test(model)) { body.reasoning_format = 'hidden'; body.reasoning_effort = req.purpose === 'chat' ? 'none' : 'default' }
-  const timeout = req.builtin ? 45_000 : 30_000
+  // Fast failover: a live turn that has not started within firstMs moves to the next slot; once tokens flow it may run on.
+  const timer = firstByteTimer(stream ? firstMs : Math.max(firstMs, 20_000), req.builtin ? 60_000 : 90_000)
+  try {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${slot.apiKey}` },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeout),
+    signal: timer.signal,
   })
-  if (!res.ok) throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 400)}`)
+  if (!res.ok) {
+    const ra = res.headers.get('retry-after')
+    throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 400)}${ra ? ` (try again in ${ra}s)` : ''}`)
+  }
   if (!stream) {
-    const j = await res.json() as { choices?: { message?: { content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; executed_tools?: ChatResult['executed'] } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } }
+    const j = await res.json() as { choices?: { message?: { content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; executed_tools?: ChatResult['executed'] } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } }
     const m = j.choices?.[0]?.message
     const text = m?.content ?? ''
     if (onText && text) onText(text)
     return {
       text, model, provider: 'groq', executed: m?.executed_tools,
       toolCalls: (m?.tool_calls ?? []).map(c => ({ id: c.id, name: c.function.name, args: safeArgs(c.function.arguments) })),
-      usage: { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0 },
+      usage: { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cached: j.usage?.prompt_tokens_details?.cached_tokens ?? 0 },
     }
   }
   // SSE stream: text deltas go out as they arrive; tool-call fragments are stitched by index.
@@ -236,10 +235,11 @@ async function groqChat(model: string, req: ChatRequest, onText?: (d: string) =>
   const dec = new TextDecoder()
   let buf = '', text = ''
   const calls = new Map<number, { id: string; name: string; args: string }>()
-  let usage = { input: 0, output: 0 }
+  let usage = { input: 0, output: 0, cached: 0 }
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
+    timer.started()
     buf += dec.decode(value, { stream: true })
     let i: number
     while ((i = buf.indexOf('\n')) >= 0) {
@@ -247,7 +247,7 @@ async function groqChat(model: string, req: ChatRequest, onText?: (d: string) =>
       if (!line.startsWith('data:')) continue
       const data = line.slice(5).trim()
       if (data === '[DONE]') continue
-      let j: { choices?: { delta?: { content?: string; tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[]; x_groq?: { usage?: { prompt_tokens?: number; completion_tokens?: number } }; error?: { message?: string } }
+      let j: { choices?: { delta?: { content?: string; tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[]; x_groq?: { usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } }; error?: { message?: string } }
       try { j = JSON.parse(data) } catch { continue }
       if (j.error) throw new Error(`Groq stream: ${j.error.message ?? 'error'}`)
       const d = j.choices?.[0]?.delta
@@ -259,13 +259,14 @@ async function groqChat(model: string, req: ChatRequest, onText?: (d: string) =>
         if (tc.function?.arguments) c.args += tc.function.arguments
         calls.set(tc.index, c)
       }
-      if (j.x_groq?.usage) usage = { input: j.x_groq.usage.prompt_tokens ?? 0, output: j.x_groq.usage.completion_tokens ?? 0 }
+      if (j.x_groq?.usage) usage = { input: j.x_groq.usage.prompt_tokens ?? 0, output: j.x_groq.usage.completion_tokens ?? 0, cached: j.x_groq.usage.prompt_tokens_details?.cached_tokens ?? 0 }
     }
   }
   return {
     text, model, provider: 'groq', usage,
     toolCalls: [...calls.values()].filter(c => c.name).map((c, k) => ({ id: c.id || `call_${k}`, name: c.name, args: safeArgs(c.args) })),
   }
+  } finally { timer.done() }
 }
 
 function safeArgs(s: string): Record<string, unknown> {
@@ -274,10 +275,10 @@ function safeArgs(s: string): Record<string, unknown> {
 
 /* ───────────── Gemini ───────────── */
 
-const gemClients = new Map<number, GoogleGenAI>()
-function gemClient(k: number) {
-  let c = gemClients.get(k)
-  if (!c) { c = new GoogleGenAI({ apiKey: GEMINI_KEYS[k] ?? '' }); gemClients.set(k, c) }
+const gemClients = new Map<string, GoogleGenAI>()
+function gemClient(apiKey: string) {
+  let c = gemClients.get(apiKey)
+  if (!c) { c = new GoogleGenAI({ apiKey }); gemClients.set(apiKey, c) }
   return c
 }
 
@@ -305,10 +306,12 @@ function toGemini(messages: Msg[]): { system: string; contents: Content[] } {
   return { system, contents }
 }
 
-async function geminiChat(model: string, key: number, req: ChatRequest, onText?: (d: string) => void): Promise<ChatResult> {
+async function geminiChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) => void, firstMs = 30_000): Promise<ChatResult> {
+  const model = slot.model
   const { system, contents } = toGemini(req.messages)
+  const timer = firstByteTimer(onText ? firstMs : Math.max(firstMs, 25_000), 90_000)
   const config: Record<string, unknown> = {
-    httpOptions: { timeout: 30_000 },
+    abortSignal: timer.signal,
     maxOutputTokens: Math.max(req.maxTokens ?? 1200, 1024),
     temperature: req.temperature ?? 0.5,
     ...(system ? { systemInstruction: system } : {}),
@@ -319,26 +322,29 @@ async function geminiChat(model: string, key: number, req: ChatRequest, onText?:
     if (req.toolChoice === 'required') config.toolConfig = { functionCallingConfig: { mode: 'ANY' } }
   }
   if (req.json && !req.tools?.length) config.responseMimeType = 'application/json'
-  const client = gemClient(key)
+  const client = gemClient(slot.apiKey)
   let text = ''
   const calls: ToolCall[] = []
-  let usage = { input: 0, output: 0 }
+  let usage = { input: 0, output: 0, cached: 0 }
   let finish = ''
-  const take = (r: { candidates?: { content?: Content; finishReason?: string }[]; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }) => {
+  const take = (r: { candidates?: { content?: Content; finishReason?: string }[]; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number } }) => {
+    timer.started()
     for (const p of r.candidates?.[0]?.content?.parts ?? []) {
       if (p.thought) continue
       if (p.functionCall) calls.push({ id: `g${calls.length}_${Date.now().toString(36)}`, name: p.functionCall.name ?? '', args: (p.functionCall.args ?? {}) as Record<string, unknown>, sig: p.thoughtSignature })
       else if (p.text) { text += p.text; onText?.(p.text) }
     }
     if (r.candidates?.[0]?.finishReason) finish = String(r.candidates[0].finishReason)
-    if (r.usageMetadata) usage = { input: r.usageMetadata.promptTokenCount ?? 0, output: r.usageMetadata.candidatesTokenCount ?? 0 }
+    if (r.usageMetadata) usage = { input: r.usageMetadata.promptTokenCount ?? 0, output: r.usageMetadata.candidatesTokenCount ?? 0, cached: r.usageMetadata.cachedContentTokenCount ?? 0 }
   }
-  if (onText) {
-    const stream = await client.models.generateContentStream({ model, contents, config })
-    for await (const chunk of stream) take(chunk)
-  } else {
-    take(await client.models.generateContent({ model, contents, config }))
-  }
+  try {
+    if (onText) {
+      const stream = await client.models.generateContentStream({ model, contents, config })
+      for await (const chunk of stream) take(chunk)
+    } else {
+      take(await client.models.generateContent({ model, contents, config }))
+    }
+  } finally { timer.done() }
   // An empty answer (e.g. MALFORMED_FUNCTION_CALL on a big tool schema) is a failure: let the chain try the next model.
   if (!text.trim() && !calls.some(c => c.name)) throw new Error(`empty answer (finish ${finish || 'unknown'})`)
   return { text, toolCalls: calls.filter(c => c.name), model, provider: 'gemini', usage }
@@ -346,55 +352,64 @@ async function geminiChat(model: string, key: number, req: ChatRequest, onText?:
 
 /* ───────────── Prompt-injection classifier (Groq Llama Prompt Guard 2) ───────────── */
 
+/** The guard model has its own large free quota (30 RPM / 14.4K RPD per org): rotate over every Groq key. */
+const guardSkip = new Map<string, number>()
+let guardTurn = 0
+
 /** Probability-ish score that `text` is a jailbreak / injection, or null when the guard model is unavailable. */
 export async function promptGuardScore(text: string): Promise<number | null> {
-  if (!groqEnabled() || !text.trim()) return null
+  const keys = [...new Map(inventory().filter(s => s.provider === 'groq').map(s => [s.apiKey, s.keyEnv])).entries()]
+  if (!keys.length || !text.trim()) return null
   const model = GROQ_MODELS.guard
-  if ((skipUntil.get(model) ?? 0) > Date.now()) return null
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-      body: JSON.stringify({ model, messages: [{ role: 'user', content: text.slice(0, 1800) }], max_completion_tokens: 8, temperature: 0 }),
-      signal: AbortSignal.timeout(6000),
-    })
-    if (!res.ok) { if (res.status === 429) skipUntil.set(model, Date.now() + 30_000); return null }
-    const j = await res.json() as { choices?: { message?: { content?: string } }[] }
-    const v = Number.parseFloat(String(j.choices?.[0]?.message?.content ?? '').trim())
-    return Number.isFinite(v) ? v : null
-  } catch { return null }
+  for (let i = 0; i < keys.length; i++) {
+    const [apiKey, env] = keys[(guardTurn + i) % keys.length]
+    if ((guardSkip.get(env) ?? 0) > Date.now()) continue
+    guardTurn++
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: text.slice(0, 1800) }], max_completion_tokens: 8, temperature: 0 }),
+        signal: AbortSignal.timeout(6000),
+      })
+      if (!res.ok) { guardSkip.set(env, Date.now() + (res.status === 429 ? 30_000 : 300_000)); continue }
+      const j = await res.json() as { choices?: { message?: { content?: string } }[] }
+      const v = Number.parseFloat(String(j.choices?.[0]?.message?.content ?? '').trim())
+      return Number.isFinite(v) ? v : null
+    } catch { /* next key */ }
+  }
+  return null
 }
 
 /* ───────────── Vision (board snapshots) ───────────── */
 
 /**
- * Ask a vision-capable model (Gemini flash-lite, then flash, over every free key) about a PNG. Returns parsed JSON, or
- * null when no vision model answered in time (the caller then relies on its deterministic checks).
+ * Ask a vision-capable model (Gemini flash-lite first, then flash, over every free key in the pool) about a PNG.
+ * Returns parsed JSON, or null when no vision model answered in time (the caller then relies on its deterministic
+ * checks). Signature is stable: the correctness guard calls it.
  */
-export async function visionJson(prompt: string, pngBase64: string, opts: { deadline?: number; trace?: string[] } = {}): Promise<unknown | null> {
+export async function visionJson(prompt: string, pngBase64: string, opts: { deadline?: number; trace?: string[]; priority?: Priority } = {}): Promise<unknown | null> {
   const deadline = opts.deadline ?? Date.now() + 20_000
-  const keys = GEMINI_KEYS.length ? GEMINI_KEYS.map((_, i) => i) : []
-  for (const model of [...GEMINI_LITE, ...GEMINI_FLASH]) {
-    for (const key of keys) {
-      const name = `${model}#${key + 1}`
-      if ((skipUntil.get(name) ?? 0) > Date.now()) continue
+  try {
+    const r = await runOnPool<unknown>({
+      purpose: 'vision', priority: opts.priority, providers: ['gemini'], estTokens: 1800 + 1200 + estTokens(prompt), deadline, trace: opts.trace, maxAttempts: 4, preferFast: true,
+    }, async (slot, o) => {
       const left = deadline - Date.now()
-      if (left < 2500) return null
-      try {
-        const r = await gemClient(key).models.generateContent({
-          model,
-          contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'image/png', data: pngBase64 } }, { text: prompt }] }],
-          config: { httpOptions: { timeout: Math.min(18_000, left) }, maxOutputTokens: 1200, temperature: 0.2, responseMimeType: 'application/json', ...(model.startsWith('gemini-3') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : model.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
-        })
-        const text = (r.candidates?.[0]?.content?.parts ?? []).filter(p => !p.thought && p.text).map(p => p.text).join('')
-        opts.trace?.push(`vision ${name}: ok`)
-        return parseJsonLoose(text)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        opts.trace?.push(`vision ${name}: ${msg.slice(0, 80)}`)
-        if (/\b429\b|quota|RESOURCE_EXHAUSTED|not found|404/i.test(msg)) skipUntil.set(name, Date.now() + 60_000)
-      }
-    }
+      const res = await gemClient(slot.apiKey).models.generateContent({
+        model: slot.model,
+        contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'image/png', data: pngBase64 } }, { text: prompt }] }],
+        config: { httpOptions: { timeout: Math.max(2500, Math.min(18_000, left, o.timeoutMs)) }, maxOutputTokens: 1200, temperature: 0.2, responseMimeType: 'application/json', ...(slot.model.startsWith('gemini-3') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : slot.model.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
+      })
+      const text = (res.candidates?.[0]?.content?.parts ?? []).filter(p => !p.thought && p.text).map(p => p.text).join('')
+      opts.trace?.push(`vision ${slot.id}: ok`)
+      return { value: parseJsonLoose(text), usage: { input: res.usageMetadata?.promptTokenCount ?? 0, output: res.usageMetadata?.candidatesTokenCount ?? 0 } }
+    })
+    return r.value
+  } catch (err) {
+    opts.trace?.push(`vision: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`)
+    return null
   }
-  return null
 }
+
+/** Gemini flash-lite model ids (light purposes elsewhere). */
+export const GEMINI_LITE_MODELS = GEMINI_LITE
