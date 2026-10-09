@@ -76,7 +76,7 @@ export const SEED_CASES: RegressionCase[] = [
   },
   {
     id: 'seed-unit-circle-round', kind: 'interactive', title: 'Unit circle drawn as an ellipse',
-    input: { spec: { title: 'Unit circle', x_range: [-2.4, 2.4], y_range: [-1.2, 1.2], points: [{ name: 'O', x: 0, y: 0, draggable: false }], circles: [{ center: 'O', radius: 1 }], gliders: [] } },
+    input: { spec: { title: 'Unit circle', x_range: [-2.4, 2.4], y_range: [-1.2, 1.2], points: [{ name: 'O', x: 0, y: 0, draggable: false }], circles: [{ name: 'u', center: 'O', radius: 1 }], gliders: [{ name: 'P', on: 'u', angle: 0.8 }], segments: [{ from: 'O', to: 'P' }], readouts: [{ label: 'cos', expr: 'px' }, { label: 'sin', expr: 'py' }] } },
     expect: { round: true },
   },
   {
