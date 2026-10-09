@@ -103,7 +103,10 @@ export async function POST(request: Request) {
   return Response.json({
     id: row.id,
     guard: { flagged: guard.flagged },
-    retry: { prompt: `The ${what} you just showed me had a mistake${category ? ` (${category.replace('_', ' ')})` : ''}${note ? `: ${note}` : ''}. Please redo it correctly${what === 'picture' ? ' with a different, correct picture' : ''}, and check the maths.` },
+    // Sent as the learner's own message, so it reads like something they would say.
+    retry: { prompt: what === 'picture'
+      ? `That picture wasn't right${note ? ` (${note.replace(/[.!\s]+$/, '')})` : ''}. Could you show me a different, correct one?`
+      : `That ${what} had a mistake${category ? ` (${category.replace('_', ' ')})` : ''}${note ? `: ${note.replace(/[.!\s]+$/, '')}` : ''}. Could you redo it correctly and check the maths?` },
   })
 }
 

@@ -231,7 +231,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
             </button>
           </div>
         </div>
-        {remaining !== null && remaining <= 5 && <p className="mx-auto mt-1.5 max-w-[760px] text-center text-[12px] text-muted">{remaining} messages left today</p>}
+        {remaining !== null && remaining <= 5 && <p className="mx-auto mt-1.5 max-w-[760px] text-center text-[12px] text-muted">{remaining} message{remaining === 1 ? '' : 's'} left today</p>}
       </form>
       <SafetyPause open={safety.open} minor={safety.minor} onContinue={() => setSafety(s => ({ ...s, open: false }))} />
     </div>
