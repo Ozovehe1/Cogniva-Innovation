@@ -65,7 +65,7 @@ export async function applyOps(admin: SupabaseClient, ops: DeltaOp[], opts: { sc
         res.merged.push(b.id)
       } else {
         const { data, error } = await admin.from('playbook_bullets').insert({
-          target: op.target, kind: op.kind ?? 'avoid', ...tags, topic_key: topicKey(`${tags.topic} ${tags.skill}`), check_q: op.check ?? null, probes: op.probes ?? [], hints: op.hints ?? {},
+          target: op.target, kind: op.kind ?? 'avoid', ...tags, topic_key: topicKey(`${tags.topic} ${tags.skill}`), check_q: op.check ?? null, probes: op.probes ?? [], hints: op.target === 'illustration' ? op.hints ?? {} : {},
           status: 'candidate', scope, sources, embedding: vec ? JSON.stringify(vec) : null,
         }).select('id').single()
         if (error || !data) { res.rejected.push({ text: op.text, problems: [error?.message ?? 'insert failed'] }); continue }

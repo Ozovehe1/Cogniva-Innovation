@@ -68,6 +68,7 @@ export default async function PlaybookPage({ searchParams }: { searchParams: Pro
         </div>
       </header>
       <main className="mx-auto max-w-[1100px] px-4 pb-16 pt-6 md:px-8 md:pt-10">
+        <div className={cx(sel && 'hidden lg:block')}>
         <Eyebrow>Admin · teaching playbook</Eyebrow>
         <h1 className="mt-1 font-display text-[30px] leading-[1.1] text-ink md:text-[38px]">What the tutor has learned</h1>
         <p className="mt-2 max-w-[62ch] text-[15px] leading-relaxed text-muted">Rules distilled from real lessons: confirmed reports, guard catches, animation checks and how learners did. A rule goes live only when lessons written with it are no worse than without it. Rules never contain learner data.</p>
@@ -76,15 +77,16 @@ export default async function PlaybookPage({ searchParams }: { searchParams: Pro
           <span className="rounded-full border border-line bg-surface px-3 py-1">Last harvest {when((state as { updated_at?: string } | null)?.updated_at ?? null)}</span>
           {Object.entries(bySource).slice(0, 4).map(([k, v]) => <span key={k} className="hidden rounded-full border border-line bg-surface px-3 py-1 text-muted sm:inline">{SOURCE[k] ?? k} <span className="tnum">{v}</span></span>)}
         </div>
+        </div>
 
-        <nav aria-label="Bullet status" className="mt-6 flex gap-1 overflow-x-auto border-b border-line">
+        <nav aria-label="Bullet status" className={cx('gap-1 overflow-x-auto border-b border-line', sel ? 'hidden lg:mt-6 lg:flex' : 'mt-6 flex')}>
           {STATUSES.map(s => (
             <Link key={s} href={href({ status: s })} className={cx('-mb-px inline-flex min-h-11 flex-shrink-0 items-center gap-2 border-b-2 px-3 text-[14px] font-medium', status === s ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink')}>
               {s[0].toUpperCase() + s.slice(1)}<span className="tnum rounded-full bg-sunken px-1.5 text-[11.5px] text-muted">{n[s]}</span>
             </Link>
           ))}
         </nav>
-        <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Filter by where the rule is used">
+        <div className={cx('mt-3 gap-1.5 overflow-x-auto pb-1', sel ? 'hidden lg:flex' : 'flex')} role="group" aria-label="Filter by where the rule is used">
           {[null, ...Object.keys(TARGET) as Target[]].map(t => (
             <Link key={t ?? 'all'} href={href({ target: t })} className={cx('inline-flex min-h-9 flex-shrink-0 items-center rounded-full border px-3 text-[12.5px]', target === t ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-ink-2 hover:border-line-strong')}>{t ? TARGET[t] : 'All'}</Link>
           ))}
@@ -145,7 +147,7 @@ function Detail({ b, events, back }: { b: Bullet; events: Ev[]; back: string }) 
         {b.skill && <><dt className="text-muted">Skill</dt><dd className="text-ink-2">{b.skill}</dd></>}
         {b.check_q && <><dt className="text-muted">Check</dt><dd className="text-ink-2">{b.check_q}</dd></>}
         {b.probes.length > 0 && <><dt className="text-muted">Probes</dt><dd className="text-ink-2">{b.probes.join(' · ')}</dd></>}
-        {(b.hints.prefer?.length || b.hints.avoid?.length) ? <><dt className="text-muted">Picture hints</dt><dd className="text-ink-2">{b.hints.prefer?.length ? `prefer ${b.hints.prefer.join(', ')}` : ''}{b.hints.avoid?.length ? ` · avoid ${b.hints.avoid.join(', ')}` : ''}</dd></> : null}
+        {b.target === 'illustration' && (b.hints.prefer?.length || b.hints.avoid?.length) ? <><dt className="text-muted">Picture hints</dt><dd className="text-ink-2">{b.hints.prefer?.length ? `prefer ${b.hints.prefer.join(', ')}` : ''}{b.hints.avoid?.length ? ` · avoid ${b.hints.avoid.join(', ')}` : ''}</dd></> : null}
         <dt className="text-muted">Live since</dt><dd className="text-ink-2">{when(b.live_at)}{b.decided_by ? ` · by ${b.decided_by}` : ''}</dd>
       </dl>
       <BulletActions id={b.id} status={b.status} text={b.text} />
@@ -157,12 +159,12 @@ function Detail({ b, events, back }: { b: Bullet; events: Ev[]; back: string }) 
           <p className="mt-1 text-[13.5px] leading-relaxed text-muted">{b.gate.reason}</p>
           {b.gate.probes?.length ? (
             <table className="mt-3 w-full text-left text-[13px]">
-              <thead className="text-[11.5px] uppercase tracking-[0.05em] text-faint"><tr><th className="py-1 font-medium">Probe</th><th className="py-1 text-right font-medium">Without</th><th className="py-1 text-right font-medium">With</th></tr></thead>
+              <thead className="text-[11.5px] uppercase tracking-[0.05em] text-faint"><tr><th className="py-1 font-medium">Probe</th><th className="py-1 pl-3 text-right font-medium">Without</th><th className="py-1 pl-3 text-right font-medium">With</th></tr></thead>
               <tbody>{b.gate.probes.map((p, i) => (
                 <tr key={i} className="border-t border-line align-top">
                   <td className="py-1.5 pr-2 text-ink-2">{p.topic}<p className="mt-0.5 text-[12px] text-muted">{(p.candNotes.length ? p.candNotes : ['clean']).join('; ')}</p></td>
-                  <td className="tnum py-1.5 text-right text-ink-2">{p.base}</td>
-                  <td className={cx('tnum py-1.5 text-right font-medium', p.cand > p.base ? 'text-clay' : 'text-accent')}>{p.cand}</td>
+                  <td className="tnum py-1.5 pl-3 text-right text-ink-2">{p.base}</td>
+                  <td className={cx('tnum py-1.5 pl-3 text-right font-medium', p.cand > p.base ? 'text-clay' : 'text-accent')}>{p.cand}</td>
                 </tr>
               ))}</tbody>
             </table>
