@@ -140,8 +140,30 @@ def set_sizes(min_xh_px=None):
 set_sizes()
 
 
+_UNTEX = {"theta": "θ", "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "Delta": "Δ", "omega": "ω", "Omega": "Ω",
+          "lambda": "λ", "mu": "μ", "pi": "π", "phi": "φ", "rho": "ρ", "sigma": "σ", "tau": "τ", "epsilon": "ε",
+          "cdot": "·", "times": "×", "approx": "≈", "le": "≤", "leq": "≤", "ge": "≥", "geq": "≥", "neq": "≠", "pm": "±",
+          "circ": "°", "degree": "°", "to": "→", "rightarrow": "→", "infty": "∞", "sqrt": "√"}
+
+
+def untex(text: str) -> str:
+    """Plain Text never renders TeX: a readout written as '\\theta = 1.57, \\; \\sin\\theta = 1.00' shows its backslashes.
+    Turn the common commands into Unicode (θ, sin, ·, √ …), drop spacing commands and braces. Text without a backslash
+    command is returned unchanged (a lone '$' can be money)."""
+    s = str(text)
+    if not re.search(r"\\[A-Za-z,;:!]", s):
+        return s
+    s = s.replace("$", "")
+    s = re.sub(r"\\(?:[,;:!]|quad|qquad)", " ", s)
+    s = re.sub(r"\\(?:left|right|mathrm|text|operatorname|displaystyle)\b", "", s)
+    s = re.sub(r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", s)
+    s = re.sub(r"\\([A-Za-z]+)", lambda m: _UNTEX.get(m.group(1), m.group(1)), s)
+    s = s.replace("{", "").replace("}", "").replace("^°", "°")
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
 def _t(text, fs=None, color="ink", weight="NORMAL"):
-    return Text(str(text), font_size=max(FS["min"], fs or FS["body"]), color=col(color), weight=weight)
+    return Text(untex(text), font_size=max(FS["min"], fs or FS["body"]), color=col(color), weight=weight)
 
 
 def _tex_pow(s: str) -> str:
