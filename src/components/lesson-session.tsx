@@ -340,7 +340,13 @@ function CheckIn({ open, reason, lessonId, onClose }: { open: boolean; reason: '
   const [busy, setBusy] = useState(false)
   const [breakLeft, setBreakLeft] = useState(300)
   const sustained = useRef(false)
-  useEffect(() => { if (open) { setMood(null); setConf(null); setStage('ask'); setBusy(false); sustained.current = false } }, [open])
+  // Reset when the sheet opens: adjusted during render (React's "storing information from previous renders"), not in an effect.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) { setMood(null); setConf(null); setStage('ask'); setBusy(false) }
+  }
+  useEffect(() => { if (open) sustained.current = false }, [open])
   useEffect(() => {
     if (stage !== 'break') return
     const t = setInterval(() => setBreakLeft(s => Math.max(0, s - 1)), 1000)

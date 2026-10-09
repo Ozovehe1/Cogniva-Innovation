@@ -7,7 +7,7 @@ export const metadata = {
   description: 'The free illustration libraries and open-source software GeniusMap is built with, and how each picture is credited.',
 }
 
-/* Library counts are from src/lib/illustrations/library.json (Oct 2026). Every picture is also credited where it is shown. */
+/* Library counts are from src/lib/illustrations/library.json (Oct 2026: servier 3,020, bio 2,773, commons 2,538). Every library picture is also credited where it is shown. */
 const libraries = [
   { name: 'Servier Medical Art', url: 'https://smart.servier.com/', what: 'Medical and biology drawings: organs, cells, the heart, the brain.', licences: 'CC BY 4.0', count: 'about 3,000' },
   { name: 'Bioicons', url: 'https://bioicons.com/', what: 'Science icons from many authors: lab equipment, molecules, cells, organisms.', licences: 'CC0, CC BY 3.0 / 4.0, CC BY-SA, MIT (per icon)', count: 'about 2,800' },
@@ -29,14 +29,14 @@ export default function CreditsPage() {
         <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-accent">Credits &amp; licences</p>
         <h1 className="mt-3 font-display text-[38px] leading-[1.08] md:text-[50px]">Built with other people’s generous work.</h1>
         <p className="mt-5 max-w-[38rem] text-[16px] leading-relaxed text-ink-2">
-          The pictures in lessons come from free illustration libraries, and the app is built on open-source software. Thank you to
+          Most pictures in lessons come from free illustration libraries, and the app is built on open-source software. Thank you to
           every author below.
         </p>
 
         <section className="mt-12" aria-labelledby="pics">
           <h2 id="pics" className="font-display text-[26px] leading-tight md:text-[30px]">Pictures</h2>
           <p className="mt-3 text-[15px] leading-relaxed text-ink-2">
-            Every picture is credited where you see it: its title, author, source and licence sit right under it, each linked. Where a
+            Every library picture is credited where you see it: its title, author, source and licence sit right under it, each linked. Where a
             licence asks us to say what we changed, the credit says so (for example “vectorised” when a photo-style original was traced
             to a drawing). Pictures under share-alike licences keep that licence.
           </p>
