@@ -3,13 +3,15 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { MAX_RENDER_ATTEMPTS, dispatchRender, renderTokenMatches, type ManimJob } from '@/lib/manim'
 import { fixManimCode, generateManimCode, type ManimNarration } from '@/lib/lesson-ai'
 import { ensureNarration } from '@/lib/tts-server'
+import { clipBlocked } from '@/lib/correctness/clip'
 
 // The composer fallback writes fresh code (up to two 60 s Gemini passes) after answering Modal.
 export const maxDuration = 300
 
 /**
  * POST /api/manim/callback  — called by the Modal render service.
- * Header X-Render-Token must equal RENDER_TOKEN. Body: { job_id, status: 'rendering'|'done'|'failed', error? }
+ * Header X-Render-Token must equal RENDER_TOKEN. Body: { job_id, status: 'rendering'|'done'|'failed', error?, verdict? }
+ * verdict: the deterministic scene verifier's result ({ ok, failed: [...] }); ok === false blocks a 'done' clip.
  * On failure, Gemini fixes the code once per attempt and the job is re-queued (max 2 automatic retries).
  */
 export async function POST(request: Request) {
@@ -36,7 +38,15 @@ export async function POST(request: Request) {
   if (status === 'done') {
     // Composed clips report the scene they rendered (grammar spec as Python) so it can be inspected and re-rendered.
     const code = body.composed && typeof body.code === 'string' ? body.code.slice(0, 60000) : undefined
-    await admin.from('manim_jobs').update({ status: 'done', error: null, ...(code ? { code } : {}) }).eq('id', jobId)
+    // Correctness guard: the scene engine's deterministic verifier verdict ({ ok, failed: [...] }). A failed verdict
+    // blocks the clip: it is never shown or placed into a lesson.
+    const verdict = body.verdict && typeof body.verdict === 'object' ? body.verdict as { ok?: unknown; failed?: unknown } : null
+    if (clipBlocked(verdict)) {
+      const why = Array.isArray(verdict!.failed) ? verdict!.failed.map(String).slice(0, 8).join('; ') : 'verifier failed'
+      await admin.from('manim_jobs').update({ status: 'failed', verdict, error: `Blocked by the correctness verifier: ${why}`.slice(0, 3000), ...(code ? { code } : {}) }).eq('id', jobId)
+      return NextResponse.json({ ok: true, blocked: true })
+    }
+    await admin.from('manim_jobs').update({ status: 'done', error: null, ...(verdict ? { verdict } : {}), ...(code ? { code } : {}) }).eq('id', jobId)
     // AI lessons: the drafting worker places the finished clip into the next section it releases
     // (sections the learner may already be playing are never changed).
     return NextResponse.json({ ok: true })
