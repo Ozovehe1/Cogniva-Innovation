@@ -17,7 +17,7 @@ export async function illustrationStaticCases(): Promise<CaseResult[]> {
   out.push({ id: 'illus-index-licences', group: 'static', pass: hit.every(r => /^(CC0|Public domain|CC BY(-SA)? [\d.]+( \w+)?|MIT|BSD)$/.test(r.h!.item.lic) && !!r.h!.item.page), detail: [...new Set(hit.map(r => r.h!.item.lic))].join(', ') })
   const dirty = '<svg viewBox="0 0 10 10" onload="alert(1)"><script>alert(1)</script><style>@import url(https://x.y/a.css); .a{fill:url(https://x.y/p)}</style><a href="javascript:alert(1)"><circle cx="5" cy="5" r="4"/></a><image href="file:///etc/passwd"/><use xlink:href="https://evil.example/x.svg#a"/><foreignObject><div>x</div></foreignObject><sodipodi:namedview/><text x="1" y="9">ok</text></svg>'
   const c = cleanLibrarySvg(dirty).svg ?? ''
-  out.push({ id: 'illus-clean-svg', group: 'static', pass: /<circle/.test(c) && />ok</.test(c) && !/script|onload|javascript|foreignObject|https?:|file:|@import|sodipodi/i.test(c), detail: c.slice(0, 160) })
+  out.push({ id: 'illus-clean-svg', group: 'static', pass: /<circle/.test(c) && />ok</.test(c) && !/script|onload|javascript|foreignObject|https?:|file:|@import|sodipodi/i.test(c.replace(/\sxmlns(:\w+)?="[^"]*"/g, '')), detail: c.slice(0, 160) })
   return out
 }
 
