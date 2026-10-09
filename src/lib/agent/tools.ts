@@ -572,7 +572,9 @@ const VISUAL: ToolSpec[] = [
       const topic = s(a.topic, 120)
       if (!topic) return { error: 'topic is required' }
       const keywords = Array.isArray(a.keywords) ? a.keywords.slice(0, 6).map(k => s(k, 40)).filter(Boolean) : []
-      const f = await findIllustration({ topic, keywords, want: a.style === 'icon' ? 'icon' : 'diagram', alternative: typeof a.alternative === 'number' ? a.alternative : 0 }, ctx.admin, ctx.trace)
+      const { data: reported } = await ctx.admin.from('mistake_reports').select('illustration_id').eq('student_id', ctx.studentId).neq('status', 'invalid').not('illustration_id', 'is', null).order('created_at', { ascending: false }).limit(50)
+      const exclude = ((reported ?? []) as { illustration_id: string | null }[]).map(r => r.illustration_id).filter((x): x is string => !!x)
+      const f = await findIllustration({ topic, keywords, want: a.style === 'icon' ? 'icon' : 'diagram', alternative: typeof a.alternative === 'number' ? a.alternative : 0, exclude }, ctx.admin, ctx.trace)
       if (!f) {
         const r = await makeIllustration(`${topic}${keywords.length ? ` (${keywords.join(', ')})` : ''}: a clean labelled teaching diagram`, ctx.trace)
         ctx.emit({ kind: 'svg', id: bid(), svg: r.svg, alt: r.alt })

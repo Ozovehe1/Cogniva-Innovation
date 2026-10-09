@@ -21,7 +21,7 @@ export interface Found extends Prepared {
 const MIN_SCORE = 6
 
 export async function findIllustration(
-  args: { topic: string; keywords?: string[]; want?: 'diagram' | 'icon' | 'any'; alternative?: number },
+  args: { topic: string; keywords?: string[]; want?: 'diagram' | 'icon' | 'any'; alternative?: number; exclude?: string[] },
   admin: SupabaseClient | null,
   trace?: string[],
 ): Promise<Found | null> {
@@ -36,6 +36,12 @@ export async function findIllustration(
   }
   // Correctness guard: blocklisted ids out, weak topics re-ranked, then each candidate checked against the topic.
   hits = await vetOrder(hits, topic, admin, trace)
+  // Pictures this learner has reported (still open or confirmed) are never shown to them again, even before triage.
+  if (args.exclude?.length) {
+    const ex = new Set(args.exclude), n = hits.length
+    hits = hits.filter(h => !ex.has(h.item.id))
+    if (hits.length < n) trace?.push(`guard: skipped ${n - hits.length} illustration(s) this learner reported`)
+  }
   if (!hits.length) return null
   const skip = Math.max(0, Math.min(3, Math.round(args.alternative ?? 0)))
   const order = [...hits.slice(skip), ...hits.slice(0, skip)]
