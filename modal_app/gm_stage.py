@@ -159,6 +159,18 @@ class Stage:
             if o["type"] == "function" and not o.get("label") and not o.get("tex_label") and f"{oid}.lbl" not in self.W.objs \
                     and re.fullmatch(r"[A-Za-z]{3,14}", oid) and not any(x.get("for") == oid for x in self.W.objs.values() if x["type"] == "label"):
                 self.W.objs[f"{oid}.lbl"] = {"type": "label", "id": f"{oid}.lbl", "for": oid, "text": oid.capitalize(), "color": o.get("color"), "_auto": True}
+        # an icon named with a word or a formula (sun, water, co2) is labelled with it unless something labels it already
+        for oid, o in list(self.W.objs.items()):
+            if o["type"] == "icon" and not o.get("label") and not o.get("tex_label") and f"{oid}.lbl" not in self.W.objs \
+                    and not o.get("nolabel") and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{1,15}", oid) \
+                    and not any(x.get("for") == oid for x in self.W.objs.values() if x["type"] == "label"):
+                if re.fullmatch(r"(?:[A-Z]?[a-z]?\d*){1,4}", oid) and re.search(r"\d", oid):
+                    txt = re.sub(r"([a-z])", lambda m: m.group(1).upper(), oid)  # co2 -> CO2, h2o -> H2O
+                elif re.fullmatch(r"[a-z]+\d+", oid):
+                    txt = oid.upper()
+                else:
+                    txt = oid.replace("_", " ").strip().capitalize()
+                self.W.objs[f"{oid}.lbl"] = {"type": "label", "id": f"{oid}.lbl", "for": oid, "text": txt, "color": "ink", "_auto": True, "side": "below"}
         self.labels: dict = {}  # label id -> (mobject, anchor ref, offset)
         self.vals = self.W.state_vals
         self.X = self.W.X
@@ -241,6 +253,8 @@ class Stage:
 
     def _color_of(self, o, default=None):
         if o.get("color"):
+            if str(o["color"]).lower() == "light" and o.get("type") not in ("box", "polygon", "area", "cells", "circle"):
+                return col("muted")  # 'light' is a fill colour; as a stroke or icon it vanishes on the paper background
             return col(o["color"])
         if default:
             return col(default)
@@ -1184,6 +1198,7 @@ class Stage:
                     continue
                 keep = not ids or oid in ids or oid.rsplit(".lbl", 1)[0] in ids
                 anims.append(m.animate.set_opacity(1.0 if keep else 0.25))
+            self._focused = bool(ids)
             if anims:
                 sc.play(*anims, run_time=max(0.5, rt))
             return
@@ -1240,6 +1255,21 @@ class Stage:
                         self.traces[y].clear_updaters()
             return
         if kind == "flow":
+            ids = [y for x in args for y in _as(x) if isinstance(y, str)]
+            hidden = []
+            for y in ids:
+                o = self.W.objs.get(y) or {}
+                if o.get("type") == "flow" and y not in self.shown:
+                    for end in (o.get("from"), o.get("to")):  # its ends first, then the arrow
+                        if end and "[" not in str(end) and end not in self.shown:
+                            a = self.show_anim(end)
+                            if a:
+                                hidden += a if isinstance(a, list) else [a]
+                    a = self.show_anim(y)
+                    if a:
+                        hidden += a if isinstance(a, list) else [a]
+            if hidden:
+                sc.play(*hidden, run_time=0.6)
             self._flow_dots(args, opts, rt)
             return
         if kind == "equation":
@@ -1415,6 +1445,9 @@ class Stage:
             budget = dur * 0.85
             tw = sum(weights) or 1.0
             t0 = sc.renderer.time
+            if getattr(self, "_focused", False) and not any(a[0] == "focus" for a in acts):
+                # a focus lasts its beat: the next beat starts with everything back at full strength
+                self.do(["focus"], 0.4)
             for a, w in zip(acts, weights):
                 rt = max(0.6, min(4.0 if a[0] not in ("animate", "flow") else 8.0, budget * w / tw))
                 self.do(a, rt)
