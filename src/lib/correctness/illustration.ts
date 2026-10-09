@@ -9,7 +9,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { LibraryItem } from '../illustrations/types'
-import { tokens } from '../illustrations/search'
+import { isSchoolPick, tokens } from '../illustrations/search'
 import { blockedIllustrations, topicKey } from './blocklist'
 
 /** Topics where ranking alone has picked the wrong picture before: what the right one is titled, and what to avoid. */
@@ -51,12 +51,13 @@ export async function vetOrder<T extends { item: LibraryItem; score: number }>(h
   return out
 }
 
-const SCHOOL_SYN: Record<string, string[]> = { atom: ['atomic', 'bohr'], heart: ['cardiac'], lung: ['respiratory', 'pulmonary'], cell: ['cellular'], circuit: ['electric', 'electrical'], dna: ['helix'], lever: ['fulcrum'] }
+const SCHOOL_SYN: Record<string, string[]> = { atom: ['atomic', 'bohr'], heart: ['cardiac'], lung: ['respiratory', 'pulmonary'], cell: ['cellular'], circuit: ['electric', 'electrical'], dna: ['helix'], lever: ['fulcrum'], induction: ['induced', 'generator'], electromagnetic: ['induced', 'generator', 'magnetic'], motor: ['motor'], generator: ['generator'] }
 
 /** Does the item's title or keywords name the topic? (Most main words, or a school synonym for them.) */
 export function titleMatches(item: LibraryItem, topic: string): boolean {
   const main = tokens(topicKey(topic))
   if (!main.length) return true
+  if (isSchoolPick(topic, item.t)) return true
   const have = new Set(tokens(`${item.t} ${item.k} ${item.d ?? ''}`))
   const hit = main.filter(w => have.has(w) || (SCHOOL_SYN[w] ?? []).some(s => have.has(s)))
   const w = weak(topic)

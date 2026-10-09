@@ -83,9 +83,16 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
     setInput('')
     setMessages(m => [...m, { role: 'user', content: message }, { role: 'assistant', content: '', blocks: [], tools: [] }])
     scroll()
+    let finished = false, stalled = false, dropped = false
+    let idle: ReturnType<typeof setTimeout> | undefined
     const patch = (fn: (a: ChatMessage) => ChatMessage) => setMessages(m => { const c = [...m]; c[c.length - 1] = fn(c[c.length - 1]); return c })
     try {
-      const res = await fetch('/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, sessionId, lessonId }) })
+      // A healthy turn sends a line at least every 8 s (keep-alive pings while tools run). 40 s of silence means the
+      // connection or the server died: stop waiting instead of leaving a spinner running forever.
+      const ctl = new AbortController()
+      const kick = () => { clearTimeout(idle); idle = setTimeout(() => { stalled = true; ctl.abort() }, 40_000) }
+      kick()
+      const res = await fetch('/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, sessionId, lessonId }), signal: ctl.signal })
       if (!res.ok || !res.body) { const j = await res.json().catch(() => ({})); patch(a => ({ ...a, error: j.error ?? 'Could not reach GeniusMap.' })); return }
       const reader = res.body.getReader()
       const dec = new TextDecoder()
@@ -93,6 +100,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
+        kick()
         buf += dec.decode(value, { stream: true })
         let i: number
         while ((i = buf.indexOf('\n')) >= 0) {
@@ -116,12 +124,20 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
           else if (e.t === 'safety') { setSafety({ open: true, minor: e.minor }); setMessages(m => m.slice(0, -2)) }
           else if (e.t === 'limit') patch(a => ({ ...a, content: e.message }))
           else if (e.t === 'error') patch(a => (e.retryAfterMs ? { ...a, retry: { at: Date.now() + e.retryAfterMs, ms: e.retryAfterMs, text: message } } : { ...a, error: e.message }))
-          else if (e.t === 'done' && typeof e.remaining === 'number') setRemaining(e.remaining)
+          else if (e.t === 'done') { finished = true; if (typeof e.remaining === 'number') setRemaining(e.remaining) }
         }
       }
     } catch {
-      patch(a => ({ ...a, error: 'The connection dropped. Try again.' }))
+      dropped = true
     } finally {
+      clearTimeout(idle)
+      // The stream ended without "done": the turn was cut off. Running tool chips stop (never an endless spinner), and
+      // the learner is told plainly, keeping whatever visuals did arrive.
+      if (!finished) patch(a => ({
+        ...a,
+        tools: (a.tools ?? []).map(t => (t.state === 'start' ? { ...t, state: 'error' } : t)),
+        error: a.error ?? (a.retry ? null : stalled ? 'This answer stalled, so I stopped waiting. Ask again and I’ll pick it up.' : dropped ? 'The connection dropped. Try again.' : (a.content || (a.blocks ?? []).length) ? 'This answer was cut short. Ask me to carry on.' : 'Something went wrong while answering. Try again.'),
+      }))
       setBusy(false)
       scroll()
     }

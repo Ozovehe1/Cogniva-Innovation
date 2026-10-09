@@ -43,7 +43,12 @@ function blockNote(blocks: Block[]) {
  * Order of guards: session → distress (halts, helplines, nothing sent to any model) → daily ration →
  * injection screen (flagged = read-only + visual tools) → agent loop (≤6 steps, ≤3 writes).
  */
+/** Seconds of the function's budget the turn may use before it must wrap up (save + "done" well inside maxDuration). */
+const MODEL_BUDGET_MS = 200_000
+const HARD_STOP_MS = 265_000
+
 export async function POST(request: Request) {
+  const t0 = Date.now()
   const { supabase, profile } = await getSessionProfile()
   if (!profile) return Response.json({ error: 'Unauthorized' }, { status: 401 })
   const body = await request.json().catch(() => ({})) as { message?: unknown; sessionId?: unknown; lessonId?: unknown }
@@ -58,7 +63,9 @@ export async function POST(request: Request) {
   const stream = new ReadableStream<Uint8Array>({ start(c) { controller = c } })
   let closed = false
   const send = (e: ChatEvent) => { if (!closed) try { controller.enqueue(enc.encode(JSON.stringify(e) + '\n')) } catch { closed = true } }
-  const close = () => { if (!closed) { closed = true; try { controller.close() } catch { /* already closed */ } } }
+  const close = () => { if (!closed) { closed = true; clearInterval(beat); try { controller.close() } catch { /* already closed */ } } }
+  // A keep-alive line every 8 s while tools run, so the client can tell a slow turn from a dead connection.
+  const beat = setInterval(() => send({ t: 'ping' }), 8_000)
 
   const work = async () => {
     // Session (the learner's own).
@@ -100,6 +107,17 @@ export async function POST(request: Request) {
     send({ t: 'session', id: sessionId })
     const { data: hist } = await admin.from('chat_messages').select('role, content, blocks').eq('session_id', sessionId).order('id', { ascending: false }).limit(10)
     const { data: userRow } = await admin.from('chat_messages').insert({ session_id: sessionId, student_id: studentId, role: 'user', content: message }).select('id').maybeSingle()
+    // The answer is saved as it is made (each visual, then the final text), so a turn cut short still leaves what it
+    // showed in the chat instead of a question with no answer.
+    let answerId: number | null = null
+    let saving: Promise<unknown> = Promise.resolve()
+    const savePartial = () => {
+      saving = saving.then(async () => {
+        const row = { content: text.slice(0, 12000), blocks, meta: { partial: true, run: ctx.runId } }
+        if (answerId) await admin.from('chat_messages').update(row).eq('id', answerId)
+        else { const { data } = await admin.from('chat_messages').insert({ session_id: sessionId, student_id: studentId, role: 'assistant', ...row }).select('id').maybeSingle(); answerId = (data as { id: number } | null)?.id ?? null }
+      }).catch(() => undefined)
+    }
 
     // 3. Injection screen.
     const inj = await screenInjection(message)
@@ -134,6 +152,7 @@ export async function POST(request: Request) {
       const k = blocks.findIndex(x => x.id === v.block!.id && x.kind === v.block!.kind)
       if (k >= 0) blocks[k] = v.block; else blocks.push(v.block)
       send({ t: 'block', block: v.block })
+      savePartial()
     }
     const ctx: AgentCtx = {
       mode: 'chat', studentId, admin, userDb: supabase, runId: `chat_${randomUUID().slice(0, 12)}`, lessonId, sessionId, hasBoard: boardSteps > 0,
@@ -155,13 +174,15 @@ export async function POST(request: Request) {
       // Static instructions first and alone (provider prompt caching reuses that prefix; cached tokens do not count
       // against Groq limits); this learner's context comes after it, never cached across learners.
       // Inside a lesson the learner is mid-lesson: live priority; the Ask tab is the Ask class.
-      const r = await withLlmContext({ priority: lessonId ? 'live' : 'ask', learnerId: studentId, label: 'ask' }, () => runAgent({
+      let stopTimer: ReturnType<typeof setTimeout> | undefined
+      const hardStop = new Promise<never>((_, rej) => { stopTimer = setTimeout(() => rej(new TurnTimeout()), Math.max(10_000, t0 + HARD_STOP_MS - Date.now())) })
+      const r = await Promise.race([hardStop, withLlmContext({ priority: lessonId ? 'live' : 'ask', learnerId: studentId, label: 'ask' }, () => runAgent({
         ctx, system: CHAT_SYSTEM,
         messages: [{ role: 'system', content: `${context}${avoid ? `\n${avoid}` : ''}` }, ...compact.messages, { role: 'user', content: message }],
         onText: d => gate.push(d),
         onTool: (name, label, state) => send({ t: 'tool', name, label, state }),
-        deadline: Date.now() + 240_000,
-      }))
+        deadline: t0 + MODEL_BUDGET_MS,
+      }))]).finally(() => clearTimeout(stopTimer))
       gate.end()
       model = r.model
       if (compact.savedChars) void poolStore().count('saved_history_tokens', Math.round(compact.savedChars / 3.6))
@@ -171,6 +192,12 @@ export async function POST(request: Request) {
       if (!r.text.trim() && !blocks.length) { const d = 'I’m not sure how to help with that one. Could you say it another way?'; text += d; send({ t: 'text', d }) }
     } catch (err) {
       gate.end()
+      if (err instanceof TurnTimeout) {
+        // Out of time: keep what was shown and said, and close the turn properly (no endless spinner).
+        ctx.trace.push('turn: hard stop')
+        const d = `${text && !/\s$/.test(text) ? '\n\n' : ''}${blocks.length ? 'That took longer than it should, so I stopped here: what is above is ready to look at. Ask me to carry on if you want more.' : 'That took too long, so I stopped. Please ask again.'}`
+        text += d; send({ t: 'text', d })
+      }
       const busy = err instanceof AllModelsBusyError
       console.warn('Agent chat failed:', err instanceof Error ? err.message : err, ctx.trace.slice(-4))
       if (busy && !text && !blocks.length) {
@@ -181,7 +208,7 @@ export async function POST(request: Request) {
         send({ t: 'done' })
         return
       }
-      send({ t: 'error', message: busy ? 'GeniusMap is very busy right now (free AI quota). Try again in a minute.' : 'Something went wrong while answering. Try again.' })
+      else if (!(err instanceof TurnTimeout)) send({ t: 'error', message: busy ? 'GeniusMap is very busy right now (free AI quota). Try again in a minute.' : 'Something went wrong while answering. Try again.' })
     }
     // Sources from web search: one citation block at the end.
     if (ctx.searchUrls.size && /https?:\/\//.test(text) === false) {
@@ -189,7 +216,10 @@ export async function POST(request: Request) {
       const b: Block = { kind: 'sources', id: 'src', items }
       blocks.push(b); send({ t: 'block', block: b })
     }
-    await admin.from('chat_messages').insert({ session_id: sessionId, student_id: studentId, role: 'assistant', content: text.slice(0, 12000), blocks, meta: { model, run: ctx.runId, tools: ctx.trace.some(t => t.startsWith('tool ')) ? ctx.trace.filter(t => t.startsWith('tool ')).slice(0, 20) : undefined, trace: ctx.trace.length ? ctx.trace.filter(t => !t.startsWith('tool ')).slice(-12).map(t => t.slice(0, 200)) : undefined } })
+    await saving
+    const finalRow = { content: text.slice(0, 12000), blocks, meta: { model, run: ctx.runId, tools: ctx.trace.some(t => t.startsWith('tool ')) ? ctx.trace.filter(t => t.startsWith('tool ')).slice(0, 20) : undefined, trace: ctx.trace.length ? ctx.trace.filter(t => !t.startsWith('tool ')).slice(-12).map(t => t.slice(0, 200)) : undefined } }
+    if (answerId) await admin.from('chat_messages').update(finalRow).eq('id', answerId)
+    else await admin.from('chat_messages').insert({ session_id: sessionId, student_id: studentId, role: 'assistant', ...finalRow })
     await admin.from('chat_sessions').update({ updated_at: new Date().toISOString() }).eq('id', sessionId)
     send({ t: 'done', model: model ?? undefined, remaining: typeof n === 'number' ? Math.max(0, DAILY_MESSAGES() - n) : undefined })
 
@@ -211,3 +241,5 @@ export async function POST(request: Request) {
   void work().catch(err => { console.error('agent chat:', err); send({ t: 'error', message: 'Something went wrong. Try again.' }) }).finally(close)
   return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' } })
 }
+
+class TurnTimeout extends Error { constructor() { super('turn hard stop') } }

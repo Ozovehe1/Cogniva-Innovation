@@ -47,3 +47,4 @@ export type ChatEvent =
   | { t: 'limit'; message: string }
   | { t: 'error'; message: string; retryAfterMs?: number }
   | { t: 'done'; model?: string; remaining?: number }
+  | { t: 'ping' }

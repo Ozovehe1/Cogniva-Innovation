@@ -35,6 +35,10 @@ const SCHOOL_PICK: Record<string, { also: string[]; titles: string[] }> = {
   cell: { also: ['animal', 'school', 'basic', 'organelle'], titles: ['Animal cell structure en'] },
   dna: { also: ['double', 'helix', 'structure', 'base', 'pair', 'school', 'basic'], titles: ['DNA simple2', '201812 DNA double strand A'] },
   lung: { also: ['respiratory', 'system', 'human', 'breathing', 'school', 'basic'], titles: ['Respiratory system complete en', 'Lungs diagram detailed'] },
+  // Titles say "induced voltage"/"generator", never "induction", and the word search found an electromagnetic pump.
+  induction: { also: ['electromagnetic', 'magnetic', 'electromagnet', 'faraday', 'faraday\'s', 'law', 'current', 'induced', 'coil', 'magnet', 'field', 'changing', 'flux', 'emf', 'school', 'basic', 'simple', 'mutual', 'self'], titles: ['Induced voltage generator', 'Electric generator 3D with voltmeter'] },
+  generator: { also: ['electric', 'electrical', 'ac', 'dc', 'dynamo', 'simple', 'basic', 'school', 'electricity'], titles: ['Electric generator 3D with voltmeter', 'Induced voltage generator'] },
+  motor: { also: ['electric', 'electrical', 'dc', 'simple', 'basic', 'school', 'electricity'], titles: ['Rudimentary electric motor', 'Electric Motor with Slip Rings'] },
 }
 
 const norm = (w: string) => {
@@ -115,7 +119,19 @@ export async function searchLibrary(query: string, opts: { extra?: string[]; lim
     if (pick) { const r = pick.titles.indexOf(it.t); if (r >= 0) score = score * 0.5 + 40 - 8 * r }
     hits.push({ item: it, score, coverage })
   }
+  // The school pick is in even when its title shares no word with the query.
+  if (pick) pick.titles.forEach((title, r) => {
+    if (hits.some(h => h.item.t === title && h.coverage >= 0.66)) return
+    const i = L.items.findIndex(it => it.t === title)
+    if (i >= 0) { const k = hits.findIndex(h => h.item === L.items[i]); const h = { item: L.items[i], score: 40 - 8 * r, coverage: 1 }; if (k >= 0) hits[k] = h; else hits.push(h) }
+  })
   return hits.filter(h => h.coverage >= 0.66).sort((a, b) => b.score - a.score).slice(0, opts.limit ?? 5)
+}
+
+/** Hand-checked school picture for a query (its title is trusted by the title guard; the vision check still runs). */
+export function isSchoolPick(query: string, title: string) {
+  const p = schoolPick([...new Set(tokens(query).filter(w => !STOP.has(w)))])
+  return !!p && p.titles.includes(title)
 }
 
 /** The school-canon entry when the query is only a core topic plus generic school words. */

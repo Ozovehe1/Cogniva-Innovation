@@ -55,6 +55,8 @@ export const ABOUT_ME = /\b(my (path|lessons?|progress|plan|practice|mastery|str
 const VISUAL_TOOLS = ['find_illustration', 'interactive', 'simulate', 'animate_concept', 'plot', 'math_diagram', 'illustrate', 'draw_on_board']
 /** Blocks that count as a real picture or a moving figure (a board scene alone does not). */
 const RICH_BLOCKS = new Set(['interactive', 'sim', 'svg', 'clip', 'image'])
+/** On screen NOW: a clip still rendering is a promise of a visual (1-3 min away), not one the learner can look at. */
+const RICH_NOW = new Set(['interactive', 'sim', 'svg', 'image'])
 const VISUAL_PLAN_NOTE = `Teaching turn. First make your visual plan: what IS this idea (a real object, a process, an invisible field, a motion, a function, exact geometry, or working steps)? Then call the tool that SHOWS it best, before you explain:
 - real object / organism / device (heart, cell, leaf, motor, generator, solenoid, atom, circuit) -> find_illustration {topic: "electric motor"}
 - something that moves or changes that the learner can play with (a field around a wire, a magnet moving into a coil, charges drifting, a thrown ball, a tangent sliding along a curve) -> interactive (sliders + points that follow them, field {dx, dy} for a vector field) or simulate (an object moving along its path)
@@ -113,13 +115,16 @@ export async function runAgent(input: {
   if (pol.note) messages.splice(messages.length - 1, 0, { role: 'system', content: pol.note })
   if (teaching) ctx.trace.push(`visual-first: ${firstSpecs.map(t => t.def.name).join(',')}`)
   // A board scene counts when it carries a real picture (find_illustration places the library picture on the board).
-  const richShown = () => (ctx.blocks ?? []).some(b => RICH_BLOCKS.has(b.kind) || (b.kind === 'board' && (b as { steps?: { type?: string; shape?: { kind?: string } }[] }).steps?.some(st => st.type === 'draw' && st.shape?.kind === 'figure')))
+  const richShown = () => (ctx.blocks ?? []).some(b => RICH_NOW.has(b.kind) || (b.kind === 'clip' && (b as { status?: string }).status === 'done') || (b.kind === 'board' && (b as { steps?: { type?: string; shape?: { kind?: string } }[] }).steps?.some(st => st.type === 'draw' && st.shape?.kind === 'figure')))
+  // No tool may outlive the turn's budget (the route must still save the answer and send "done" before the function's
+  // maxDuration): each call gets its own cap or what is left of the budget, whichever is shorter.
+  const budget = (cap: number) => Math.max(4_000, Math.min(cap, (input.deadline ?? Date.now() + cap) - Date.now()))
   const runTool = async (name: string, args: Record<string, unknown>, tag: string) => {
     const spec = byName.get(name)
     if (!spec) return null
     input.onTool?.(name, spec.label, 'start')
     try {
-      const r = await withTimeout(spec.run(args, ctx), 25_000) as Record<string, unknown> | null
+      const r = await withTimeout(spec.run(args, ctx), budget(25_000)) as Record<string, unknown> | null
       const failed = !r || typeof r !== 'object' || 'error' in r
       input.onTool?.(name, spec.label, failed ? 'error' : 'done')
       ctx.trace.push(`tool ${name}: ${failed ? `error: ${String((r as { error?: unknown } | null)?.error ?? 'none').slice(0, 100)}` : 'ok'} (${tag})`)
@@ -144,6 +149,7 @@ export async function runAgent(input: {
   }
   let retried = false
   let forcedRetry = false
+  let clipCovered = false
   for (let step = 0; step < MAX_STEPS; step++) {
     const last = step === MAX_STEPS - 1
     const offer = (step === 0 || forcedRetry) && firstSpecs.length ? firstSpecs : offerAll
@@ -203,7 +209,7 @@ export async function runAgent(input: {
         input.onTool?.(call.name, spec.label, 'start')
         try {
           if (spec.tier === 'write' || spec.tier === 'confirm') ctx.writes++
-          result = await withTimeout(spec.run(args, ctx), spec.tier === 'visual' ? 60_000 : 45_000)
+          result = await withTimeout(spec.run(args, ctx), budget(spec.tier === 'visual' ? 40_000 : 30_000))
           // A visual the correctness guard held back: the model learns why and redraws it.
           if (ctx.guardIssues?.length) {
             const issues = ctx.guardIssues.splice(0)
@@ -220,6 +226,14 @@ export async function runAgent(input: {
       const err = result && typeof result === 'object' && 'error' in (result as object) ? String((result as { error: unknown }).error).slice(0, 120) : null
       ctx.trace.push(`tool ${call.name}: ${err ? `error: ${err}` : 'ok'}`)
       messages.push({ role: 'tool', toolCallId: call.id, name: call.name, content: JSON.stringify(result ?? null).slice(0, 7000) })
+    }
+    // A clip only arrives in 1-3 minutes: when it is this turn's only visual so far, the app shows the hint's picture or
+    // live figure right away, beside the rendering card (the model is told, so it can point at it).
+    if (teaching && !clipCovered && (ctx.blocks ?? []).some(b => b.kind === 'clip') && !richShown()) {
+      clipCovered = true
+      ctx.trace.push('clip-only: showing a live visual now')
+      const say = await fallbackVisual()
+      if (say) messages.push({ role: 'user', content: `(Note from the app, not the learner) The clip is still rendering, so the app is already showing this beside it: ${say} Explain using what is on screen now; mention the clip only as "coming".` })
     }
     if (text && !/\s$/.test(text)) { text += '\n\n'; input.onText?.('\n\n') }
   }
