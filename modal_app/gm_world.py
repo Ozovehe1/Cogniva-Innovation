@@ -1494,7 +1494,7 @@ class World:
             d = set(self._degenerate(X, vals))
             degen_all = d if degen_all is None else (degen_all & d)
         for label, ov, vals, X in solved:
-            for m in self.constraint_report(X, vals) + self.checks_report(X, vals) + [x for x in self._degenerate(X, vals) if x in (degen_all or set())] + self._shape_report(X, vals):
+            for m in self.constraint_report(X, vals) + self.checks_report(X, vals) + [x for x in self._degenerate(X, vals) if x in (degen_all or set())] + self._shape_report(X, vals) + self._tangent_report(X, vals):
                 key = m.split(" fails")[0].split(" is not satisfied")[0][:120]
                 if key in seen_kind:
                     seen_kind[key][1] += 1
@@ -1564,6 +1564,47 @@ class World:
                 return None
             return self.pos(o["from"], X, vals), self.pos(o["to"], X, vals)
         return None
+
+    def _tangent_report(self, X, vals):
+        """A line/segment named or labelled a tangent that starts at a point of a drawn function must have the function's
+        slope there, measured in the axes' units (a world-unit offset on unevenly scaled axes draws the wrong slope)."""
+        out = []
+        funcs = [(fid, f) for fid, f in self.objs.items() if f["type"] == "function" and f.get("on") in self.objs]
+        if not funcs:
+            return out
+        for oid, o in self.objs.items():
+            if o["type"] not in ("line", "segment", "ray") or not o.get("from") or not isinstance(o.get("to"), str):
+                continue
+            name = f"{oid} {o.get('label', '')} {o.get('tex_label', '')}".lower()
+            if not re.search(r"\btan(gent)?\b|tangent|^tan", name):
+                continue
+            try:
+                A, B = self.pos(o["from"], X, vals), self.pos(o["to"], X, vals)
+            except Exception:  # noqa: BLE001
+                continue
+            for fid, f in funcs:
+                m = self._axes_map(f["on"], X, vals)
+                ux, uy = _axes_units(self.objs[f["on"]])
+                org = m(0, 0)
+                for P, Q in ((A, B), (B, A)):
+                    x0, y0 = (P[0] - org[0]) / ux, (P[1] - org[1]) / uy
+                    try:
+                        fy = self.fn_eval(fid, x0, vals)
+                        if abs(fy - y0) * uy > 0.03:
+                            continue
+                        want = self.fn_deriv(fid, x0, vals)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    dx, dy = (Q[0] - P[0]) / ux, (Q[1] - P[1]) / uy
+                    if abs(dx) < 1e-9:
+                        continue
+                    got = dy / dx
+                    if abs(got - want) > 0.02 * max(1.0, abs(want)):
+                        out.append(f"{oid} is drawn as a tangent to {fid} at x = {x0:.3g}, but its slope on the axes is {got:.3g}, not "
+                                   f"{want:.3g}: use [\"tangent\", \"{o['from']}-{o['to']}\", \"{fid}\", x0] or place its second point "
+                                   f"on the axes (point on: {f['on']}, at: [x0 + 1, y0 + slope])")
+                    break
+        return out
 
     def _shape_report(self, X, vals):
         """Deterministic proof-shape checks: what the scene NAMES must be what the solver BUILT.

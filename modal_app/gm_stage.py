@@ -1057,6 +1057,8 @@ class Stage:
             if not o or o["type"] != "label" or not o.get("for") or oid not in self.mobs or oid in skip:
                 continue
             m = self.mobs[oid]
+            if getattr(m, "_tiny", False):  # faded with its zero-length arrow; it comes back when the arrow grows
+                continue
             boxes, pts = self._obstacles(exclude=(oid,), target=str(o["for"]))
             cur = self._score(m, boxes, pts)
             if cur < 3:
