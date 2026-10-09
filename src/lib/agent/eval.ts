@@ -17,7 +17,7 @@ import { compute } from './compute'
 import { ensureIds, opsToSteps, sceneOf } from './board-scene'
 import { checkScene } from './board-review'
 import { boardSnapshotPng } from './board-render'
-import { checkSubstance, cleanSubstance, renderMathDiagram, type DiagramLibrary } from './math-diagram'
+import { checkSubstance, cleanSubstance, renderMathDiagram, repairSubstance, type DiagramLibrary } from './math-diagram'
 import type { Step } from '../lesson-schema'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
@@ -114,7 +114,7 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
 
 /** Spec checks for tool calls whose arguments can be validated without running them. */
 const ARG_CHECKS: Record<string, (a: Record<string, unknown>) => string | null> = {
-  math_diagram: a => { const e = checkSubstance(String(a.library) as DiagramLibrary, cleanSubstance(String(a.substance ?? '').replace(/\\n/g, '\n').replace(/;\s*/g, '\n')).substance); return e.length ? e.join('; ') : null },
+  math_diagram: a => { const lib = String(a.library) as DiagramLibrary; const e = checkSubstance(lib, repairSubstance(lib, cleanSubstance(String(a.substance ?? '').replace(/\\n/g, '\n').replace(/;\s*/g, '\n')).substance)); return e.length ? `${e.join('; ')} <- ${String(a.substance).slice(0, 160)}` : null },
 }
 
 /* ───────────── Model-based ───────────── */

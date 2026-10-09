@@ -435,6 +435,37 @@ export function cleanSubstance(src: string): { substance: string; errors: string
   return { substance: ok.join('\n'), errors }
 }
 
+/**
+ * Fix the small slips models make before checking: a name used in a relation but never declared gets declared with the
+ * type the predicate expects; a name that differs only in case from a declared one is renamed; labels of unknown names go.
+ */
+export function repairSubstance(library: DiagramLibrary, substance: string): string {
+  const lib = LIBRARY[library]
+  if (!lib) return substance
+  const types = new Set([...lib.domain.matchAll(/^type\s+(\w+)/gm)].map(m => m[1]))
+  const preds = new Map([...lib.domain.matchAll(/^predicate\s+(\w+)\(([^)]*)\)/gm)].map(m => [m[1], m[2].split(',').map(x => x.trim().split(/\s+/)[0])]))
+  const declared = new Map<string, string>()
+  const lines = substance.split('\n').map(l => l.trim()).filter(Boolean)
+  for (const l of lines) { const m = l.match(/^(\w+)\s+([\w\s,]+)$/); if (m && types.has(m[1])) for (const n of m[2].split(',').map(x => x.trim()).filter(Boolean)) declared.set(n, m[1]) }
+  const lower = new Map([...declared.keys()].map(n => [n.toLowerCase(), n]))
+  const fixName = (n: string) => (declared.has(n) ? n : lower.get(n.toLowerCase()) ?? n)
+  const extra: string[] = []
+  const out = lines.map(l => {
+    const m = l.match(/^(\w+)\(([^)]*)\)$/)
+    if (m && preds.has(m[1])) {
+      const sig = preds.get(m[1])!
+      const args = m[2].split(',').map(x => fixName(x.trim()))
+      args.forEach((a, i) => { if (/^[A-Za-z_]\w*$/.test(a) && !declared.has(a) && sig[i]) { declared.set(a, sig[i]); lower.set(a.toLowerCase(), a); extra.push(`${sig[i]} ${a}`) } })
+      return `${m[1]}(${args.join(', ')})`
+    }
+    const lb = l.match(/^Label\s+(\w+)\s+(".*")$/)
+    if (lb) return `Label ${fixName(lb[1])} ${lb[2]}`
+    return l
+  })
+  // Labels may come before the relation that declares their name: resolve them after.
+  return [...extra, ...out].filter(l => { const lb = l.match(/^Label\s+(\w+)\s/); return !lb || declared.has(lb[1]) }).join('\n')
+}
+
 /** Check a Substance program against a vetted library's Domain: known types and predicates, right arity, declared names. */
 export function checkSubstance(library: DiagramLibrary, substance: string): string[] {
   const lib = LIBRARY[library]
@@ -473,12 +504,13 @@ export async function renderMathDiagram(library: DiagramLibrary, substanceSrc: s
   if (!lib) throw new Error(`unknown library "${library}" (sets, geometry, graph, vectors)`)
   const { substance, errors } = cleanSubstance(substanceSrc)
   if (!substance) throw new Error(errors.join('; '))
-  const bad = checkSubstance(library, substance)
+  const fixed = repairSubstance(library, substance)
+  const bad = checkSubstance(library, fixed)
   if (bad.length) throw new SubstanceError(bad.slice(0, 6).join('; '))
   const t0 = Date.now()
-  const hasLabels = /^AutoLabel\b/m.test(substance)
-  const program = hasLabels ? substance : `AutoLabel All\n${substance}`
-  const seed = createHash('sha1').update(library + substance).digest('hex').slice(0, 10)
+  const hasLabels = /^AutoLabel\b/m.test(fixed)
+  const program = hasLabels ? fixed : `AutoLabel All\n${fixed}`
+  const seed = createHash('sha1').update(library + fixed).digest('hex').slice(0, 10)
   const P = await import('@penrose/core')
   return withDom(async () => {
     let last = ''
