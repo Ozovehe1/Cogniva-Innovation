@@ -256,9 +256,13 @@ function niceStep(raw: number) {
 /* ───────────── Rendered animation (async) ───────────── */
 
 function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
-  const [state, setState] = useState<{ status: string; url: string | null }>({ status: block.status, url: block.url ?? null })
+  const [state, setState] = useState<{ status: string; url: string | null; verified?: boolean }>({ status: block.status, url: block.url ?? null })
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
+    // A finished clip from history is asked once whether the scene verifier checked it.
+    if (state.status === 'done' && state.verified === undefined) {
+      fetch(`/api/agent/clip/${block.jobId}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(j => { if (j) setState(s => ({ ...s, verified: !!j.verified })) }).catch(() => {})
+    }
     if (state.status !== 'rendering') return
     let stop = false
     const started = Date.now()
@@ -267,7 +271,7 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
       if (stop) return
       try {
         const r = await fetch(`/api/agent/clip/${block.jobId}`, { cache: 'no-store' })
-        if (r.ok) { const j = await r.json(); if (j.status !== 'rendering') { setState({ status: j.status, url: j.url }); return } }
+        if (r.ok) { const j = await r.json(); if (j.status !== 'rendering') { setState({ status: j.status, url: j.url, verified: !!j.verified }); return } }
       } catch { /* retry */ }
       if (Date.now() - started < 12 * 60_000) setTimeout(poll, 6000)
       else setState(s => ({ ...s, status: 'failed' }))
@@ -288,6 +292,8 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
           )
           : <ClipSkeleton elapsed={elapsed} />}
       {block.caption && <ClipCaption text={block.caption} />}
+      {/* Honest status (correctness guard): only a scene the deterministic verifier passed counts as checked. */}
+      {state.status === 'done' && state.verified === false && <p className="border-t border-line px-4 py-2 text-[12.5px] text-muted">Not machine-checked. If something looks off, tap Report a mistake.</p>}
     </figure>
   )
 }
