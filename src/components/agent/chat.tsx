@@ -1,11 +1,13 @@
 'use client'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, Loader2, Plus, Sparkles, X } from 'lucide-react'
-import { RichText } from '@/components/rich-text'
+import { ArrowUp, Loader2, Plus } from 'lucide-react'
 import { SafetyPause } from '@/components/safety-pause'
 import { cx } from '@/components/ui'
 import { AgentBlock } from './blocks'
 import { BusyRetry } from './busy-retry'
+import { AgentText } from './agent-text'
+import { AskEmpty } from './ask-empty'
+import { ToolChips } from './tool-chips'
 import { genie } from '@/components/genie/presence'
 import { syntheticMouth } from '@/components/genie/lipsync'
 import type { Block, ChatEvent } from '@/lib/agent/types'
@@ -41,39 +43,6 @@ function ReportableBlock({ block, sessionId, done, onRetry }: { block: Block; se
             onRetry={r => onRetry(r.retry?.prompt ?? retryFor(meta.what, r.category))} />
         </div>
       )}
-    </div>
-  )
-}
-
-const SUGGESTIONS = [
-  'Explain how a ball thrown up comes back down, on the board',
-  'What did we cover in my last lesson?',
-  'Give me a quick practice set on my current topic',
-  'Show me a simulation of a pendulum',
-]
-
-/** Light markdown for the agent's text: paragraphs, bullet and numbered lists, **bold**, links; maths through RichText (KaTeX). */
-function AgentText({ text }: { text: string }) {
-  // Models write maths as \( \) and \[ \] too: normalise to $ … $ for RichText.
-  const norm = text.replace(/\r/g, '').replace(/\\\[([\s\S]+?)\\\]/g, (_, m: string) => `$${m.trim()}$`).replace(/\\\(([\s\S]+?)\\\)/g, (_, m: string) => `$${m.trim()}$`)
-  const blocks = norm.split(/\n{2,}/)
-  const inline = (s: string, k: string) => {
-    const parts = s.split(/(\*\*[^*]+\*\*|https?:\/\/[^\s)\]]+)/g)
-    return parts.map((p, i) => p.startsWith('**') && p.endsWith('**') ? <strong key={`${k}${i}`} className="font-semibold text-ink"><RichText text={p.slice(2, -2)} /></strong>
-      : /^https?:\/\//.test(p) ? <a key={`${k}${i}`} href={p} target="_blank" rel="noopener noreferrer nofollow" className="break-all text-accent underline underline-offset-2">{p.replace(/^https?:\/\/(www\.)?/, '').slice(0, 48)}</a>
-      : <RichText key={`${k}${i}`} text={p.replace(/^#{1,4}\s+/, '')} />)
-  }
-  return (
-    <div className="space-y-2.5 text-[15.5px] leading-[1.6] text-ink">
-      {blocks.map((b, i) => {
-        const lines = b.split('\n').filter(l => l.trim())
-        if (lines.length && lines.every(l => /^\s*([-*•]|\d+[.)])\s+/.test(l))) {
-          const ordered = /^\s*\d/.test(lines[0])
-          const L = ordered ? 'ol' : 'ul'
-          return <L key={i} className={cx('space-y-1 pl-5', ordered ? 'list-decimal' : 'list-disc marker:text-faint')}>{lines.map((l, j) => <li key={j}>{inline(l.replace(/^\s*([-*•]|\d+[.)])\s+/, ''), `${i}.${j}.`)}</li>)}</L>
-        }
-        return <p key={i}>{lines.map((l, j) => <React.Fragment key={j}>{j > 0 && <br />}{inline(l, `${i}.${j}.`)}</React.Fragment>)}</p>
-      })}
     </div>
   )
 }
@@ -173,33 +142,16 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
     <div className={cx('flex flex-col', compact ? 'h-full' : 'min-h-[calc(100dvh-180px)]')}>
       <div className={cx('flex-1', compact && 'overflow-y-auto overscroll-contain px-4 pt-3')}>
         {messages.length === 0 ? (
-          <div className={cx('mx-auto max-w-xl', compact ? 'py-4' : 'py-8 md:py-12')}>
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft text-accent"><Sparkles className="h-5 w-5" strokeWidth={1.75} /></span>
-            <h2 className="mt-4 font-display text-[28px] leading-tight text-ink">{lessonId ? 'Stuck on something in this lesson?' : 'What do you want to understand?'}</h2>
-            <p className="mt-2 text-[15px] leading-relaxed text-muted">Ask anything. GeniusMap explains on the board, draws diagrams, builds simulations and checks the maths. It knows your lessons and your path.</p>
-            <div className="mt-6 grid gap-2">
-              {(lessonId ? ['Explain this step another way, on the board', 'Give me one more example', 'Quiz me on this lesson'] : SUGGESTIONS).map(s => (
-                <button key={s} type="button" onClick={() => send(s)} className="rounded-[12px] border border-line bg-surface px-4 py-3 text-left text-[14.5px] text-ink shadow-[var(--shadow-card)] transition-colors hover:border-line-strong">{s}</button>
-              ))}
-            </div>
-          </div>
+          <AskEmpty inLesson={!!lessonId} compact={compact} onPick={t => void send(t)} />
         ) : (
           <div className="mx-auto max-w-[760px] space-y-6 pb-4">
             {messages.map((m, i) => m.role === 'user' ? (
               <div key={i} className="flex justify-end"><div className="max-w-[85%] whitespace-pre-wrap rounded-[16px] rounded-br-[6px] bg-accent px-4 py-2.5 text-[15px] leading-relaxed text-white">{m.content}</div></div>
             ) : (
               <div key={i} className="space-y-3">
-                {(m.tools ?? []).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {dedupe(m.tools ?? []).map((t, k) => (
-                      <span key={k} className={cx('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px]', t.state === 'error' ? 'border-clay-line text-clay' : 'border-line text-muted')}>
-                        {t.state === 'start' ? <Loader2 className="h-3 w-3 animate-spin" /> : t.state === 'error' ? <X className="h-3 w-3" /> : <Check className="h-3 w-3 text-accent" strokeWidth={2.5} />}{t.label}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <ToolChips tools={m.tools ?? []} />
                 {m.content && m.flagged && !revealed.has(i) ? <FlaggedNotice what="this answer" onRetry={() => void send(retryFor('answer', m.flagged?.category))} onShow={() => setRevealed(r => new Set(r).add(i))} />
-                  : m.content ? <AgentText text={m.content} /> : busy && i === messages.length - 1 && !(m.blocks ?? []).length ? <p className="flex items-center gap-2 text-[14px] text-muted"><Loader2 className="h-4 w-4 animate-spin" />Thinking…</p> : null}
+                  : m.content ? <AgentText text={m.content} /> : busy && i === messages.length - 1 && !(m.blocks ?? []).length ? <p className="flex items-center gap-2 text-[14px] text-muted" role="status"><span className="flex gap-1" aria-hidden>{[0, 1, 2].map(d => <span key={d} className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent/70" style={{ animationDelay: `${d * 180}ms` }} />)}</span>Thinking…</p> : null}
                 {m.content && !m.flagged && sessionId && !(busy && i === messages.length - 1) && (
                   <div className="-my-2 -ml-2.5">
                     <ReportButton what="this answer" payload={() => ({ surface: 'ask', sessionId, text: m.content })}
@@ -212,7 +164,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
                 {m.error && <p className="rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 text-[14px] text-danger">{m.error}</p>}
               </div>
             ))}
-            <div ref={endRef} />
+            <div ref={endRef} className={compact ? 'scroll-mb-4' : 'scroll-mb-[calc(152px+env(safe-area-inset-bottom))] md:scroll-mb-28'} />
           </div>
         )}
       </div>
@@ -236,10 +188,4 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
       <SafetyPause open={safety.open} minor={safety.minor} onContinue={() => setSafety(s => ({ ...s, open: false }))} />
     </div>
   )
-}
-
-function dedupe(tools: { name: string; label: string; state: string }[]) {
-  const out: typeof tools = []
-  for (const t of tools) { const k = out.findIndex(x => x.label === t.label); if (k >= 0) out[k] = t; else out.push(t) }
-  return out
 }
