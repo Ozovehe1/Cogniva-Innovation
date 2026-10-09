@@ -230,6 +230,10 @@ def normalize(ir) -> dict:
             o["id"] = f"{o['type']}{n}"
             used.add(o["id"])
     _bind_axes(ir)
+    # 'light' is a fill colour: as an icon, stroke or text colour it vanishes on the paper background
+    for o in ir["objects"]:
+        if isinstance(o, dict) and str(o.get("color", "")).lower() == "light" and o.get("type") not in ("box", "polygon", "area", "cells", "circle"):
+            o["color"] = "muted"
     cons = []
     for c in ir["constraints"]:
         if isinstance(c, dict):
