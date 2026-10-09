@@ -312,7 +312,8 @@ async function geminiChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) 
   const timer = firstByteTimer(onText ? firstMs : Math.max(firstMs, 25_000), 90_000)
   const config: Record<string, unknown> = {
     abortSignal: timer.signal,
-    maxOutputTokens: Math.max(req.maxTokens ?? 1200, 1024),
+    // Gemini 3 flash thinks before answering and the thoughts count as output: leave room so it does not stop at MAX_TOKENS empty.
+    maxOutputTokens: Math.max(req.maxTokens ?? 1200, 1024) + (model.startsWith('gemini-3') && !/lite/.test(model) ? 1024 : 0),
     temperature: req.temperature ?? 0.5,
     ...(system ? { systemInstruction: system } : {}),
     ...(model.startsWith('gemini-3') ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : model.startsWith('gemini-2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {}),

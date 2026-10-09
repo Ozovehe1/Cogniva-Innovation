@@ -51,7 +51,9 @@ dropped. Limits are overridable (`GROQ_RPM/RPD/TPM/TPD`).
   a dead end. Background is shed first: `PoolDeferredError` → `GeminiQuotaError` (drafting pauses and resumes via
   the existing tick) or `AllModelsBusyError` (Director uses its rule-based fallback).
 - **Fast failover:** live/ask attempts get 14 s (Groq) / 22 s (Gemini) to the first token, then the next slot;
-  once tokens stream the call may run on (90 s cap). Text already streamed is never re-answered.
+  once tokens stream the call may run on (90 s cap). Text already streamed is never re-answered. After 2 real
+  failures in a rung, learner traffic moves down the ladder instead of grinding through a failing tier. A Gemini
+  "high demand" 503 rests that model on every key for 20 s (it is model-wide on Google's side).
 - **Fair share:** per learner 30K tokens/minute on any slot and 150K Groq tokens/day (background: half), keyed
   by learner id (`u:<id>`, `g:<id>`).
 - **HARD RULE kept:** nothing caches generated content. Only provider-side prompt caching of the static
@@ -62,18 +64,19 @@ dropped. Limits are overridable (`GROQ_RPM/RPD/TPM/TPD`).
 
 `node scripts/llm-pool-loadtest.mjs <learners> <minutes> <after|before>` — 30 virtual minutes from 14:00 WAT, fresh
 day, per learner-minute: 0.3 live lesson calls, 0.6 Ask chat steps, 0.5 next-beat drafts (Ask class), 0.6 drafting-ahead
-beats + 0.08 Director + 0.05 critiques (background). Faults: one Gemini key 503s 10 %, qwen times out 20 %, Groq org 1
-fully rate-limited for 3 minutes mid-run. "before" = the v1 key set (1 Groq, 4 Gemini) with no reserve/pacing,
+beats + 0.08 Director + 0.05 critiques (background). Faults: one Gemini key 500s on 10 % of calls, gemini-3.8-flash
+"high demand" 503 on every key for 2 minutes, qwen first-token timeout on 20 % of calls, Groq org 1 fully rate-limited
+for 3 minutes mid-run. "before" = the v1 key set (1 Groq, 4 Gemini) with no reserve/pacing,
 routed by the new router (the real v1 had no shared Gemini budget either, so it did worse than this).
 Raw output: `docs/llm-pool/loadtest-results.txt`.
 
 | Learners at once | after: live ok | after: Ask ok (busy) | after: Ask trimmed/lighter | after: background done / deferred | reserve held (min) | before: live ok | before: Ask ok |
 |---|---|---|---|---|---|---|---|
-| 20 | 184/184 | 727/727 (0) | 0 / 0 | 477 / 35 | 2 | 203/203 | 765/765 |
-| 40 | 433/433 | 1458/1458 (0) | 303 / 275 | 651 / 289 | 2 | 389/389 | 1465/1465 |
-| 60 | 655/655 | 2192/2192 (0) | 705 / 670 | 625 / 811 | 2 | 616/647 (31 busy) | 2004/2156 (152 busy) |
-| 80 | 833/833 | 2861/2888 (27) | 1098 / 1058 | 639 / 1352 | 0 (18 of 360 ticks) | 638/832 (194 busy) | 2174/3013 (839 busy) |
-| 100 | 1045/1082 (37) | 3486/3709 (223) | 1439 / 1410 | 601 / 2369 | 0 | — | — |
+| 20 | 217/217 | 701/701 (0) | 2 / 0 | 448 / 30 | 2 | 205/205 | 720/720 |
+| 40 | 448/448 | 1465/1465 (0) | 311 / 278 | 629 / 275 | 2 | 421/421 | 1472/1472 |
+| 60 | 590/590 | 2190/2190 (0) | 722 / 689 | 645 / 776 | 2 | 579/619 (40 busy) | 2012/2150 (138 busy) |
+| 80 | 831/831 | 2862/2873 (11) | 1078 / 1047 | 631 / 1277 | 1 (2 of 360 ticks) | 585/786 (201 busy) | 2182/3027 (845 busy) |
+| 100 | 1035/1060 (25) | 3390/3618 (228) | 1353 / 1327 | 603 / 1828 | 0 | — | — |
 
 Background never ran on a reserved slot in any run (`bgOnReserved` 0).
 

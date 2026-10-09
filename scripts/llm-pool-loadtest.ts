@@ -2,8 +2,9 @@
  * Load test for the LLM pool with MOCKED providers that enforce the real free-tier limits (Groq: 30 RPM / 1K RPD /
  * 8K TPM / 200K TPD per model per org; Gemini: flash 5 RPM / 20 RPD, flash-lite 15 RPM / 500 RPD, per project).
  * Virtual clock: N concurrent learners for M minutes; each learner-minute makes live, Ask and background calls.
- * Also injects faults: one Gemini key returns 503 on 10 % of calls, one Groq model is slow (first token > timeout)
- * on 20 % of calls, and a whole Groq org gets rate-limited for 3 minutes mid-run.
+ * Also injects faults: one Gemini key returns 500 on 10 % of calls, gemini-3.8-flash is overloaded (503 high demand,
+ * every key) for 2 minutes, qwen is slow (first token > timeout) on 20 % of calls, and a whole Groq org is
+ * rate-limited for 3 minutes mid-run.
  *
  * Run:  node scripts/llm-pool-loadtest.mjs [learners=20] [minutes=30] [mode=after|before]
  * (the .mjs wrapper loads this file through jiti). No network, no database.
@@ -44,6 +45,7 @@ export async function simulate(learners: number, minutes: number, mode: Mode, se
   // Provider-side truth (independent of the pool's own accounting).
   const prov = new Map<string, { m: string; mReq: number; mTok: number; dReq: number; dTok: number }>()
   const orgDown = { until: 0 }
+  const overload = { from: Date.parse(startUtc) + (minutes * 60_000) / 3 }
   let rnd = seed
   const rand = () => { rnd = (rnd * 1103515245 + 12345) % 2147483648; return rnd / 2147483648 }
 
@@ -67,7 +69,9 @@ export async function simulate(learners: number, minutes: number, mode: Mode, se
     const cached = s.provider === 'groq' && /gpt-oss/.test(s.model) ? Math.round(input * 0.35) : 0
     const counted = input + output - cached
     if (p.mReq + 1 > L.rpm || p.mTok + counted > L.tpm || p.dReq + 1 > L.rpd || p.dTok + counted > L.tpd) { res.providerRejects++; throw new Error(`${s.provider} 429 RESOURCE_EXHAUSTED quota (try again in 12s)`) }
-    if (s.provider === 'gemini' && s.key === 3 && rand() < 0.1) throw new Error('503 UNAVAILABLE: model overloaded')
+    if (s.provider === 'gemini' && s.key === 3 && rand() < 0.1) throw new Error('500 INTERNAL: an internal error has occurred')
+    // Google-side "high demand" on one model (all keys) for 2 minutes, a third of the way in.
+    if (s.model === 'gemini-3.8-flash' && t >= overload.from && t < overload.from + 120_000 && rand() < 0.7) throw new Error('503 UNAVAILABLE: This model is currently experiencing high demand.')
     if (s.model.includes('qwen') && rand() < 0.2) throw new Error(`timed out waiting ${Math.round(o.timeoutMs / 1000)} s for the first token`)
     p.mReq++; p.mTok += counted; p.dReq++; p.dTok += counted
     res.tokens.billed += input + output; res.tokens.cached += cached

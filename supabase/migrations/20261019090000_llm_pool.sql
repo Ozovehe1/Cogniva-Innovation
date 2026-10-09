@@ -70,7 +70,7 @@ create table if not exists llm_slot_health (
 );
 alter table llm_slot_health enable row level security;
 
--- p_kind: ok | quota | missing | error | timeout
+-- p_kind: ok | quota | missing | overload (provider-wide 503, short rest) | error | timeout
 create or replace function public.llm_slot_report(
   p_slot text, p_kind text, p_latency_ms integer default null, p_cooldown_ms integer default null,
   p_in integer default 0, p_out integer default 0, p_cached integer default 0, p_error text default null
@@ -83,7 +83,7 @@ begin
       err_ewma = err_ewma * 0.9, tokens_in = tokens_in + coalesce(p_in, 0), tokens_out = tokens_out + coalesce(p_out, 0),
       tokens_cached = tokens_cached + coalesce(p_cached, 0), last_ok_at = now(), updated_at = now()
     where slot = p_slot;
-  elsif p_kind in ('quota', 'missing') then
+  elsif p_kind in ('quota', 'missing', 'overload') then
     update llm_slot_health set quota_count = quota_count + case when p_kind = 'quota' then 1 else 0 end,
       cooldown_until = greatest(coalesce(cooldown_until, now()), now() + make_interval(secs => coalesce(p_cooldown_ms, 30000) / 1000.0)),
       last_error = left(p_error, 300), updated_at = now()

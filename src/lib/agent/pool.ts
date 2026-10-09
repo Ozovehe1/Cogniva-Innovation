@@ -156,7 +156,7 @@ export interface SlotState {
   tokens_in: number; tokens_out: number; tokens_cached: number
   last_error: string | null; last_ok_at: string | null
 }
-export type ReportKind = 'ok' | 'quota' | 'missing' | 'error' | 'timeout'
+export type ReportKind = 'ok' | 'quota' | 'missing' | 'overload' | 'error' | 'timeout'
 export interface PoolStore {
   state(slots: { id: string; day: string }[]): Promise<Map<string, SlotState>>
   take(a: { slot: string; tokens: number; limits: Limits; day: string; dayCap: number; user?: string | null; userTpm?: number; userTpd?: number }): Promise<boolean>
@@ -207,7 +207,7 @@ export class MemoryStore implements PoolStore {
       h.consecutive_fail = 0; h.breaker_until = null; h.ok_count++
       h.lat_ewma_ms = h.lat_ewma_ms == null ? (r.latencyMs ?? null) : h.lat_ewma_ms * 0.8 + (r.latencyMs ?? h.lat_ewma_ms) * 0.2
       h.err_ewma *= 0.9; h.tokens_in += r.input ?? 0; h.tokens_out += r.output ?? 0; h.tokens_cached += r.cached ?? 0; h.last_ok_at = new Date(now).toISOString()
-    } else if (kind === 'quota' || kind === 'missing') {
+    } else if (kind === 'quota' || kind === 'missing' || kind === 'overload') {
       if (kind === 'quota') h.quota_count++
       const until = now + (r.cooldownMs ?? 30_000)
       h.cooldown_until = new Date(Math.max(until, h.cooldown_until ? Date.parse(h.cooldown_until) : 0)).toISOString(); h.last_error = r.error ?? null
@@ -475,7 +475,7 @@ export interface RunOptions {
   maxAttempts?: number
 }
 
-export function classify(err: unknown): { kind: ReportKind; cooldownMs?: number; keyWide?: boolean } {
+export function classify(err: unknown): { kind: ReportKind; cooldownMs?: number; keyWide?: boolean; modelWide?: boolean } {
   const msg = err instanceof Error ? err.message : String(err)
   if (/API key not valid|API_KEY_INVALID|invalid[_ ]api[_ ]key|Invalid API Key|\b401\b|organization_restricted|PERMISSION_DENIED.*(key|project)/i.test(msg)) return { kind: 'missing', cooldownMs: 3600_000, keyWide: true }
   if (/\b429\b|rate.?limit|RESOURCE_EXHAUSTED|quota|Too Many Requests/i.test(msg)) {
@@ -483,6 +483,8 @@ export function classify(err: unknown): { kind: ReportKind; cooldownMs?: number;
     const daily = /PerDay|per day|daily|RPD|TPD|tokens per day|requests per day/i.test(msg)
     return { kind: 'quota', cooldownMs: daily ? 15 * 60_000 : Math.min(120_000, m ? Number(m[1]) * 1000 + 500 : 30_000) }
   }
+  // Google's "high demand" 503 is about the model, not the key: rest that model on every key for a short while.
+  if (/\b503\b|UNAVAILABLE|overloaded|high demand/i.test(msg)) return { kind: 'overload', cooldownMs: 20_000, modelWide: true }
   if (/\b404\b|NOT_FOUND|not found|does not exist|decommissioned|not supported|unsupported model/i.test(msg)) return { kind: 'missing', cooldownMs: 6 * 3600_000 }
   if (/timed? ?out|aborted|AbortError|TimeoutError|deadline/i.test(msg)) return { kind: 'timeout' }
   return { kind: 'error' }
@@ -512,8 +514,11 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
     const est = rung.trimmed && o.trimmedEstTokens ? o.trimmedEstTokens : o.estTokens
     const plan = await route({ purpose: o.purpose, priority, estTokens: est, providers: o.providers, models: o.models, minQuality: rung.lighter ? 0 : undefined, preferFast: o.preferFast })
     lastPlan = plan
+    let rungFailures = 0
     for (const c of plan.ordered) {
       if (tried.has(c.slot.id)) continue
+      // Learner traffic does not grind through a failing tier: after 2 real failures it moves down the ladder.
+      if (priority !== 'background' && rungFailures >= 2 && rung !== rungs[rungs.length - 1]) break
       if (tried.size - skippedTakes >= maxAttempts || tried.size >= 40) break
       if (o.deadline && now() > o.deadline - 2500) throw new PoolBusyError(`Deadline reached (${errors.slice(0, 4).join(' | ')})`, 30_000)
       const s = c.slot
@@ -559,11 +564,11 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
         const cl = classify(err)
         // The request never ran (or failed): give the estimate back.
         // The provider did not serve it (quota, bad key, missing model): give the request and tokens back.
-        const unserved = cl.kind === 'quota' || cl.kind === 'missing'
+        const unserved = cl.kind === 'quota' || cl.kind === 'missing' || cl.kind === 'overload'
         const pending: Promise<unknown>[] = [store.adjust(s.id, -est, day, learner ? (s.provider === 'groq' ? `g:${learner}` : learner) : null, unserved ? -1 : 0)]
         bump(s.id, x => { x.m_tok = Math.max(0, x.m_tok - est); x.d_tok = Math.max(0, x.d_tok - est); if (unserved) { x.m_req = Math.max(0, x.m_req - 1); x.d_req = Math.max(0, x.d_req - 1) } })
         // An invalid / revoked key fails every model on it: cool the whole key down at once.
-        const sameKey = cl.keyWide ? slotsOfKey(s) : [s]
+        const sameKey = cl.keyWide ? slotsOfKey(s) : cl.modelWide ? inventory().filter(x => x.model === s.model && x.provider === s.provider) : [s]
         for (const k of sameKey) {
           if (cl.cooldownMs) localCooldown.set(k.id, now() + cl.cooldownMs)
           pending.push(store.report(k.id, cl.kind, { latencyMs: k === s ? now() - t0 : undefined, cooldownMs: cl.cooldownMs, error: msg }))
@@ -572,6 +577,7 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
         // Failures are rare: wait for the shared ledger so other instances see the cooldown at once.
         await Promise.allSettled(pending)
         if (cl.kind === 'timeout' && priority !== 'background') void store.count('slow_failover')
+        rungFailures++
         if (o.stopOn?.(err)) throw err
       }
     }
@@ -635,7 +641,7 @@ export async function poolHealth(): Promise<PoolHealth> {
     const st = state.get(s.id) ?? blank()
     const h = health(s, st, t)
     const hr = headroomOf(s, st, 0, 1)
-    const exhausted = hr.day <= 0
+    const exhausted = hr.day <= 0.02
     return {
       id: s.id, provider: s.provider, key: s.key, model: s.model, limits: s.limits, day: quotaDay(s.resetTz, t),
       minute: { req: st.m_req, tok: st.m_tok }, dayUsed: { req: st.d_req, tok: st.d_tok },
