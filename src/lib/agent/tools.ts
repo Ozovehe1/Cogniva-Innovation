@@ -16,7 +16,11 @@ import type { Block, PlanItem } from './types'
 import { learnerForPath, loadLearner, type PathRow, type TopicRow } from '../learner'
 import { levelLine } from '../intake'
 import { lessonDigest, masteryContext } from '../lesson-digest'
-import { QUESTION_RULES, checkItem, rawItems } from '../question-quality'
+import { QUESTION_RULES } from '../question-quality'
+import { ITEM_JSON, ITEM_RULES, publicFigure, type AssessItem } from '../assessment/spec'
+import { curriculumLines, inferCurriculum } from '../assessment/curriculum'
+import { objectivesFromDigest, taughtFromText } from '../assessment/align'
+import { feedbackLines, finishSet, gateItems, parseItems, type Rejected } from '../assessment/write'
 import { createTopicLesson, lessonFields } from '../path'
 import { runDraftWork } from '../lesson-drafting'
 import { dispatchFreeform, dispatchRender, renderServiceConfigured, type ManimJob } from '../manim'
@@ -244,24 +248,26 @@ const READ: ToolSpec[] = [
 
 /* ───────────── Write tools ───────────── */
 
-/** Practice questions through the same quality gate as mastery checks. */
-export async function generatePractice(ctx: AgentCtx, input: { topicTitle: string; summary?: string; digest?: string; count: number; level: string }) {
+/** Practice questions through the same item gate as mastery checks (src/lib/assessment): aligned with the lesson, verified. */
+export async function generatePractice(ctx: AgentCtx, input: { topicTitle: string; summary?: string; digest?: string; count: number; level: string; goal?: string }) {
+  const curriculum = inferCurriculum({ goal: input.goal ?? input.topicTitle, taught: input.digest })
+  const taught = input.digest ? taughtFromText(input.digest, objectivesFromDigest(input.digest)) : null
   const prompt = (n: number, avoid = '') => `Write ${n} practice multiple-choice questions on "${input.topicTitle}"${input.summary ? ` (${input.summary})` : ''} for a learner (${input.level || 'secondary school'}).
-${input.digest ? `Base them on what their lesson taught (same methods and notation, NEW numbers):\n${input.digest.slice(0, 2500)}\n` : ''}Each tests DOING the skill, answerable in about a minute; exactly one right answer; 4 options; vary the correct position. Give "hint": one nudge that does NOT reveal the answer, and "explain": one sentence with the key step.
-${QUESTION_RULES}${avoid}
-Return JSON {"items": [{"q", "options": [4], "answer": index, "hint", "explain", "calc": string or null}]}.`
-  const good: { q: string; options: string[]; answer: number; explain?: string; hint: string }[] = []
-  const rejected: string[] = []
+${input.digest ? `Base them ONLY on what their lesson taught (same methods, notation, terms and kinds of pictures; NEW numbers):\n${input.digest.slice(0, 2500)}\n` : ''}Each tests DOING the skill, answerable in about a minute; exactly one right answer; 4 options. Also give "hint": one nudge that does NOT reveal the answer.
+${ITEM_RULES}
+${QUESTION_RULES}
+${curriculumLines(curriculum)}${avoid}
+Return JSON {"items": [${ITEM_JSON.replace(/\}$/, ', "hint": string}')}]}.`
+  const gctx = { surface: 'practice' as const, curriculum, taught, goal: input.goal ?? null, level: input.level, skill: `${input.topicTitle} ${input.summary ?? ''}`, requireCalc: true }
+  const good: (AssessItem & { hint: string })[] = []
+  const rejected: Rejected[] = []
   for (let round = 0; round < 2 && good.length < input.count; round++) {
-    const raw = await chatJson(prompt(input.count - good.length, rejected.length ? `\nAvoid these problems found earlier: ${rejected.slice(0, 4).join('; ')}` : ''), { maxTokens: 3000, trace: ctx.trace }) as { items?: unknown[] }
-    const hints = (Array.isArray(raw?.items) ? raw.items : []).map(x => (x && typeof x === 'object' ? s((x as { hint?: unknown }).hint, 300) : ''))
-    rawItems(raw?.items).forEach((r, i) => {
-      const c = checkItem(r, { requireCalc: true })
-      if (c.problems.length) rejected.push(c.problems[0])
-      else if (good.length < input.count) good.push({ ...c.item, hint: hints[i] || 'Look again at the key step from your lesson.' })
-    })
+    const raw = await chatJson(prompt(input.count - good.length, rejected.length ? `\nAvoid these problems found earlier:\n${feedbackLines(rejected)}` : ''), { maxTokens: 3500, trace: ctx.trace }) as { items?: unknown[] }
+    const r = await gateItems<AssessItem & { hint: string }>(parseItems(raw?.items), gctx, { admin: ctx.admin, trace: ctx.trace })
+    rejected.push(...r.rejected)
+    for (const it of r.good) if (good.length < input.count) good.push({ ...it, hint: typeof it.hint === 'string' && it.hint ? it.hint : 'Look again at the key step from your lesson.' })
   }
-  return good
+  return finishSet(good)
 }
 
 const WRITE: ToolSpec[] = [
@@ -278,7 +284,7 @@ const WRITE: ToolSpec[] = [
       if (!title) return { error: 'topic is required' }
       const learner = await loadLearner(ctx.admin, ctx.studentId)
       const digest = found ? (await masteryContext(ctx.admin, found.path, found.topic).catch(() => ({ digest: '' }))).digest : ''
-      const items = await generatePractice(ctx, { topicTitle: title, summary: found?.topic.summary, digest, count: Math.min(5, Math.max(3, Number(a.count) || 4)), level: learner ? levelLine(found ? learnerForPath(learner, found.path) : learner) : '' })
+      const items = await generatePractice(ctx, { topicTitle: title, summary: found?.topic.summary, digest, goal: found?.path.goal, count: Math.min(5, Math.max(3, Number(a.count) || 4)), level: learner ? levelLine(found ? learnerForPath(learner, found.path) : learner) : '' })
       if (items.length < 2) return { error: 'Could not write questions that pass the quality checks. Try again or explain instead.' }
       const action = await logAction(ctx.admin, {
         studentId: ctx.studentId, runId: ctx.runId, source: ctx.mode === 'chat' ? 'agent' : 'director', tool: 'make_practice_set',
@@ -286,7 +292,7 @@ const WRITE: ToolSpec[] = [
         result: { items, answers: {} }, summary: `Practice set: ${title}`,
       })
       ctx.practiceMode = true
-      ctx.emit({ kind: 'practice', id: bid(), actionId: action.id, title, items: items.map(i => ({ q: i.q, options: i.options })) })
+      ctx.emit({ kind: 'practice', id: bid(), actionId: action.id, title, items: items.map(i => ({ q: i.q, options: i.options, figure: publicFigure(i.figure) })) })
       return { shown: true, action_id: action.id, questions: items.length, note: 'Shown to the learner. Do NOT reveal the answers; the set gives hints first and records the review itself.' }
     },
   },

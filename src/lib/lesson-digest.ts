@@ -13,7 +13,7 @@ import type { PathRow, TopicRow } from './learner'
 import { toPlainText } from './math-text'
 
 /** Version of the mastery items' basis; items stored without it were written from the topic title only. */
-export const MASTERY_ITEMS_VERSION = 2
+export const MASTERY_ITEMS_VERSION = 3
 
 /** Max characters for the whole digest, the current topic's lesson, and each earlier topic's lesson. */
 const TOTAL_CAP = 5200

@@ -14,6 +14,8 @@ import { ArrowLeft, ArrowRight, Check, Lock, Sparkles } from 'lucide-react'
 import { LEVELS, PURPOSES, isMinor, visibleScreens, type Answers, type IntakeScreen } from '@/lib/intake'
 import { detectDistress } from '@/lib/safety'
 import { RichText } from './rich-text'
+import { ItemFigure } from './item-figure'
+import type { PublicFigure } from '@/lib/assessment/spec'
 import { SafetyPause } from './safety-pause'
 import { Alert, Spinner, buttonClass, cx, inputClass } from './ui'
 
@@ -27,7 +29,7 @@ interface DiagView {
   asked: number
   min: number
   max: number
-  item: { node: string; topic: string; item: number; q: string; options: string[]; number: number } | null
+  item: { node: string; topic: string; item: number; q: string; options: string[]; figure?: PublicFigure; number: number } | null
   done: boolean
   fresh?: boolean
   known?: string[]
@@ -604,6 +606,7 @@ function DiagQuestion({ view, busy, error, reduce, onAnswer, onSkipRest }: { vie
         </div>
       )}
       <h1 className="mt-5 font-display text-[25px] leading-[1.25] text-ink sm:text-[29px]"><RichText text={it.q} /></h1>
+      <ItemFigure figure={it.figure} />
       <div className="mt-6 grid gap-2" role="radiogroup" aria-label="Answer options">
         {it.options.map((o, i) => (
           <button key={i} type="button" role="radio" aria-checked={choice === i} disabled={busy} onClick={() => setChoice(i)}

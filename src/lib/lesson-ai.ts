@@ -1,5 +1,7 @@
 import { GeminiQuotaError, generateStructuredJson, generateText, lastGeminiModel, type GenerateOptions } from './gemini'
 import { guardSteps, issueLines } from './correctness/steps'
+import { balanceCheckKeys, checkStepIssues } from './assessment/validate'
+import { CHECK_ITEM_RULES } from './assessment/spec'
 import { avoidLines } from './correctness/blocklist'
 import { llmContext } from './agent/pool'
 
@@ -134,6 +136,8 @@ export async function generateSteps(
     // Correctness guard: wrong numbers corrected, answers said before a check removed, units evened (correctness/steps).
     const guarded = guardSteps(steps)
     steps = guarded.steps
+    // Choice-check keys spread over positions (no position cue).
+    steps = balanceCheckKeys(steps, offset)
     if (guarded.issues.length) meta.trace?.push(...guarded.issues.slice(0, 6).map(i => `guard ${i.kind}${i.fixed ? ' fixed' : ''}: ${i.detail.slice(0, 120)}`))
     meta.ms = Date.now() - t0
     meta.model = answered ?? lastGeminiModel
@@ -162,6 +166,8 @@ export async function generateSteps(
     const mathIssues = normalizeLessonMath(result.steps).issues
     // Wrong facts the guard cannot fix by itself (a triangle labelled 3, 4, 6; a ray bent the wrong way) are regenerated.
     const factIssues = issueLines(guardSteps(normalizeLessonMath(result.steps).steps).issues)
+    // Check questions that fail the item validator (wrong or doubled key, cues, untaught content): src/lib/assessment.
+    factIssues.push(...checkStepIssues(normalizeLessonMath(result.steps).steps, { played: opts.played }))
     const issues = [...layout, ...mathIssues.slice(0, 8), ...factIssues.slice(0, 6)]
     if (issues.length === 0) return done(result.steps)
     // One repair pass (layout and/or maths).
@@ -180,7 +186,7 @@ Return the full corrected JSON object {"steps": [...]} with the same teaching co
       if (fixed.ok) {
         const fl = opts.layoutRepair ? layoutIssues(fixed.steps, start, offset).length : 0
         const fm = normalizeLessonMath(fixed.steps).issues.length
-        const ff = issueLines(guardSteps(normalizeLessonMath(fixed.steps).steps).issues).length
+        const ff = issueLines(guardSteps(normalizeLessonMath(fixed.steps).steps).issues).length + checkStepIssues(normalizeLessonMath(fixed.steps).steps, { played: opts.played }).length
         if (fl <= layout.length && fm <= mathIssues.length && ff <= factIssues.length && fl + fm + ff < issues.length) return done(fixed.steps)
       }
     } catch (err) {
@@ -230,7 +236,7 @@ ${SCRIPT_SCHEMA_PROMPT}
 
 ${LAYOUT_RULES}
 - 20 to 45 steps. Open with the title (write, size lg, x 40, y 30).
-- After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach".
+- After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach". ${CHECK_ITEM_RULES}
 - End with a one-line summary written on the board.
 Return {"steps": [...]} only.`
   return generateSteps(prompt, { maxSteps: 60, timeoutMs: 55_000, layoutRepair: true })
@@ -381,7 +387,7 @@ ${SHOW_DONT_TELL}
 - Count before answering: at least ${Math.ceil(min * 0.5)} steps must be draw / animate / move / transform / scale / highlight / fade, and they must outnumber the write + math steps. Evolve an equation with transform (one element changing in place) instead of writing a new math line for every step of working.
 - Length: this section must PLAY for about ${section.minutes} minutes. The narration is read aloud at about 2.9 words a second, so the "say" lines together must total about ${words} spoken words (most narrated steps say 15 to 35 words while the board moves). Use ${min} to ${max} steps.
 - Fill the time with teaching, never filler: a visual intuition first, then at least two worked examples demonstrated on the board step by step (one simple, one harder or from real life), a "watch what happens when we change this" demonstration (animate a variable), and the checks. Do not pad with repetition, recaps or empty praise.
-- After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach".
+- After each main idea, add a check: kind "understand" with a short "reteach" array (3-6 steps showing the idea a different way, built on what is on the board), and at least one "choice" or "short" question with "explanation" and a "reteach". ${CHECK_ITEM_RULES}
 Return {"steps": [...]} only.`
   let steps = await generateSteps(prompt, { maxSteps: SECTION_MAX_STEPS, timeoutMs: 120_000, primaryTimeoutMs: 100_000, meta: input.meta })
   // Validate "show, don't tell": a mostly-text section gets one repair pass, then is rejected.

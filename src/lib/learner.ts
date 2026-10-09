@@ -10,7 +10,11 @@ import { inferStatus, levelLine, type Answers } from './intake'
 import { inferSignals, type DiagSignals } from './onboarding-signals'
 import { cleanGraph, descendants, ancestors, topoOrder, type DiagGraph, type DiagState, type DiagItem } from './diagnostic-core'
 import type { StudentProfileLite } from './lesson-ai'
-import { QUESTION_RULES, checkItem, feedbackFor, rawItems, type RawItem } from './question-quality'
+import { QUESTION_RULES } from './question-quality'
+import { ITEM_JSON, ITEM_RULES, type AssessItem } from './assessment/spec'
+import { curriculumLines, inferCurriculum } from './assessment/curriculum'
+import { objectivesFromDigest, taughtFromText } from './assessment/align'
+import { feedbackLines, finishSet, gateItems, parseItems, type Rejected } from './assessment/write'
 
 export interface LearnerRow {
   student_id: string
@@ -70,7 +74,7 @@ export interface TopicRow {
   target_minutes: number | null
   due_on: string | null
   /** itemsVersion/basis describe `items`: version 2+ items were written from the learner's lessons ('lesson') or, with no lesson content, the topic title ('title'). */
-  mastery: { items?: DiagItem[]; itemsVersion?: number; basis?: 'lesson' | 'title'; lessonIds?: string[]; startedAt?: string; lastScore?: number; recheck?: { node: string; item: number }[] }
+  mastery: { items?: DiagItem[]; itemsVersion?: number; basis?: 'lesson' | 'title'; lessonIds?: string[]; startedAt?: string; lastScore?: number; recheck?: { node: string; item: number }[]; /** Learner's Elo skill rating on this topic (assessment/calibrate.ts). */ elo?: { r: number; n: number } }
   mastery_attempts: number
   wrong_streak: number
   mastered_at: string | null
@@ -247,12 +251,14 @@ For each skill give:
 - "summary": one sentence: what someone who has this skill can do
 - "prereqs": ids of skills it directly needs (only skills in this list; foundations have [])
 - "level": "below", "at" or "above" relative to the learner's stated level (the goal and skills beyond their level are "above")
-- "items": exactly 2 multiple-choice questions that test THIS skill only (not its prerequisites), each {"q": string, "options": [4 strings], "answer": index of the correct option, "explain": one short sentence, "calc": string or null}. Questions are short, unambiguous, answerable in under a minute without a calculator unless trivial, at the skill's own level. Vary the position of the correct answer. No trick questions; no "all of the above".
+- "items": exactly 2 multiple-choice questions that test THIS skill only (not its prerequisites), each ${ITEM_JSON} ("objective" here: the skill's summary). Questions are short, unambiguous, answerable in under a minute without a calculator unless trivial, at the skill's own level, in the notation of the learner's curriculum. 4 options. No trick questions.
+${ITEM_RULES}
 ${QUESTION_RULES}
+${curriculumLines(inferCurriculum({ goal: [l.goal, l.goal_text, l.subject].filter(Boolean).join(' '), profile: l }))}
 Also "goalNode": the id of the goal skill, "subject": the subject in 1-3 words, "stem": true for maths/science/engineering/computing.
-Neutral, global wording; examples may use Nigerian context. Return JSON {"subject", "stem", "goalNode", "nodes": [...]} only.`
+Neutral, global wording. Return JSON {"subject", "stem", "goalNode", "nodes": [...]} only.`
   const raw = await generateStructuredJson(prompt, { timeoutMs: 110_000, primaryTimeoutMs: 80_000, temperature: 0.4, priority: 'live' as const })
-  await gateGraphItems(raw)
+  await gateGraphItems(raw, l)
   return cleanGraph(raw, l.subject ?? '')
 }
 
@@ -287,46 +293,50 @@ Neutral, global wording. Return JSON {"subject", "stem", "goalNode", "nodes": [.
  * items are re-asked once (one call for all of them); items still failing are
  * dropped unless that would leave a skill with no question.
  */
-async function gateGraphItems(raw: unknown) {
+async function gateGraphItems(raw: unknown, l: LearnerRow) {
   const nodes = (raw && typeof raw === 'object' && Array.isArray((raw as { nodes?: unknown }).nodes) ? (raw as { nodes: Record<string, unknown>[] }).nodes : [])
     .filter(n => n && typeof n === 'object')
-  const rejected: { node: Record<string, unknown>; raw: RawItem; problems: string[] }[] = []
-  const good = new Map<Record<string, unknown>, ReturnType<typeof checkItem>['item'][]>()
-  const fallback = new Map<Record<string, unknown>, ReturnType<typeof checkItem>['item'][]>()
-  for (const n of nodes) {
-    const ok: ReturnType<typeof checkItem>['item'][] = []
-    const fb: ReturnType<typeof checkItem>['item'][] = []
-    for (const r of rawItems(n.items)) {
-      const c = checkItem(r, { requireCalc: true })
-      if (c.problems.length) { rejected.push({ node: n, raw: r, problems: c.problems }); fb.push(c.item) } else ok.push(c.item)
-    }
-    good.set(n, ok); fallback.set(n, fb)
-  }
+  // Nothing is taught yet: items are judged on accuracy, cues, form, fairness and figure need (no alignment).
+  const goal = [l.goal, l.goal_text, l.subject].filter(Boolean).join(' ')
+  const curriculum = inferCurriculum({ goal, profile: l })
+  const ctxFor = (n: Record<string, unknown>) => ({ surface: 'diagnostic' as const, curriculum, goal, level: levelLine(l), skill: `${String(n.title ?? '')} ${String(n.summary ?? '')}`, requireCalc: true })
+  const rejected: (Rejected & { node: Record<string, unknown> })[] = []
+  const good = new Map<Record<string, unknown>, AssessItem[]>()
+  const fallback = new Map<Record<string, unknown>, AssessItem[]>()
+  await Promise.all(nodes.map(async n => {
+    const r = await gateItems(parseItems(n.items), ctxFor(n))
+    good.set(n, r.good)
+    // Last resort only for items whose sole problems are presentational (never a wrong or doubled key).
+    fallback.set(n, r.rejected.filter(x => x.problems.every(p => !/correct|marked answer|computed|equal to|satisf|same expression|too close|calc/.test(p))).map(x => x.raw as AssessItem))
+    for (const x of r.rejected) rejected.push({ ...x, node: n })
+  }))
   if (rejected.length) {
     try {
       const fix = await generateStructuredJson(`These multiple-choice diagnostic questions failed automatic checks. Write one NEW replacement question for each, testing the same skill at the same level, fixing the problem.
-${feedbackFor(rejected)}
+${feedbackLines(rejected)}
 
 Skills (by number above): ${rejected.map((r, i) => `${i + 1}=${String(r.node.title ?? r.node.id ?? '')}`).join('; ')}
-Each replacement: {"n": the number above, "q": string, "options": [4 strings], "answer": index, "explain": one short sentence, "calc": string or null}.
+Each replacement: {"n": the number above, ...${ITEM_JSON}}.
+${ITEM_RULES}
 ${QUESTION_RULES}
+${curriculumLines(curriculum)}
 Return JSON {"items": [...]} only.`, { timeoutMs: 60_000, primaryTimeoutMs: 40_000, temperature: 0.3, priority: 'live' }) as { items?: unknown[] }
-      const list = Array.isArray(fix?.items) ? fix.items : []
-      for (const x of list) {
-        const n = x && typeof x === 'object' ? Number((x as { n?: unknown }).n) : NaN
-        const target = rejected[n - 1]
-        const [r] = rawItems([x])
-        if (!target || !r) continue
-        const c = checkItem(r, { requireCalc: true })
-        if (!c.problems.length) good.get(target.node)?.push(c.item)
-      }
+      const parsed = parseItems(fix?.items)
+      await Promise.all(parsed.map(async x => {
+        const target = rejected[Number(x.n) - 1]
+        if (!target) return
+        const r = await gateItems([x], ctxFor(target.node))
+        if (r.good.length) good.get(target.node)?.push(r.good[0])
+      }))
     } catch (err) {
       console.warn('Diagnostic item repair failed:', err instanceof Error ? err.message : err)
     }
   }
+  // Keys spread over positions across the whole bank (no "when in doubt pick A").
+  const all = finishSet(nodes.flatMap(n => (good.get(n) ?? []).slice(0, 3).map(it => ({ ...it, __n: n }) as AssessItem & { __n: Record<string, unknown> })))
   for (const n of nodes) {
-    const ok = good.get(n) ?? []
-    // Never leave a skill without a question: keep its (maths-normalised) originals as a last resort.
+    const ok = all.filter(x => x.__n === n).map(({ __n: _drop, ...it }) => { void _drop; return it })
+    // Never leave a skill without a question: keep a presentational-only failure as a last resort.
     n.items = (ok.length ? ok : fallback.get(n) ?? []).slice(0, 3)
   }
 }
@@ -420,45 +430,46 @@ export function teachingNotes(input: { learner: LearnerRow; path: Pick<PathRow, 
   return lines.filter(Boolean).join('\n').slice(0, 3000)
 }
 
-/** Mastery-check items for a topic: 4 fresh multiple-choice questions on this skill, quality-gated. */
-export async function masteryItems(input: { learner: LearnerRow; topicTitle: string; summary: string; goal: string; lessonDigest?: string }): Promise<DiagItem[]> {
+/**
+ * Mastery-check items for a topic: 4 fresh questions on exactly what this learner's lesson(s) taught (alignment), in
+ * their curriculum's conventions, each verified by the item validator (src/lib/assessment). Figures only when needed.
+ */
+export async function masteryItems(input: { learner: LearnerRow; topicTitle: string; summary: string; goal: string; lessonDigest?: string; admin?: import('@supabase/supabase-js').SupabaseClient | null }): Promise<AssessItem[]> {
   const digest = (input.lessonDigest ?? '').trim()
+  const goalWords = [input.goal, input.learner.goal_text, input.learner.subject].filter(Boolean).join(' ')
+  const curriculum = inferCurriculum({ goal: goalWords, taught: digest, profile: input.learner })
+  const taught = digest ? taughtFromText(digest, objectivesFromDigest(digest)) : null
   // With the learner's lessons: test what they were actually taught, in the lessons' notation; otherwise the skill as titled.
   const basis = digest
-    ? `The learner has just been taught this skill in the lesson(s) below. Base EVERY question on what these lessons actually covered: the same methods, steps, formulas, terms, notation and symbols, and the same kinds of problems as the worked examples and in-lesson checks, with NEW numbers and new situations. Never copy a lesson example or check question verbatim, never reuse its exact numbers, and do not test anything the lessons did not teach. Questions are on this topic; an earlier lesson may only supply background the topic builds on.
+    ? `The learner has just been taught this skill in the lesson(s) below. Base EVERY question on what these lessons actually covered: the same methods, steps, formulas, terms, notation, symbols and kinds of pictures, and the same kinds of problems as the worked examples and in-lesson checks, with NEW numbers and new situations. Never copy a lesson example or check question verbatim, never reuse its exact numbers, and do not test anything the lessons did not teach. Questions are on this topic; an earlier lesson may only supply background the topic builds on. "objective" names the lesson aim or key idea each question tests, in the lesson's words.
 --- LESSONS ---
 ${digest}
---- END LESSONS ---
-In each "explain", name the lesson step or idea the question tests.`
+--- END LESSONS ---`
     : ''
   const prompt = (count: number, avoid: string) => `Write a ${count}-question mastery check for the skill "${input.topicTitle}" (${input.summary}).
-Learner: ${levelLine(input.learner) || 'level unknown'}; goal: ${input.goal}.${input.learner.interests?.length ? ` Set word problems in: ${input.learner.interests.slice(0, 2).join(', ')}.` : ''}
-${basis ? basis + '\n' : ''}Each question tests whether they can DO the skill (apply it, not recall a definition), at their level, answerable in about a minute. Every question is physically and mathematically correct and has exactly one right answer. 4 options each; vary the correct position.
-${QUESTION_RULES}${avoid}
-Return JSON {"items": [{"q": string, "options": [4 strings], "answer": index, "explain": one sentence showing the key step, "calc": string or null}]}.`
+Learner: ${levelLine(input.learner) || 'level unknown'}; goal (their words): ${input.goal}.${input.learner.interests?.length ? ` If a context helps, use one of: ${input.learner.interests.slice(0, 2).join(', ')}.` : ''}
+${basis ? basis + '\n' : ''}Each question tests whether they can DO the skill (apply it, not recall a definition), at their level, answerable in about a minute. Every question is physically and mathematically correct and has exactly one right answer. 4 options. Mix difficulty: one easier, two at level, one harder.
+${ITEM_RULES}
+${QUESTION_RULES}
+${curriculumLines(curriculum)}${avoid}
+Return JSON {"items": [${ITEM_JSON}]}.`
   const opts = { timeoutMs: 45_000, primaryTimeoutMs: 30_000, temperature: 0.5, priority: 'live' as const }
-  const first = rawItems((await generateStructuredJson(prompt(4, ''), opts) as Record<string, unknown>)?.items)
-  const good: DiagItem[] = []
-  const rejected: { raw: RawItem; problems: string[] }[] = []
-  for (const r of first) {
-    const c = checkItem(r, { requireCalc: true })
-    if (c.problems.length) rejected.push({ raw: r, problems: c.problems }); else good.push(c.item)
-  }
+  const ctx = { surface: 'mastery' as const, curriculum, taught, goal: goalWords, level: levelLine(input.learner), skill: `${input.topicTitle} ${input.summary}`, requireCalc: true }
+  const first = await gateItems(parseItems((await generateStructuredJson(prompt(4, ''), opts) as Record<string, unknown>)?.items), ctx, { admin: input.admin })
+  const good: AssessItem[] = [...first.good]
   if (good.length < 4) {
     // One re-ask for the missing questions, with what was wrong.
     const need = 4 - good.length
-    const avoid = rejected.length ? `\nEarlier questions were rejected by automatic checks; do not repeat these mistakes:\n${feedbackFor(rejected)}` : ''
+    const avoid = first.rejected.length ? `\nEarlier questions were rejected by automatic checks; do not repeat these mistakes:\n${feedbackLines(first.rejected)}` : ''
     try {
-      for (const r of rawItems((await generateStructuredJson(prompt(need, avoid), opts) as Record<string, unknown>)?.items)) {
-        const c = checkItem(r, { requireCalc: true })
-        if (!c.problems.length && good.length < 4) good.push(c.item)
-      }
+      const again = await gateItems(parseItems((await generateStructuredJson(prompt(need, avoid), opts) as Record<string, unknown>)?.items), ctx, { admin: input.admin })
+      good.push(...again.good.slice(0, need))
     } catch (err) {
       if (good.length < 3) throw err
     }
   }
   if (good.length < 3) throw new Error('The AI could not write mastery questions that pass the checks')
-  return good.slice(0, 4)
+  return finishSet(good.slice(0, 4))
 }
 
 export { descendants }

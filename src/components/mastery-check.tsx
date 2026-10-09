@@ -5,9 +5,11 @@ import Link from 'next/link'
 import { UpNextCard } from './up-next'
 import { ArrowRight, Check, X } from 'lucide-react'
 import { RichText } from './rich-text'
+import { ItemFigure } from './item-figure'
+import type { PublicFigure } from '@/lib/assessment/spec'
 import { Alert, Spinner, buttonClass, cx } from './ui'
 
-interface Q { i: number; q: string; options: string[]; topic?: string }
+interface Q { i: number; q: string; options: string[]; topic?: string; figure?: PublicFigure }
 interface Quiz { items: Q[]; recheck: Q[]; attempts: number; wrongStreak: number; status: string }
 interface Result { correct: boolean; answer: string | null; explain: string | null }
 
@@ -70,6 +72,7 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
             <li key={qi}>
               {q.topic && <p className="mb-1 text-[12px] font-medium uppercase tracking-[0.06em] text-muted"><RichText text={q.topic} /></p>}
               <p className="text-[17px] leading-snug text-ink"><span className="tnum mr-2 text-faint">{qi + 1}.</span><RichText text={q.q} /></p>
+              <ItemFigure figure={q.figure} className="mt-3" />
               <div className="mt-3 grid gap-2">
                 {q.options.map((o, oi) => (
                   <button key={oi} type="button" onClick={() => setAnswers(a => a.map((x, k) => (k === qi ? oi : x)))}

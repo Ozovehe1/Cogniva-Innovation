@@ -15,8 +15,10 @@
  * Pure functions: safe on the server and in the browser. Answers live server-side only.
  */
 import { normalizeMathText } from './math-text'
+import { publicFigure, type ItemFigure } from './assessment/spec'
 
-export interface DiagItem { q: string; options: string[]; answer: number; explain?: string }
+/** One question (the assessment item spec, src/lib/assessment/spec.ts, extends it). */
+export interface DiagItem { q: string; options: string[]; answer: number; explain?: string; figure?: ItemFigure }
 export interface DiagNode {
   id: string
   title: string
@@ -108,7 +110,9 @@ export function cleanGraph(raw: unknown, fallbackSubject: string, opts: { noItem
       const opts = options.filter((s): s is string => typeof s === 'string' && !!s.trim()).map(s => s.trim().slice(0, 200)).slice(0, 5)
       if (opts.length < 3 || answer < 0 || answer >= opts.length || new Set(opts).size !== opts.length) continue
       const explain = (it as Record<string, unknown>).explain
-      items.push({ q: q.trim().slice(0, 500), options: opts, answer: Math.floor(answer), explain: typeof explain === 'string' ? explain.slice(0, 400) : undefined })
+      const o = it as Record<string, unknown>
+      // Spec fields the gate added (figure, objective, difficulty, why) ride along with the item.
+      items.push({ ...(o.figure && typeof o.figure === 'object' ? { figure: o.figure as ItemFigure } : {}), ...(typeof o.objective === 'string' ? { objective: o.objective } : {}), ...(typeof o.difficulty === 'number' ? { difficulty: o.difficulty } : {}), ...(o.verified === true ? { verified: true } : {}), q: q.trim().slice(0, 500), options: opts, answer: Math.floor(answer), explain: typeof explain === 'string' ? explain.slice(0, 400) : undefined } as DiagItem)
     }
     // A path planned without a check (learner new to the topic) has no question bank.
     if (items.length === 0 && !opts.noItems) continue
@@ -248,5 +252,5 @@ export function publicItem(g: DiagGraph, st: DiagState) {
   const it = n?.items[st.current.item]
   if (!n || !it) return null
   // Normalised on read: older stored items may hold bare or broken LaTeX.
-  return { node: n.id, topic: normalizeMathText(n.title), item: st.current.item, q: normalizeMathText(it.q), options: it.options.map(o => normalizeMathText(o)), number: st.asked.length + 1 }
+  return { node: n.id, topic: normalizeMathText(n.title), item: st.current.item, q: normalizeMathText(it.q), options: it.options.map(o => normalizeMathText(o)), figure: publicFigure(it.figure), number: st.asked.length + 1 }
 }

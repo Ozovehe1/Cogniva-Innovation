@@ -6,6 +6,8 @@ import { learnerForPath, loadLearner, masteryItems, type PathRow, type TopicRow 
 import { masterTopic, prefetchNextLesson, recheckItems, reopenPrerequisite } from '@/lib/path'
 import { selfOrigin } from '@/lib/lesson-drafting'
 import { displayItem, storedItemProblems } from '@/lib/question-quality'
+import { publicFigure } from '@/lib/assessment/spec'
+import { applyResponses } from '@/lib/assessment/calibrate'
 import { normalizeMathText } from '@/lib/math-text'
 import { MASTERY_ITEMS_VERSION, masteryContext, type MasteryContext } from '@/lib/lesson-digest'
 import { kickDirector } from '@/lib/agent/director'
@@ -17,12 +19,12 @@ const PASS = 0.75
 
 function publicQuiz(t: TopicRow, path: PathRow) {
   // Stored questions are normalised on read too (older ones may hold bare LaTeX).
-  const items = (t.mastery.items ?? []).map(displayItem).map((it, i) => ({ i, q: it.q, options: it.options }))
+  const items = (t.mastery.items ?? []).map(displayItem).map((it, i) => ({ i, q: it.q, options: it.options, figure: publicFigure(it.figure) }))
   const recheck = (t.mastery.recheck ?? []).map((r, i) => {
     const n = path.graph.nodes.find(x => x.id === r.node)
     const raw = n?.items[r.item]
     const it = raw ? displayItem(raw) : null
-    return it ? { i, topic: normalizeMathText(n!.title), q: it.q, options: it.options } : null
+    return it ? { i, topic: normalizeMathText(n!.title), q: it.q, options: it.options, figure: publicFigure(it.figure) } : null
   }).filter(Boolean)
   return { topicId: t.id, title: t.title, status: t.status, attempts: t.mastery_attempts, wrongStreak: t.wrong_streak, items, recheck }
 }
@@ -81,7 +83,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!learner) return NextResponse.json({ error: 'Not found' }, { status: 404 })
       try {
         ctx = ctx ?? await masteryContext(db, path, topic).catch(() => ({ digest: '', lessonIds: [] }))
-        const items = await masteryItems({ learner: learnerForPath(learner, path), topicTitle: topic.title, summary: topic.summary, goal: path.goal, lessonDigest: ctx.digest })
+        const items = await masteryItems({ learner: learnerForPath(learner, path), topicTitle: topic.title, summary: topic.summary, goal: path.goal, lessonDigest: ctx.digest, admin: db })
         const mastery = { ...m, items, itemsVersion: MASTERY_ITEMS_VERSION, basis: ctx.digest ? 'lesson' as const : 'title' as const, lessonIds: ctx.lessonIds, startedAt: new Date().toISOString() }
         const { data } = await db.from('path_topics').update({ mastery }).eq('id', topic.id).select('*').single()
         topic = data as TopicRow
@@ -98,6 +100,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!items.length) return NextResponse.json({ error: 'Start the check first' }, { status: 400 })
     const results = items.map(displayItem).map((it, i) => ({ correct: answers[i] === it.answer, answer: it.options[it.answer], explain: it.explain ?? null }))
     const score = results.filter(x => x.correct).length / items.length
+    // Calibration (assessment/calibrate.ts): the learner's skill rating on this topic and each item's rating move with the answers.
+    const elo = applyResponses(items, answers, (topic.mastery as { elo?: { r: number; n: number } }).elo ?? { r: 0, n: 0 })
+    await db.from('path_topics').update({ mastery: { ...topic.mastery, items: elo.items, elo: elo.learner } }).eq('id', topic.id)
+    topic = { ...topic, mastery: { ...topic.mastery, items: elo.items, elo: elo.learner } as TopicRow['mastery'] }
     // The 3-of-4 gate below decides mastery; the Learning Director then takes a turn on the result (never on the gate).
     const forDirector = items.map(displayItem).map((it, i) => ({ q: it.q, correct: results[i].correct, chosen: typeof answers[i] === 'number' ? it.options[answers[i] as number] ?? null : null, answer: it.options[it.answer], explain: it.explain ?? null }))
     const kick = (passed: boolean) => kickDirector('post_check', profile.id, { topic_id: topic.id, score, passed, attempt: topic.mastery_attempts + (passed ? 0 : 1), results: forDirector }, new URL(request.url).origin).catch(() => undefined)

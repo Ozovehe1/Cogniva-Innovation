@@ -10,7 +10,7 @@ const student = process.argv[3] || '3c15fbeb-56b3-4699-b7c5-1eff51a5cadd'
 const secret = process.env.AGENT_SECRET
 if (!secret) { console.error('Set AGENT_SECRET'); process.exit(1) }
 const all = []
-for (const group of (process.env.GROUPS ? process.env.GROUPS.split(',') : ['static', 'pool', 'tools', 'routing', 'giveaway', 'injection', 'visual', 'regression'])) {
+for (const group of (process.env.GROUPS ? process.env.GROUPS.split(',') : ['static', 'pool', 'tools', 'routing', 'giveaway', 'injection', 'visual', 'regression', 'assessment'])) {
   const r = await fetch(`${base}/api/agent/eval?group=${group}&student=${student}`, { method: 'POST', headers: { Authorization: `Bearer ${secret}` } })
   const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   if (!j.results) { console.log(group, 'ERROR', j.error); continue }

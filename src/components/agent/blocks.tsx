@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { ArrowRight, Check, ExternalLink, ImageOff, Pause, Play, RotateCcw, Volume2, X } from 'lucide-react'
 import { WhiteboardPlayer } from '@/components/whiteboard'
 import { RichText } from '@/components/rich-text'
+import { ItemFigure } from '../item-figure'
 import { buttonClass, cx, Skeleton, Spinner } from '@/components/ui'
 import { compileExpr } from '@/lib/lesson-schema'
 import type { Block } from '@/lib/agent/types'
@@ -370,6 +371,7 @@ function PracticeBlock({ block }: { block: Extract<Block, { kind: 'practice' }> 
           return (
             <li key={i}>
               <p className="text-[15px] leading-relaxed text-ink"><span className="tnum mr-1.5 text-faint">{i + 1}.</span><RichText text={it.q} /></p>
+              <ItemFigure figure={it.figure} className="mt-2" />
               <div className="mt-2 grid gap-1.5">
                 {it.options.map((o, k) => {
                   const picked = st?.picked.includes(k)
