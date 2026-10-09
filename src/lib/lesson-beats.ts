@@ -289,7 +289,7 @@ ${JSON.stringify(steps).slice(0, 8000)}
 Rewrite the beat so it is demonstrated visually (draw, then animate / move / transform while the narration says what is happening) and has about ${words} spoken words. Return {"steps": [...]} only.`, gen)
     } catch (err) {
       // A beat that only runs short is kept when the repair can't be written; a text-heavy one is not.
-      if (!problem) return steps
+      if (!problem) return withRichVisual(ctx, steps)
       throw err
     }
     const p2 = beatProblem(fixed, beat.kind, boardHasDiagram)
