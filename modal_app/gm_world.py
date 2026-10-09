@@ -1599,7 +1599,62 @@ class World:
                                    f"or a point sits on the wrong side); fix the order or pin the side with ccw/cw/opposite_sides")
             except Exception:  # noqa: BLE001
                 continue
+        out += [m for m, bad in self.path_facts(X, vals) if bad]
         return out
+
+    def path_facts(self, X, vals) -> list[tuple[str, bool]]:
+        """A path drawn as two pieces that meet at a point on a drawn boundary (a light ray hitting glass, a ball hitting a wall):
+        say how it continues. Motion ALONG the boundary never reverses (reflection flips only the part across it, refraction
+        neither), so a reversal there is flagged as wrong."""
+        lin = {oid: o for oid, o in self.objs.items() if o["type"] in ("segment", "ray", "vector") and isinstance(o.get("to"), str)
+               and isinstance(o.get("from"), str) and not o.get("on")}
+        bounds = {oid: o for oid, o in self.objs.items() if o["type"] in ("segment", "line") and isinstance(o.get("to"), str) and not o.get("on")}
+        out = []
+        for a, oa in lin.items():
+            for b, ob in lin.items():
+                if a == b or oa["to"] != ob["from"]:
+                    continue
+                P = oa["to"]
+                try:
+                    A, Pp, B = self.pos(oa["from"], X, vals), self.pos(P, X, vals), self.pos(ob["to"], X, vals)
+                except Exception:  # noqa: BLE001
+                    continue
+                d1, d2 = Pp - A, B - Pp
+                if np.linalg.norm(d1) < 1e-6 or np.linalg.norm(d2) < 1e-6:
+                    continue
+                hits = []
+                for bid, bo in bounds.items():
+                    if bid in (a, b) or P in (bo["from"], bo["to"]):
+                        continue
+                    try:
+                        Q0, Q1 = self.pos(bo["from"], X, vals), self.pos(bo["to"], X, vals)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    t = Q1 - Q0
+                    L = np.linalg.norm(t)
+                    if L < 1e-6 or abs(t[0] * (Pp - Q0)[1] - t[1] * (Pp - Q0)[0]) / L > 1e-3:
+                        continue
+                    t = t / L
+                    n = np.array([-t[1], t[0]])
+                    along1, along2 = float(d1 @ t), float(d2 @ t)
+                    across1, across2 = float(d1 @ n), float(d2 @ n)
+                    kind = "crosses" if across1 * across2 > 0 else "bounces back from"
+                    rev = along1 * along2 < 0 and min(abs(along1), abs(along2)) > 0.02 * max(np.linalg.norm(d1), np.linalg.norm(d2))
+                    normal = bool(bo.get("dashed")) or "normal" in (bid + " " + str(bo.get("label") or "")).lower()
+                    hits.append((bid, kind, rev, normal))
+                # the surface is the boundary that is not a (dashed / named) normal; with two candidates it is ambiguous: facts only
+                surf = [h for h in hits if not h[3]]
+                judge = len(surf) == 1
+                for bid, kind, rev, normal in hits:
+                    bad = rev and judge and not normal
+                    if normal and not rev:
+                        continue
+                    msg = (f"path {a} -> {b} meets {bid} at {P} and {kind} it" +
+                           (f", but its motion along {bid} reverses ({a} travels one way along {bid}, {b} the other); no reflection or "
+                            f"refraction does that: put {b}'s end on the other side of the normal" if bad else
+                            (", turning back along it" if rev else ", keeping its direction along it")))
+                    out.append((msg, bad))
+        return out[:4]
 
     def overlaps(self, X, vals) -> list[str]:
         """Filled polygons that PARTLY overlap (not one nested in the other): in a dissection proof the pieces must tile."""
@@ -1709,6 +1764,10 @@ def describe(w: "World", max_lines: int = 60) -> str:
         same = [g for g in groups.values() if len(g) > 1]
         if same:
             out.append("congruent pieces (same sides and area): " + "; ".join(", ".join(g) for g in same))
+        try:
+            out += [m for m, bad in w.path_facts(X, vals) if not bad]
+        except Exception:  # noqa: BLE001
+            pass
         try:
             ov = w.overlaps(X, vals)
             if ov:

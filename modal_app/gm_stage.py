@@ -251,6 +251,29 @@ class Stage:
     def P(self, ref):
         return self.pos(ref)
 
+    def _ends_on_surface(self, o) -> bool:
+        to = o.get("to")
+        if not isinstance(to, str):
+            return False
+        try:
+            P = self.P(to)
+        except Exception:  # noqa: BLE001
+            return False
+        for oid, b in self.W.objs.items():
+            if oid == o.get("id") or b.get("type") not in ("segment", "line") or not isinstance(b.get("to"), str):
+                continue
+            if b.get("dashed") or "normal" in oid.lower() or to in (b.get("from"), b.get("to")):
+                continue
+            try:
+                A, B = self.P(b["from"]), self.P(b["to"])
+            except Exception:  # noqa: BLE001
+                continue
+            d = B - A
+            L = np.linalg.norm(d)
+            if L > 1e-6 and abs(d[0] * (P - A)[1] - d[1] * (P - A)[0]) / L < 1e-3:
+                return True
+        return False
+
     def _color_of(self, o, default=None):
         if o.get("color"):
             if str(o["color"]).lower() == "light" and o.get("type") not in ("box", "polygon", "area", "cells", "circle"):
@@ -280,6 +303,8 @@ class Stage:
             return Dot(self.P(o["id"]), radius=float(o.get("size", 0.08)), color=c)
         if t in ("segment", "line", "ray"):
             a, b = self.P(o["from"]), self.P(o["to"])
+            if t == "ray" and self._ends_on_surface(o):
+                t = "segment"  # a ray that reaches a drawn surface at its 'to' point stops there (light hitting glass or a mirror)
             if t != "segment":
                 d = b - a
                 n = np.linalg.norm(d) + 1e-9
@@ -874,6 +899,7 @@ class Stage:
     def _readout_mob(self, o):
         i = list(self.readouts).index(o["id"]) if o["id"] in self.readouts else len(self.readouts)
         txt = GW.fmt_template(o.get("text", ""), self.vals)
+        txt = re.sub(r"(?<!\*)\s*\*(?!\*)\s*", "·", txt)  # n1*sin(θ1) -> n1·sin(θ1)
         m = _t(txt, FS["body"], o.get("color", "ink"))
         if self.panel:
             z = self.panel
