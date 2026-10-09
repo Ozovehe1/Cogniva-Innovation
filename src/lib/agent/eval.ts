@@ -241,6 +241,7 @@ const ROUTING_CASES: ToolCase[] = [
   { id: 'surface-3d', msg: 'I want to turn the 3D surface z = x^2 + y^2 around myself and see its shape.', expect: ['interactive'] },
   { id: 'derivation', msg: 'Walk me step by step through solving 3(x - 2) = 2x + 5.', expect: ['draw_on_board'] },
   { id: 'motion', msg: 'Show me a ball rolling down a ramp and speeding up as it goes.', expect: ['draw_on_board', 'animate_concept', 'simulate'] },
+  { id: 'animation-ask', msg: 'Show me an animation of how a sine wave is traced by a point going round a circle.', expect: ['animate_concept'] },
   { id: 'cinematic', msg: 'Make a cinematic 3D animation of the Earth orbiting the Sun, tilted, to show why we get seasons.', expect: ['animate_concept'] },
   { id: 'board-circle', msg: 'Circle the -5 from the last step on the board and say what it means.', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX },
   { id: 'board-revise', msg: 'On the board, can you rewrite 2x = -10 as x = -10/2 before the last line?', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX },

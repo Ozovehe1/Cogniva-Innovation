@@ -39,7 +39,9 @@ export function ZoomableImage({ src, alt, className, imgClassName, label = 'Tap 
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img ref={imgRef} src={src} alt="" loading={loading} decoding="async" onLoad={onLoad} onError={onError} className={imgClassName} />
         {children}
-        <span aria-hidden className="pointer-events-none absolute bottom-2 right-2 inline-flex h-8 items-center gap-1.5 rounded-full bg-ink/75 px-2.5 text-[12px] font-medium text-white opacity-90 shadow-[var(--shadow-raised)] backdrop-blur-sm transition-opacity duration-150 md:opacity-0 md:group-hover/zoom:opacity-100 md:group-focus-visible/zoom:opacity-100">
+        {/* Phones: the chip sits in its own strip under the picture, so it never covers the picture's own credit line or
+            labels in its corner. Desktop: it floats over the corner on hover / focus only. */}
+        <span aria-hidden className="pointer-events-none mb-2 ml-auto mr-2 flex h-8 w-fit items-center gap-1.5 rounded-full bg-ink/75 px-2.5 text-[12px] font-medium text-white opacity-90 shadow-[var(--shadow-raised)] backdrop-blur-sm transition-opacity duration-150 md:absolute md:bottom-2 md:right-2 md:m-0 md:opacity-0 md:group-hover/zoom:opacity-100 md:group-focus-visible/zoom:opacity-100">
           <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />{label}
         </span>
       </button>

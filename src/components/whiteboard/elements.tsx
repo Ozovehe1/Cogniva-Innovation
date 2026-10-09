@@ -730,12 +730,14 @@ export function ShapeElement(props: ShapeProps) {
   // Morph (GSAP MorphSVG): while it runs, one outline path tweens from the old shape to the new one.
   const morphing = morphMs !== undefined && !reduced && !!el.prevShape && !!el.morphAct
   const [morphDone, setMorphDone] = useState<string | null>(null)
-  const showMorph = morphing && morphDone !== el.morphAct
-  const fromD = showMorph && el.prevShape ? outlineD(el, el.prevShape, vars) : ''
-  const toD = showMorph ? outlineD(el, el.step.shape, vars) : ''
+  const wantMorph = morphing && morphDone !== el.morphAct
+  const fromD = wantMorph && el.prevShape ? outlineD(el, el.prevShape, vars) : ''
+  const toD = wantMorph ? outlineD(el, el.step.shape, vars) : ''
+  // No outline for either end: draw the shape straight away (derived, no state update inside the effect).
+  const showMorph = wantMorph && !!fromD && !!toD
   useLayoutEffect(() => {
     const path = morphRef.current
-    if (!showMorph || !path || !fromD || !toD) { if (showMorph && (!fromD || !toD)) setMorphDone(el.morphAct ?? null); return }
+    if (!showMorph || !path) return
     let dead = false
     let tween: { kill: () => void } | null = null
     path.setAttribute('d', fromD)

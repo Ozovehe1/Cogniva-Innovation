@@ -913,14 +913,22 @@ const VISUAL_DEFAULT = ['plot', 'illustrate', 'simulate']
 ROUTES.push([/\b(diagram|label(l)?ed|illustrat|picture of|structure of|cells?|organ|anatomy|parts of|heart|lungs?|kidney|liver|brain|eye|ear|skeleton|skull|tooth|teeth|flower|leaf|root|stem|seed|insect|apparatus|microscope|circuit|atom|molecule|planet|solar system|moon|volcano|earthquake|lever|pulley|dna|chromosome|neuron|virus|bacteri\w*|photosynthe\w*|digestive|respirat\w*|water cycle|food (chain|web)|ecosystem)\b/i, ['find_illustration']])
 VISUAL_DEFAULT.push('find_illustration')
 
+/** The learner asked for an animation / clip / video (animate_concept, not a slider simulation). */
+export const ANIMATION_ASK = /\b(animat\w*|clip|video|movie)\b/i
+
 /** The tools offered for one chat turn: a core set plus what the message (and the last turns) point to. */
-export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonId' | 'hasBoard'>, text: string): ToolSpec[] {
+export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonId' | 'hasBoard'>, text: string, lastUser = text): ToolSpec[] {
   const all = toolsFor(ctx)
   if (ctx.mode !== 'chat') return all
   const want = new Set(CORE)
   let matched = false
   for (const [re, names] of ROUTES) if (re.test(text)) { names.forEach(n => want.add(n)); matched = true }
-  if (!matched || /\b(explain|show|how|why|what is|teach)\b/i.test(text)) VISUAL_DEFAULT.forEach(n => want.add(n))
+  // "Show me an animation of…": the learner asked for a clip, so the slider simulation is not offered unless they also
+  // asked for sliders / a simulation ("show" alone used to pull in simulate, which then won the turn).
+  const wantsClip = ANIMATION_ASK.test(lastUser) && !/\b(simulat|slider|drag|interactive|play with)/i.test(lastUser)
+  if (wantsClip) want.add('animate_concept')
+  else if (!matched || /\b(explain|show|how|why|what is|teach)\b/i.test(text)) VISUAL_DEFAULT.forEach(n => want.add(n))
+  if (wantsClip) { want.delete('simulate'); want.delete('interactive') }
   if (ctx.lessonId) want.add('get_lesson_digest')
   if (ctx.hasBoard) { want.add('board_inspect'); want.add('board_edit') }
   return all.filter(t => want.has(t.def.name))
