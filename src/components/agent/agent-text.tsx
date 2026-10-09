@@ -15,7 +15,14 @@ export function AgentText({ text }: { text: string }) {
     .replace(/!\[[^\]\n]*\]\([^)\s]+\)/g, '')
     .replace(/\\\[([\s\S]+?)\\\]/g, (_, m: string) => `$${m.trim()}$`).replace(/\\\(([\s\S]+?)\\\)/g, (_, m: string) => `$${m.trim()}$`)
     .replace(/\n{3,}/g, '\n\n').trim()
-  const blocks = norm.split(/\n{2,}/)
+  // A list that starts right under a sentence (no blank line, as models often write) is still a list.
+  const isItem = (l: string) => /^\s*([-*•]|\d+[.)])\s+/.test(l)
+  const blocks = norm.split('\n').reduce<string[]>((acc, l, i, all) => {
+    const prev = i ? all[i - 1] : ''
+    if (i && prev.trim() && l.trim() && isItem(l) !== isItem(prev)) acc.push('')
+    acc.push(l)
+    return acc
+  }, []).join('\n').split(/\n{2,}/)
   const link = (href: string, label: string, k: string) => (
     <a key={k} href={href} target="_blank" rel="noopener noreferrer nofollow" className="break-words font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent">{label}</a>
   )
