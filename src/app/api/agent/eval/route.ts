@@ -1,12 +1,13 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { agentSecretOk } from '@/lib/agent/secret'
+import { regressionCases } from '@/lib/correctness/regression'
 import { turnCase, routingCases, lessonCases, giveawayCases, injectionCases, staticAsyncCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
 
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
 /**
- * POST /api/agent/eval?group=static|tools|routing|lesson|giveaway|injection|visual&student=<profile id>   (Bearer AGENT_SECRET)
+ * POST /api/agent/eval?group=static|tools|routing|lesson|giveaway|injection|visual|regression&student=<profile id>   (Bearer AGENT_SECRET)
  * Runs the agent eval set on production (real models, budgets and services). Writes only to the given test student.
  */
 export async function POST(request: Request) {
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
   else if (group === 'giveaway') results = await giveawayCases(admin, student)
   else if (group === 'injection') results = await injectionCases(admin, student)
   else if (group === 'visual') results = await visualCases(admin, student)
+  else if (group === 'regression') results = await regressionCases(admin, student, only)
   else return Response.json({ error: 'unknown group' }, { status: 400 })
   return Response.json({ group, summary: summarise(results), results, groq: !!process.env.GROQ_API_KEY })
 }
