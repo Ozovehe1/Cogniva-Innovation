@@ -22,7 +22,7 @@ image = (
     .pip_install(
         "torch==2.3.0", "torchvision==0.18.0", "transformers==4.51.3", "accelerate==1.2.1", "numpy==1.26.4", "Pillow==10.1.0",
         "CairoSVG==2.7.1", "einops==0.4.1", "qwen-vl-utils==0.0.11", "ConfigArgParse==1.7.1", "PyYAML==6.0.2", "shapely==2.0.7",
-        "huggingface_hub==0.26.5", "fastapi[standard]",
+        "huggingface_hub==0.30.2", "fastapi[standard]",
     )
     .run_commands("git clone --depth 1 https://github.com/OmniSVG/OmniSVG.git /opt/OmniSVG")
     .env({"HF_HOME": HF, "HF_HUB_ENABLE_HF_TRANSFER": "0"})
