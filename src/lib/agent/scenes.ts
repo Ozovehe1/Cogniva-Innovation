@@ -154,13 +154,16 @@ export function magnetCoilSvg(m: number, live: SceneLive, slider: { min: number;
   }
   // Status line (top left): what is happening right now.
   const moving = Math.abs(emf) > 0.08
-  const msg = !coil ? 'Field lines leave N, curve round and enter S' : moving ? (emf > 0 ? 'Magnet moving in: current flows' : 'Magnet moving out: current flows the other way') : 'Magnet still: field not changing, no current'
+  const msg = !coil ? 'Field: out of N, round, into S' : moving ? (emf > 0 ? 'Magnet moving in: current flows' : 'Magnet moving out: current flows the other way') : 'Magnet still: field not changing, no current'
   const col = coil && moving ? '#8A5A00' : MUTED
-  p.push(`<rect x="8" y="8" width="${f1(Math.min(W - 16, 16 + msg.length * 7.6))}" height="24" rx="12" fill="#fff" stroke="#E5E1D8"/><text x="18" y="25" ${FONT} font-size="13" font-weight="600" fill="${col}">${msg}</text>`)
+  const px = coil ? 8 : 66, py = coil ? 8 : 16
+  p.push(`<rect x="${px}" y="${py}" width="${f1(Math.min(W - 16, 16 + msg.length * 7.6))}" height="24" rx="12" fill="#fff" stroke="#E5E1D8"/><text x="${px + 10}" y="${py + 17}" ${FONT} font-size="13" font-weight="600" fill="${col}">${msg}</text>`)
   if (coil) p.push(`<text x="${f1(mx(MC.coilC))}" y="${f1(my(MC.coilR) - 10)}" ${FONT} font-size="13" fill="${COPPER_D}" text-anchor="middle" font-weight="600" stroke="${BG}" stroke-width="4" paint-order="stroke">coil</text>`)
   p.push('</g>')
   void slider
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" style="display:block">${p.join('')}</svg>`
+  // Without the coil the magnet is the whole picture: a closer, taller crop so it reads large on a phone.
+  const vb = coil ? `0 0 ${W} ${H}` : `60 8 280 240`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="100%" style="display:block">${p.join('')}</svg>`
 }
 
 /** One frame of magnet_coil physics: smoothed magnet speed → induced current → springy needle. */

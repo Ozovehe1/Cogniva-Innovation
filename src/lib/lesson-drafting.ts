@@ -402,7 +402,7 @@ async function runDraftWorkInner(lessonId: string, opts: { origin?: string } = {
         // deferred beat 6 of a watched lesson for minutes and the player sat on 'Next part on its way').
         const { data: w } = await db.from('lessons').select('watched_at').eq('id', lessonId).maybeSingle()
         const priority = ready.length < HEAD_START_BEATS + 2 || watching(w as { watched_at?: string | null } | null) ? 'ask' as const : 'background' as const
-        let steps = await withLlmContext({ priority, learnerId: lesson.owner_student_id ?? null, label: 'lesson-beat' }, () => draftBeat({ lesson: lite, plan, index, board, recentSay, notes, meta, chapterStart, deadline: Math.min(Date.now() + BEAT_DEADLINE_MS, hardEnd - 15_000) }))
+        let steps = await withLlmContext({ priority, learnerId: lesson.owner_student_id ?? null, label: 'lesson-beat' }, () => draftBeat({ lesson: lite, plan, index, board, recentSay, notes, meta, chapterStart, usedScenes: ready.flatMap(r => r.steps).filter(st => st.type === 'stage').map(st => String((st as { spec?: { scene?: string } }).spec?.scene ?? '')).filter(Boolean), deadline: Math.min(Date.now() + BEAT_DEADLINE_MS, hardEnd - 15_000) }))
         if (chapterStart && before.length > 0 && !(steps[0]?.type === 'clear' && !(steps[0] as { targets?: string[] }).targets)) steps = [{ type: 'clear' }, ...steps]
         const len = lengthReport(steps, (next.seconds ?? 60) / 60)
         await db.from('lesson_sections').update({

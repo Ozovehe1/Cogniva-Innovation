@@ -55,7 +55,7 @@ const BAR_MAGNET = {
   title: 'The field around a bar magnet', scene: 'bar_magnet',
   explain: 'The blue lines are the magnetic field: they leave the N end, curve round and go back into the S end, and the moving dots show which way. Where the lines crowd together (near the ends) the field is strongest. Slide the magnet and the whole field moves with it.',
   x: [-5, 5], y: [-4, 4],
-  sliders: [{ name: 'm', label: 'Magnet position', min: -2.5, max: 2.5, step: 0.05, value: -2.5 }],
+  sliders: [{ name: 'm', label: 'Magnet position', min: -1.8, max: 0.4, step: 0.05, value: -1.8 }],
   points: [{ name: 'S', x: 'm-0.7', y: 0, label: 'S', color: 'navy' }, { name: 'N', x: 'm+0.7', y: 0, label: 'N', color: 'clay' }],
   segments: [{ from: 'S', to: 'N', color: 'clay', arrow: true }],
   field: { dx: DX, dy: DY, kind: 'vector' },

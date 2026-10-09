@@ -160,6 +160,8 @@ export interface BeatContext {
   chapterStart: boolean
   /** First beat of the whole lesson (written in parallel with the plan; the plan is not known yet). */
   opening?: boolean
+  /** Ready-made scenes already shown in this lesson's earlier beats (one entry per showing), so none repeats too often. */
+  usedScenes?: string[]
 }
 
 /** Short summary of the models that failed before one answered, e.g. "gemini-3.8-flash 429, gemini-2.5-flash timeout". */
@@ -328,16 +330,20 @@ export async function withRichVisual(ctx: BeatContext, steps: Step[]): Promise<S
   // Invisible fields: a stage the beat writer drew itself (free models give a dot and a line on axes) is swapped for the
   // hand-built scene of the same idea (magnet + field lines, coil + meter, wire + compasses, charges in a wire).
   const FIELD_TPL: StageTemplate[] = ['magnet_coil', 'bar_magnet', 'wire_field', 'charge_drift']
+  // The same scene at most twice per lesson: after that a field stage of the writer's own is dropped (the board and
+  // picture carry the beat) rather than a third showing of the same figure.
+  const shown = (k: string) => (ctx.usedScenes ?? []).filter(x => x === k).length
   if (tpl && FIELD_TPL.includes(tpl)) {
     const i = steps.findIndex(st => st.type === 'stage' && !(st as { spec?: { scene?: string } }).spec?.scene)
     if (i >= 0) {
+      if (shown(tpl) >= 2) return [...steps.slice(0, i), ...steps.slice(i + 1)]
       const st = stageStep(tpl, (steps[i] as { id?: string }).id ?? `stage_${tpl}_${ctx.index}`)
       if (st) { const swapped = [...steps]; swapped[i] = st; return swapped }
     }
   }
   const hasLive = steps.some(st => st.type === 'stage' || st.type === 'manim_clip')
   if (hasLive || (hasRichVisual(steps) && !(tpl && stageTemplateFor(own)))) return steps
-  if (tpl && (tpl !== prevTpl || stageTemplateFor(own))) {
+  if (tpl && shown(tpl) < 2 && (tpl !== prevTpl || stageTemplateFor(own))) {
     const st = stageStep(tpl, `stage_${tpl}_${ctx.index}`)
     if (st) return insertAfterOpening(out, st)
   }
