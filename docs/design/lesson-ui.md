@@ -3,7 +3,8 @@
 Scope: what a learner sees while being taught — the lesson board, the **stage** (a live visual that takes over from the
 board), the in-lesson Ask sheet, checks, and the tool outputs inside Ask (diagram, interactive, board, plot). This spec
 is the bar every change to those surfaces is held to. Tokens live in `src/app/globals.css`; primitives in
-`src/components/ui.tsx` (`buttonClass`, `cx`).
+`src/components/ui.tsx` (`buttonClass`, `cx`). Every other screen (home, learn, Ask, auth, About, credits,
+system pages, sheets) is inventoried and graded in `docs/design/app-ui.md`.
 
 ## 0. UX Magnifica — every choice names the learning principle it serves
 "UX Magnifica" is the bar: design that works *with* how attention, memory and motivation work, rendered with
@@ -136,6 +137,14 @@ less fiddly on touch (Fitts).
 ## 15. Figures keep 1:1 units when they have circles
 `figureGeom` / `equalUnits` (src/lib/agent/interactive.ts): a figure with a circle takes its ranges' aspect (clamped
 1–1.6) and widens the shorter range so a unit is as long across as up — in the live figure and in the still.
+
+## 16. Magnifica pass additions (Oct 2026)  ·  see app-ui.md for the full inventory
+- Explore check: the figure footer states the goal ("Goal: sin θ = 0.5") and the goal readout carries a clay ring
+  (goal salience, spatial contiguity) — replaces the generic "Move the sliders."
+- Recap still renders at recap size (400 × 280, labels 13-18 px) and opens larger on tap.
+- Board `figure`s, Ask illustrations and the recap still are tap-to-zoom (`zoomable.tsx`).
+- The stage starts at the board frame's measured height and grows to its content (spatial continuity, §2).
+- An edited chat board pulses once and shows "Updated" while the pen replays from the first changed step.
 
 ## Not in this pass (tracked)
 - Dark theme: the app ships light-only today (no dark tokens); the roles above are defined so a dark palette can map
