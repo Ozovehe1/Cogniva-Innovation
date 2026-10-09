@@ -849,6 +849,8 @@ class World:
 
     def _half(self, oid):
         w, h = self.sizes.get(oid, (0.0, 0.0))
+        if self.objs.get(oid, {}).get("type") == "axes":
+            return w / 2, h / 2  # axes are sized in world units (unit/size), drawn scaled with the world
         return w / 2 / self._ks, h / 2 / self._ks
 
     def residuals(self, X, vals, soft_w=1.0, which="all") -> list[tuple[float, str, bool]]:
@@ -1594,7 +1596,7 @@ class World:
                         xs.append(p[0]); ys.append(p[1])  # noqa: E702
                     elif t in BLOCKS:
                         c = self.pos(oid, X, vals)
-                        h = np.array(self.sizes[oid]) / 2 / max(self._ks, 1e-6)
+                        h = np.array(self._half(oid))
                         xs += [c[0] - h[0], c[0] + h[0]]; ys += [c[1] - h[1], c[1] + h[1]]  # noqa: E702
                     elif t in ("circle", "arc"):
                         c, r = self.pos(o["center"], X, vals), self.radius(oid, X, vals)
