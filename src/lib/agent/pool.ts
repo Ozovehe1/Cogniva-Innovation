@@ -529,7 +529,10 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
       // Fair share per learner: a per-minute token cap everywhere (one learner cannot drain a minute window), and a
       // daily cap on Groq tokens, the scarce resource (200K a model a day). Gemini's scarce resource is requests,
       // which the per-minute cap already spreads. Background gets half.
-      const half = priority === 'background' ? 0.5 : 1
+      // A learner's own lesson being written while they watch (plan + opening + next beats, ~10K tokens each) must not
+      // starve on the same per-minute share as their chat: lesson content gets 3x (measured: fresh lessons paused on
+      // "fair share" right after the opening beat, so the learner saw one beat and then "Lesson complete").
+      const half = (priority === 'background' ? 0.5 : 1) * (o.purpose === 'lesson' && priority !== 'background' ? 3 : 1)
       const userCap = !learner ? {} : s.provider === 'groq'
         ? { user: `g:${learner}`, userTpm: POOL.userTpm() * half, userTpd: POOL.userTpd() * half }
         : { user: learner, userTpm: POOL.userTpm() * half }
