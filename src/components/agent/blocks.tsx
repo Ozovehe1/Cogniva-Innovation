@@ -55,7 +55,7 @@ function BoardBlock({ block }: { block: Extract<Block, { kind: 'board' }> }) {
         <span className="truncate pl-3 text-[13px] text-ink-2"><RichText text={block.title} /></span>
       </div>
       <div className="p-2 sm:p-3">
-        <WhiteboardPlayer steps={block.steps} title={block.title} autoPlay={!!block.plot} allowSkipChecks />
+        <WhiteboardPlayer key={`${block.id}:${block.rev ?? 0}`} steps={block.steps} title={block.title} autoPlay={!!block.plot || !!block.start} initialIndex={block.start ?? 0} allowSkipChecks />
       </div>
     </div>
   )

@@ -14,6 +14,7 @@ import type { Chapter } from './lesson-sections'
 import { prepareMathText, repairTex, texToPlain, toPlainText, validateTex } from './math-text'
 import { INK_HEX, SIZE_PX, applyStep, emptyBoard, evalFn, evalNum, fillTemplates, toBoard, xScale, type BoardEl, type BoardState, type ShapeEl, type TextEl } from '@/components/whiteboard/board-state'
 import { elementBox } from './lesson-layout'
+import { MARK_NOTE_PX, markGeometry } from '@/components/whiteboard/marks'
 
 export interface ExportLesson {
   title: string
@@ -74,7 +75,7 @@ function blocksFor(steps: Step[], from: number, to: number, start: BoardState): 
 
 const fmt = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : 0)
 
-function shapeSvg(el: ShapeEl, vars: BoardState['vars']): string {
+export function shapeSvg(el: ShapeEl, vars: BoardState['vars']): string {
   const step: DrawStep = el.step
   const sh = step.shape
   const color = INK_HEX[(step.color ?? 'ink') as Ink] ?? INK_HEX.ink
@@ -182,6 +183,7 @@ function shapeSvg(el: ShapeEl, vars: BoardState['vars']): string {
       const half = Math.max(Math.abs(b - a) / 2 + (sh.extend ?? (ax.xRange[1] - ax.xRange[0]) * 0.15), 0.1)
       return lineThrough((a + b) / 2, (f(a) + f(b)) / 2, m, half)
     }
+    case 'figure': return `<image href="data:image/svg+xml;base64,${Buffer.from(sh.svg).toString('base64')}" x="${fmt(sh.x)}" y="${fmt(sh.y)}" width="${fmt(sh.w)}" height="${fmt(sh.h)}" preserveAspectRatio="xMidYMid meet"/>`
     case 'tangent': {
       if (!ax) return ''
       const f = evalFn(sh.expr, vars)
@@ -232,6 +234,14 @@ function boardSvg(state: BoardState, label: string): string {
         inner = el.style === 'underline'
           ? `<line x1="${fmt(b.x)}" y1="${fmt(b.y + b.h + 4)}" x2="${fmt(b.x + b.w)}" y2="${fmt(b.y + b.h + 4)}" stroke="${c}" stroke-width="3" stroke-linecap="round"/>`
           : `<rect x="${fmt(b.x - 8)}" y="${fmt(b.y - 6)}" width="${fmt(b.w + 16)}" height="${fmt(b.h + 12)}" rx="6" fill="none" stroke="${c}" stroke-width="2.4"/>`
+      }
+    }
+    else if (el.kind === 'mark') {
+      const target = byId.get(el.target)
+      const b = target ? elementBox(target, vars) : null
+      if (b) {
+        const g = markGeometry(el.mark, b, el.key, el.note)
+        inner = g.outlines.map(d => `<path d="${d}" fill="${INK_HEX[el.color]}"/>`).join('') + (el.note && g.note ? `<text x="${fmt(g.note.x)}" y="${fmt(g.note.y + g.note.box.h * 0.8)}" font-size="${MARK_NOTE_PX}" font-style="italic" fill="${INK_HEX[el.color]}" font-family="Georgia, serif">${esc(el.note)}</text>` : '')
       }
     }
     try { parts.push(wrapFx(el, inner, vars)) } catch { parts.push(inner) }

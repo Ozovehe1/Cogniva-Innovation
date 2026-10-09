@@ -1,4 +1,4 @@
-import type { CheckStep, Cue, CueAction, DrawStep, Ink, Num, Step, TextSize, Vars } from '@/lib/lesson-schema'
+import type { AnnotateStep, CheckStep, Cue, CueAction, DrawStep, Ink, Num, Pt, Shape, Step, TextSize, Vars } from '@/lib/lesson-schema'
 import { ACTION_TYPES, BOARD_H, BOARD_W, TEMPLATE_RE, compileExpr } from '@/lib/lesson-schema'
 
 export const INK_HEX: Record<Ink, string> = {
@@ -29,6 +29,10 @@ export interface Fx {
   pulse?: string
   /** Action key of the last change, so the player can animate it over that action's duration. */
   act: string
+  /** Glide along a path (GSAP MotionPath): points relative to the element's final position, for action `act`. */
+  along?: { act: string; pts: Pt[]; rotate?: boolean }
+  /** Draw-the-eye beat or glow (GSAP), for action `act`. */
+  beat?: { act: string; style: 'beat' | 'glow' | 'trace'; times: number; color: Ink }
 }
 
 interface ElBase {
@@ -68,6 +72,19 @@ export interface ShapeEl extends ElBase {
   kind: 'shape'
   step: DrawStep
   axes?: AxesDef
+  /** Shape before the last morph, the step index and action key of that morph (GSAP MorphSVG). */
+  prevShape?: Shape
+  morphedAt?: number
+  morphAct?: string
+}
+
+/** A hand-drawn mark (circle, underline, tick…) on another element. */
+export interface MarkEl extends ElBase {
+  kind: 'mark'
+  target: string
+  mark: AnnotateStep['mark']
+  color: Ink
+  note?: string
 }
 
 export interface HighlightEl extends ElBase {
@@ -77,7 +94,7 @@ export interface HighlightEl extends ElBase {
   color: Ink
 }
 
-export type BoardEl = TextEl | ShapeEl | HighlightEl
+export type BoardEl = TextEl | ShapeEl | HighlightEl | MarkEl
 
 export interface Camera { zoom: number; cx: number; cy: number; act: string }
 
@@ -206,7 +223,7 @@ export function applyAction(state: BoardState, step: Action, index: number, k = 
     case 'draw': {
       const axesDef = step.on ? axes[step.on] : undefined
       if (step.on && !axesDef) return state
-      const plain: DrawStep = { type: 'draw', id: step.id, shape: step.shape, color: step.color, width: step.width, dashed: step.dashed, fill: step.fill, on: step.on }
+      const plain: DrawStep = { type: 'draw', id: step.id, shape: step.shape, color: step.color, width: step.width, dashed: step.dashed, fill: step.fill, on: step.on, rough: step.rough }
       const el: ShapeEl = { kind: 'shape', key: keyOf(step.id), id: step.id, born: index, act, step: plain, axes: axesDef, dyn: shapeIsDyn(plain) || undefined }
       const rest = step.id ? els.filter(e => e.id !== step.id) : els
       let nextAxes = axes
@@ -262,7 +279,7 @@ export function applyAction(state: BoardState, step: Action, index: number, k = 
       for (const t of drop) delete nextAxes[t]
       return {
         ...state,
-        els: els.filter(e => !(e.id && drop.has(e.id)) && !(e.kind === 'highlight' && drop.has(e.target))),
+        els: els.filter(e => !(e.id && drop.has(e.id)) && !((e.kind === 'highlight' || e.kind === 'mark') && drop.has(e.target))),
         axes: nextAxes,
       }
     }
@@ -277,9 +294,9 @@ export function applyAction(state: BoardState, step: Action, index: number, k = 
     case 'color': {
       let changed = false
       const next = els.map(e => {
-        if (changed || e.id !== step.target || e.kind === 'highlight') return e
+        if (changed || e.id !== step.target || e.kind === 'highlight' || e.kind === 'mark') return e
         changed = true
-        const fx = baseFx(e, act)
+        const fx = { ...baseFx(e, act), along: undefined }
         if (step.type === 'move') {
           if (step.by) {
             const sx = e.kind === 'shape' && e.axes ? xScale(e.axes) : 1
@@ -305,6 +322,54 @@ export function applyAction(state: BoardState, step: Action, index: number, k = 
         return { ...e, fx }
       })
       return changed ? { ...state, els: next } : state
+    }
+    case 'morph': {
+      let changed = false
+      const next = els.map(e => {
+        if (changed || e.id !== step.target || e.kind !== 'shape') return e
+        changed = true
+        return { ...e, prevShape: e.step.shape, morphedAt: index, morphAct: act, step: { ...e.step, shape: step.shape, color: step.color ?? e.step.color } } satisfies ShapeEl
+      })
+      return changed ? { ...state, els: next } : state
+    }
+    case 'along': {
+      let changed = false
+      const viaEl = step.via ? els.find(e => e.id === step.via && e.kind === 'shape') as ShapeEl | undefined : undefined
+      const next = els.map(e => {
+        if (changed || e.id !== step.target || e.kind === 'highlight' || e.kind === 'mark') return e
+        const pts = step.path
+          ? step.path.map(p => (e.kind === 'shape' && e.axes ? toBoard(e.axes, p) : p))
+          : viaEl ? shapeOutline(viaEl, state.vars) : []
+        if (pts.length < 2) return e
+        changed = true
+        const fx = baseFx(e, act)
+        // Where the element is now (its anchor / centre, with earlier moves).
+        const own = e.kind === 'shape' ? shapeBox(e, state.vars) : null
+        const cx = e.kind === 'shape' ? (own ? own.x + own.w / 2 : 0) : e.x
+        const cy = e.kind === 'shape' ? (own ? own.y + own.h / 2 : 0) : e.y
+        const end = pts[pts.length - 1]
+        fx.dx = end[0] - cx
+        fx.dy = end[1] - cy
+        fx.along = { act, pts: pts.map(p => [p[0] - end[0], p[1] - end[1]] as Pt), rotate: step.rotate }
+        return { ...e, fx }
+      })
+      return changed ? { ...state, els: next } : state
+    }
+    case 'pulse': {
+      let changed = false
+      const next = els.map(e => {
+        if (changed || e.id !== step.target || e.kind === 'highlight' || e.kind === 'mark') return e
+        changed = true
+        const color = step.color ?? (e.kind === 'shape' ? e.step.color : e.color) ?? 'amber'
+        const style = step.style === 'trace' && e.kind !== 'shape' ? 'glow' : step.style ?? 'beat'
+        return { ...e, fx: { ...baseFx(e, e.fx?.act ?? act), beat: { act, style, times: Math.round(step.times ?? 2), color } } }
+      })
+      return changed ? { ...state, els: next } : state
+    }
+    case 'annotate': {
+      if (!els.some(e => e.id === step.target && e.kind !== 'highlight' && e.kind !== 'mark')) return state
+      const el: MarkEl = { kind: 'mark', key: `mk-${step.id ?? step.target}@${k ? act : index}`, id: step.id, born: index, act, target: step.target, mark: step.mark, color: step.color ?? 'clay', note: step.note }
+      return { ...state, els: [...els.filter(e => !(step.id && e.id === step.id)), el] }
     }
     case 'camera': {
       if (step.zoom <= 1.001) return { ...state, camera: null }
@@ -349,7 +414,7 @@ export function buildBoard(steps: Step[], count: number): BoardState {
 /* ───────────── Timing ───────────── */
 
 const SHAPE_MS: Record<string, number> = {
-  line: 700, arrow: 800, circle: 900, rect: 900, polyline: 1000, polygon: 1000, arc: 800, sector: 900, point: 380, axes: 1200, function: 1600, secant: 700, tangent: 700,
+  figure: 900, line: 700, arrow: 800, circle: 900, rect: 900, polyline: 1000, polygon: 1000, arc: 800, sector: 900, point: 380, axes: 1200, function: 1600, secant: 700, tangent: 700,
 }
 
 /** How long a step's own animation runs, in ms (its natural length, before narration stretches it). */
@@ -362,6 +427,10 @@ export function animMs(step: Step | Action): number {
     case 'scale': return 700
     case 'color': return 650
     case 'camera': return 1100
+    case 'morph': return 1200
+    case 'along': return 1600
+    case 'pulse': return 1100
+    case 'annotate': return 900
     case 'write': return clamp(320 + step.text.length * 30, 520, 2400)
     case 'math': return clamp(450 + step.tex.length * 14, 650, 1800)
     case 'draw': return SHAPE_MS[step.shape.kind] ?? 800
@@ -435,6 +504,7 @@ export function shapeBox(el: ShapeEl, vars: Vars = {}): Box | null {
       const f = shape.frame
       pts.push([f.x, f.y], [f.x + f.w, f.y + f.h]); break
     }
+    case 'figure': pts.push([shape.x, shape.y], [shape.x + shape.w, shape.y + shape.h]); break
     case 'function':
     case 'secant':
     case 'tangent': {
@@ -448,6 +518,36 @@ export function shapeBox(el: ShapeEl, vars: Vars = {}): Box | null {
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
   const x = Math.min(...xs), y = Math.min(...ys)
   return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
+}
+
+/** Points along a drawn shape's outline in board units (for "along" paths), sampled for curves. */
+export function shapeOutline(el: ShapeEl, vars: Vars = {}): Pt[] {
+  const sh = el.step.shape
+  const P = (p: [Num, Num]): Pt => toBoard(el.axes, [evalNum(p[0], vars), evalNum(p[1], vars)])
+  const ring = (center: Pt, r: number, a0: number, a1: number) => {
+    const [cx, cy] = toBoard(el.axes, center)
+    const R = r * xScale(el.axes)
+    const n = Math.max(8, Math.round(Math.abs(a1 - a0) / 6))
+    return Array.from({ length: n + 1 }, (_, i) => { const a = ((a0 + (a1 - a0) * i / n) * Math.PI) / 180; return [cx + R * Math.cos(a), cy - R * Math.sin(a)] as Pt })
+  }
+  switch (sh.kind) {
+    case 'line': case 'arrow': return [P(sh.from), P(sh.to)]
+    case 'polyline': return sh.points.map(p => toBoard(el.axes, p))
+    case 'polygon': return [...sh.points, sh.points[0]].map(p => toBoard(el.axes, p))
+    case 'circle': return ring(sh.center, sh.r, 0, 360)
+    case 'arc': case 'sector': return ring(sh.center, sh.r, sh.from, sh.to)
+    case 'rect': return ([[sh.x, sh.y], [sh.x + sh.w, sh.y], [sh.x + sh.w, sh.y + sh.h], [sh.x, sh.y + sh.h], [sh.x, sh.y]] as Pt[]).map(p => toBoard(el.axes, p))
+    case 'function': {
+      if (!el.axes) return []
+      const f = evalFn(sh.expr, vars)
+      const [x0, x1] = sh.domain ?? el.axes.xRange
+      const [y0, y1] = el.axes.yRange
+      const out: Pt[] = []
+      for (let i = 0; i <= 80; i++) { const x = x0 + (x1 - x0) * i / 80, y = f(x); if (Number.isFinite(y) && y >= y0 - (y1 - y0) && y <= y1 + (y1 - y0)) out.push(toBoard(el.axes, [x, y])) }
+      return out
+    }
+    default: return []
+  }
 }
 
 /** The step index where the current "segment" began: just after the previous check or full clear. */
@@ -555,7 +655,7 @@ const OFF_BOARD = 0.25
 export function contentBox(els: BoardEl[], vars: Vars, measured: ReadonlyMap<string, Box>, keep?: (el: BoardEl) => boolean): Box | null {
   let out: Box | null = null
   for (const el of els) {
-    if (el.kind === 'highlight' || (keep && !keep(el))) continue
+    if (el.kind === 'highlight' || el.kind === 'mark' || (keep && !keep(el))) continue
     const m = measured.get(el.key) ?? null
     const own = el.kind === 'shape' ? unionBox(shapeBox(el, vars), m) : m ?? estimateTextBox(el)
     if (!own) continue

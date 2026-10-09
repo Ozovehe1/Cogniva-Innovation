@@ -25,6 +25,10 @@ import {
 import { useLiveVars } from './live-vars'
 import { HandText, canHandwrite, useInkReveal } from './handwriting'
 import { PenCueContext, usePen, usePenCue, type PenCue, type Pt } from './pen'
+import { RoughGenerator } from 'roughjs/bin/generator'
+import { loadGsap } from './gsap-fx'
+import { MARK_NOTE_PX, centerPath, markGeometry } from './marks'
+import { shapeOutline, type MarkEl } from './board-state'
 
 const NO_VARS: Vars = {}
 
@@ -362,23 +366,82 @@ function MorphMath({ from, to, ms }: { from: string; to: string; ms: number }) {
  *  scaled in place stays where it is (the wrapper itself sits at the board's corner). */
 export function FxWrap({ fx, ms, reduced, svg, origin, children }: { fx?: Fx; ms: number; reduced: boolean; svg?: boolean; origin?: [number, number]; children: React.ReactNode }) {
   if (!fx) return <>{children}</>
-  const t = { duration: reduced ? 0.15 : Math.max(0.2, ms / 1000), ease: EASE_SMOOTH }
+  // A glide along a path jumps the wrapper to the end at once; the GSAP layer inside runs the path into it.
+  const gliding = !!fx.along && fx.along.act === fx.act
+  const t = { duration: reduced || gliding ? (gliding ? 0 : 0.15) : Math.max(0.2, ms / 1000), ease: EASE_SMOOTH }
   const anim = { x: reduced ? fx.dx : fx.dx, y: fx.dy, scale: fx.scale, opacity: fx.opacity }
   const pulse = fx.pulse && !reduced
     ? { scale: [1, 1.16, 1], transition: { duration: Math.min(1.1, Math.max(0.5, ms / 1000)), ease: EASE_SMOOTH } }
     : undefined
+  const inner = <GsapFx fx={fx} reduced={reduced} svg={svg} origin={origin}>{children}</GsapFx>
   if (svg) {
     return (
       <motion.g initial={false} animate={anim} transition={t} style={{ transformBox: 'fill-box', originX: 0.5, originY: 0.5 }}>
-        <motion.g key={fx.pulse ?? 'p'} animate={pulse} style={{ transformBox: 'fill-box', originX: 0.5, originY: 0.5 }}>{children}</motion.g>
+        <motion.g key={fx.pulse ?? 'p'} animate={pulse} style={{ transformBox: 'fill-box', originX: 0.5, originY: 0.5 }}>{inner}</motion.g>
       </motion.g>
     )
   }
   return (
     <motion.div initial={false} animate={anim} transition={t} className="absolute left-0 top-0" style={{ width: 0, height: 0, overflow: 'visible', originX: origin ? `${origin[0]}px` : undefined, originY: origin ? `${origin[1]}px` : undefined }}>
-      <motion.div key={fx.pulse ?? 'p'} animate={pulse} style={{ width: 0, height: 0, overflow: 'visible', originX: origin ? `${origin[0]}px` : undefined, originY: origin ? `${origin[1]}px` : undefined }}>{children}</motion.div>
+      <motion.div key={fx.pulse ?? 'p'} animate={pulse} style={{ width: 0, height: 0, overflow: 'visible', originX: origin ? `${origin[0]}px` : undefined, originY: origin ? `${origin[1]}px` : undefined }}>{inner}</motion.div>
     </motion.div>
   )
+}
+
+/** Duration (ms) the player gives an action; set by the player so GSAP cues fill their narration window. */
+export const ActDurations = createContext<ReadonlyMap<string, number>>(new Map())
+
+/** GSAP motion cues on an element: glide along a path (MotionPath) and beat / glow pulses. Off with reduced motion. */
+function GsapFx({ fx, reduced, svg, origin, children }: { fx: Fx; reduced: boolean; svg?: boolean; origin?: [number, number]; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement & SVGGElement>(null)
+  const durs = useContext(ActDurations)
+  const along = fx.along && fx.along.act === fx.act ? fx.along : null
+  const alongKey = along?.act
+  useLayoutEffect(() => {
+    const node = ref.current
+    if (!node || !along || reduced) return
+    const first = along.pts[0]
+    // Start at the beginning of the path before GSAP has loaded (no flash at the end point).
+    node.style.transform = `translate(${first[0]}px, ${first[1]}px)`
+    let tween: { kill: () => void } | null = null
+    let dead = false
+    const ms = durs.get(along.act) ?? 1600
+    loadGsap().then(gsap => {
+      if (dead) return
+      node.style.transform = ''
+      tween = gsap.fromTo(node, { x: first[0], y: first[1] }, {
+        motionPath: { path: along.pts.map(([x, y]) => ({ x, y })), curviness: along.pts.length > 2 ? 0.8 : 0, autoRotate: !!along.rotate },
+        duration: Math.max(0.3, ms / 1000), ease: 'power1.inOut',
+        onComplete: () => { gsap.set(node, { x: 0, y: 0, rotation: 0 }) },
+      })
+    }).catch(() => { node.style.transform = '' })
+    return () => { dead = true; tween?.kill(); node.style.transform = '' }
+    // Once per glide.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alongKey, reduced])
+  const beat = fx.beat
+  const beatKey = beat?.act
+  useLayoutEffect(() => {
+    const node = ref.current
+    if (!node || !beat || reduced || beat.style === 'trace') return
+    let tween: { kill: () => void } | null = null
+    let dead = false
+    const ms = durs.get(beat.act) ?? 1100
+    const n = Math.max(1, Math.min(4, beat.times))
+    loadGsap().then(gsap => {
+      if (dead) return
+      const each = Math.max(0.12, ms / 1000 / (n * 2))
+      const color = INK_HEX[beat.color]
+      tween = beat.style === 'glow'
+        ? gsap.fromTo(node, { filter: `drop-shadow(0 0 0px ${color})` }, { filter: `drop-shadow(0 0 9px ${color})`, duration: each, yoyo: true, repeat: n * 2 - 1, ease: 'sine.inOut', onComplete: () => { node.style.filter = '' } })
+        : gsap.to(node, { scale: 1.14, duration: each, yoyo: true, repeat: n * 2 - 1, ease: 'sine.inOut', transformOrigin: svg ? '50% 50%' : origin ? `${origin[0]}px ${origin[1]}px` : '0 0', svgOrigin: undefined })
+    }).catch(() => undefined)
+    return () => { dead = true; tween?.kill(); node.style.filter = ''; node.style.scale = '' }
+    // Once per pulse.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beatKey, reduced])
+  if (svg) return <g ref={ref}>{children}</g>
+  return <div ref={ref} style={{ width: 0, height: 0, overflow: 'visible' }}>{children}</div>
 }
 
 /* ───────────── Shapes (SVG) ───────────── */
@@ -628,14 +691,94 @@ function slopeAt(f: (x: number) => number, x: number) {
   return (f(x + h) - f(x - h)) / (2 * h)
 }
 
-type ShapeProps = { el: ShapeEl; animate: boolean; reduced: boolean; duration?: number; vars?: Vars }
+type ShapeProps = { el: ShapeEl; animate: boolean; reduced: boolean; duration?: number; vars?: Vars; morphMs?: number }
+
+/** One outline path of a shape (board units), for morphs and traces. */
+function outlineD(el: ShapeEl, shape: Shape, vars: Vars) {
+  const pts = shapeOutline({ ...el, step: { ...el.step, shape } }, vars)
+  if (pts.length < 2) return ''
+  const closed = ['circle', 'polygon', 'rect'].includes(shape.kind)
+  return `${pathFromPoints(pts)}${closed ? ' Z' : ''}`
+}
 
 /** A drawn shape: everything in it is inked by the board's pen on the shape's cue (see useInkGroup). */
 export function ShapeElement(props: ShapeProps) {
   const ref = useRef<SVGGElement>(null)
+  const morphRef = useRef<SVGPathElement>(null)
+  const traceRef = useRef<SVGPathElement>(null)
   const draw = props.animate && !props.reduced
   useInkGroup(ref, draw, props.duration ?? animMs(props.el.step), `draw:${props.el.step.shape.kind}:${props.el.key}`)
-  return <g ref={ref}><ShapeBody {...props} /></g>
+  const { el, reduced, morphMs } = props
+  const vars = props.vars ?? NO_VARS
+  // Morph (GSAP MorphSVG): while it runs, one outline path tweens from the old shape to the new one.
+  const morphing = morphMs !== undefined && !reduced && !!el.prevShape && !!el.morphAct
+  const [morphDone, setMorphDone] = useState<string | null>(null)
+  const showMorph = morphing && morphDone !== el.morphAct
+  const fromD = showMorph && el.prevShape ? outlineD(el, el.prevShape, vars) : ''
+  const toD = showMorph ? outlineD(el, el.step.shape, vars) : ''
+  useLayoutEffect(() => {
+    const path = morphRef.current
+    if (!showMorph || !path || !fromD || !toD) { if (showMorph && (!fromD || !toD)) setMorphDone(el.morphAct ?? null); return }
+    let dead = false
+    let tween: { kill: () => void } | null = null
+    path.setAttribute('d', fromD)
+    loadGsap().then(gsap => {
+      if (dead) return
+      tween = gsap.to(path, { morphSVG: { shape: toD, type: 'rotational' }, duration: Math.max(0.35, (morphMs ?? 1200) / 1000), ease: 'power2.inOut', onComplete: () => setMorphDone(el.morphAct ?? null) })
+    }).catch(() => setMorphDone(el.morphAct ?? null))
+    return () => { dead = true; tween?.kill() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [el.morphAct, showMorph])
+  // Trace (GSAP DrawSVG): a bright pen runs once along the outline, then fades.
+  const beat = el.fx?.beat
+  const traceKey = beat?.style === 'trace' ? beat.act : null
+  const traceD = traceKey ? outlineD(el, el.step.shape, vars) : ''
+  const durs = useContext(ActDurations)
+  useLayoutEffect(() => {
+    const path = traceRef.current
+    if (!traceKey || !path || reduced) return
+    let dead = false
+    let tl: { kill: () => void } | null = null
+    const ms = durs.get(traceKey) ?? 1100
+    loadGsap().then(gsap => {
+      if (dead) return
+      tl = gsap.timeline()
+        .fromTo(path, { drawSVG: '0% 0%', opacity: 1 }, { drawSVG: '0% 100%', duration: Math.max(0.4, ms / 1000 * 0.75), ease: 'power1.inOut' })
+        .to(path, { opacity: 0, duration: 0.35 })
+    }).catch(() => undefined)
+    return () => { dead = true; tl?.kill() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceKey, reduced])
+  const color = INK_HEX[el.step.color ?? 'ink']
+  return (
+    <g ref={ref}>
+      {showMorph
+        ? <path ref={morphRef} d={fromD} fill="none" stroke={color} strokeWidth={el.step.width ?? 2.6} strokeLinecap="round" strokeLinejoin="round" clipPath={el.axes ? `url(#wb-clip-${el.axes.id})` : undefined} />
+        : <ShapeBody {...props} />}
+      {traceKey && traceD && !reduced && (
+        <path ref={traceRef} d={traceD} fill="none" stroke={INK_HEX[beat?.color ?? 'amber']} strokeWidth={(el.step.width ?? 2.6) + 3.5} strokeLinecap="round" strokeLinejoin="round" opacity={0} style={{ filter: `drop-shadow(0 0 4px ${INK_HEX[beat?.color ?? 'amber']})` }} />
+      )}
+    </g>
+  )
+}
+
+const roughGen = new RoughGenerator()
+function seedOf(key: string) { let h = 7; for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 2147483647; return h || 1 }
+
+/** Rough.js paths for a shape (sketchy outline; hachure for fills). Null for shapes it has no look for. */
+function roughPaths(shape: Shape, P: (p: [Num, Num]) => [number, number], scale: number, color: string, width: number, fill: boolean, key: string) {
+  const o = { seed: seedOf(key), roughness: 1.1, bowing: 0.9, stroke: color, strokeWidth: width, fill: fill ? `${color}8C` : undefined, fillStyle: 'hachure', hachureGap: 7, hachureAngle: -41, fillWeight: 1.2, preserveVertices: true }
+  let d
+  switch (shape.kind) {
+    case 'rect': { const [x, y] = P([shape.x, shape.y]); const [x2, y2] = P([shape.x + shape.w, shape.y + shape.h]); d = roughGen.rectangle(Math.min(x, x2), Math.min(y, y2), Math.abs(x2 - x), Math.abs(y2 - y), o); break }
+    case 'circle': { const [cx, cy] = P(shape.center); d = roughGen.circle(cx, cy, shape.r * scale * 2, o); break }
+    case 'polygon': d = roughGen.polygon(shape.points.map(p => P(p)), o); break
+    case 'polyline': d = roughGen.linearPath(shape.points.map(p => P(p)), o); break
+    case 'line': case 'arrow': { const a = P(shape.from), b = P(shape.to); d = roughGen.line(a[0], a[1], b[0], b[1], o); break }
+    default: return null
+  }
+  // Outline strokes first, then the hachure, as a hand would draw it.
+  return roughGen.toPaths(d).sort((a, b) => (a.fill === 'none' ? 0 : 1) - (b.fill === 'none' ? 0 : 1) || (a.stroke === color ? -1 : 1))
 }
 
 function ShapeBody({ el, animate, reduced, vars: boardVars = NO_VARS }: ShapeProps) {
@@ -653,8 +796,26 @@ function ShapeBody({ el, animate, reduced, vars: boardVars = NO_VARS }: ShapePro
   const base = { color, width, dashed: step.dashed, animate, reduced, maskId }
   // 8-digit hex: the stroke colour at ~12% opacity.
   const fillTint = step.fill ? `${color}1F` : 'none'
+  const ink = animate && !reduced
+
+  if (step.rough) {
+    const paths = roughPaths(shape, P, xScale(el.axes), color, width, !!step.fill, el.key)
+    if (paths) {
+      return (
+        <g clipPath={clipId ? `url(#${clipId})` : undefined}>
+          {paths.map((p, i) => <path key={i} d={p.d} fill="none" stroke={p.stroke === 'none' ? color : p.stroke} strokeWidth={p.strokeWidth} strokeLinecap="round" strokeLinejoin="round" data-ink={ink ? 'path' : undefined} />)}
+          {shape.kind === 'arrow' && (() => { const a = P(shape.from), b = P(shape.to); return <path d={arrowHead(a, b, 9 + width * 1.6)} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" data-ink={ink ? 'path' : undefined} /> })()}
+        </g>
+      )
+    }
+  }
 
   switch (shape.kind) {
+    case 'figure': {
+      // A finished picture (sanitised SVG), shown as an image: nothing inside it can run. Wiped in left to right.
+      const href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(shape.svg)}`
+      return <image href={href} x={shape.x} y={shape.y} width={shape.w} height={shape.h} preserveAspectRatio="xMidYMid meet" data-ink={ink ? 'text' : undefined}><title>{shape.alt ?? 'diagram'}</title></image>
+    }
     case 'line':
       return <Stroke {...base} d={pathFromPoints([P(shape.from), P(shape.to)])} clipId={clipId} />
     case 'arrow': {
@@ -912,3 +1073,57 @@ function NoteMarkInk({ active, ready, children }: { active: boolean; ready: bool
   return <g ref={ref}>{children}</g>
 }
 
+
+/* ───────────── Hand-drawn marks (annotate) ───────────── */
+
+/**
+ * A teacher's mark on an element: perfect-freehand ink revealed by the pen along its centre line (the hand follows
+ * it), plus an optional handwritten note. The target's box is measured on the board, like highlights.
+ */
+export function MarkElement({ el, animate, reduced, measure, duration }: {
+  el: MarkEl
+  animate: boolean
+  reduced: boolean
+  measure: (id: string) => Box | null
+  duration?: number
+}) {
+  const [box, setBox] = useState<Box | null>(null)
+  useLayoutEffect(() => {
+    const update = () => setBox(measure(el.target))
+    update()
+    const t = setTimeout(update, 120)
+    return () => clearTimeout(t)
+  }, [el.target, measure])
+  const ink = animate && !reduced
+  const ref = useRef<SVGGElement>(null)
+  useInkGroup(ref, ink, duration ?? 900, `mark:${el.target}`, !!box)
+  const geo = useMemo(() => (box ? markGeometry(el.mark, box, el.key, el.note) : null), [box, el.mark, el.key, el.note])
+  const notePx = useMinUnits(MARK_NOTE_PX, 14)
+  if (!geo) return null
+  const color = INK_HEX[el.color]
+  const base = `wb-mk-${el.key.replace(/[^\w-]/g, '_')}`
+  return (
+    <motion.g ref={ref} exit={{ opacity: 0 }}>
+      {geo.strokes.map((pts, i) => {
+        const id = `${base}-${i}`
+        return (
+          <g key={i}>
+            {ink && (
+              <defs>
+                <mask id={id} maskUnits="userSpaceOnUse" x="-100" y="-100" width="1000" height="700">
+                  <path d={centerPath(pts)} fill="none" stroke="#fff" strokeWidth={14} strokeLinecap="round" strokeLinejoin="round" />
+                </mask>
+              </defs>
+            )}
+            {/* The pen follows this (invisible) centre line; the ink shows through its growing mask. */}
+            <path d={centerPath(pts)} fill="none" stroke="none" data-ink={ink ? 'dash' : undefined} data-mask={ink ? id : undefined} />
+            <path d={geo.outlines[i]} fill={color} stroke="none" mask={ink ? `url(#${id})` : undefined} />
+          </g>
+        )
+      })}
+      {el.note && geo.note && (
+        <text data-ink={ink ? 'text' : undefined} x={geo.note.x} y={geo.note.y + geo.note.box.h * 0.8} fontSize={notePx} fill={color} style={{ fontFamily: 'var(--font-hand, var(--font-serif))', fontStyle: 'italic' }}>{el.note}</text>
+      )}
+    </motion.g>
+  )
+}

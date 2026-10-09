@@ -3,7 +3,8 @@ import type { Step } from '../lesson-schema'
 import type { SimSpec } from './visual'
 
 export type Block =
-  | { kind: 'board'; id: string; title: string; steps: Step[]; plot?: boolean }
+  /** start: steps before it are already on the board (shown at once); the rest animate (a board edit). */
+  | { kind: 'board'; id: string; title: string; steps: Step[]; plot?: boolean; start?: number; rev?: number }
   | { kind: 'svg'; id: string; svg: string; alt: string }
   | { kind: 'sim'; id: string; spec: SimSpec }
   | { kind: 'clip'; id: string; jobId: string; status: 'rendering' | 'done' | 'failed'; url?: string | null; caption?: string }

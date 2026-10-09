@@ -5,7 +5,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ListOrdered, Lock, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
 import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type ManimClipStep, type Step } from '@/lib/lesson-schema'
 import { applyAction, buildBoard, compactPartition, contentBox, segmentStart, shapeBox, textBoxAt, unionBox, type BoardState, type Box } from './board-state'
-import { BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, ShapeElement, TextElement, type NoteMarkSpec } from './elements'
+import { ActDurations, BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, MarkElement, ShapeElement, TextElement, type NoteMarkSpec } from './elements'
+import { loadGsap, needsGsap } from './gsap-fx'
 import { CheckCard, RichText, type CheckResponse } from './check-card'
 import { estimateSpeechMs, stepLines, stepSpeech } from './speech'
 import { NATURAL_VOICE_WAIT_MS, getNarrator, readSoundPref, writeSoundPref, type Narrator } from './narrator'
@@ -348,7 +349,7 @@ export function WhiteboardPlayer({
   const boardRef = useRef(board)
   useEffect(() => { boardRef.current = board }, [board])
   const measure = useCallback((id: string): Box | null => {
-    const el = boardRef.current.els.find(e => e.id === id && e.kind !== 'highlight')
+    const el = boardRef.current.els.find(e => e.id === id && e.kind !== 'highlight' && e.kind !== 'mark')
     if (!el) return null
     if (el.kind === 'shape') return shapeBox(el)
     const node = nodes.current.get(id)
@@ -443,6 +444,11 @@ export function WhiteboardPlayer({
   useEffect(() => { voiceOnRef.current = voiceOn }, [voiceOn])
   const holdRef = useRef(hold)
   useEffect(() => { holdRef.current = hold }, [hold])
+  // Warm GSAP while the first steps draw when the scene uses its motion cues.
+  useEffect(() => {
+    const types = steps.flatMap(st => [st.type, ...(((st as { cues?: { type: string }[] }).cues ?? []).map(c => c.type))])
+    if (needsGsap(types)) void loadGsap().catch(() => undefined)
+  }, [steps])
   const reducedRef = useRef(reduced)
   useEffect(() => { reducedRef.current = reduced }, [reduced])
   const boardEl = useRef<HTMLDivElement | null>(null)
@@ -803,6 +809,8 @@ export function WhiteboardPlayer({
     for (const el of board.els) {
       if (el.kind === 'highlight' && noteIds.has(el.target)) {
         m.set(el.target, { style: el.style, color: el.color, fresh: el.born === animIdx, cue: el.born === animIdx ? cues.get(el.act) ?? null : null })
+      } else if (el.kind === 'mark' && noteIds.has(el.target) && el.mark !== 'arrow') {
+        m.set(el.target, { style: el.mark === 'underline' ? 'underline' : 'box', color: el.color, fresh: el.born === animIdx, cue: el.born === animIdx ? cues.get(el.act) ?? null : null })
       }
     }
     return m
@@ -826,6 +834,7 @@ export function WhiteboardPlayer({
   const durOf = (act: string, born: number) => (born === animIdx ? durs.get(act) : undefined)
 
   const drawing = (
+    <ActDurations.Provider value={durs}>
     <div
       ref={layerRef}
       className="absolute left-0 top-0 origin-top-left"
@@ -870,9 +879,20 @@ export function WhiteboardPlayer({
                 <motion.g key={elKey(el)} data-wb-key={el.key} exit={{ opacity: 0, transition: { duration: reduced ? 0.01 : 0.35 } }}>
                   <FxWrap fx={el.fx} ms={el.fx ? durs.get(el.fx.act) ?? 0 : 0} reduced={reduced} svg>
                     <InkGuard svg cue={guardCue(cueOf(el))} tag={`shape:${el.key}`}>
-                      <ShapeElement el={el} animate={anim} reduced={reduced} duration={durOf(el.act, el.born)} vars={board.vars} />
+                      <ShapeElement el={el} animate={anim} reduced={reduced} duration={durOf(el.act, el.born)} vars={board.vars} morphMs={el.morphedAt === animIdx && el.morphAct ? durs.get(el.morphAct) ?? 1200 : undefined} />
                     </InkGuard>
                   </FxWrap>
+                </motion.g>
+              )
+            }
+            if (el.kind === 'mark') {
+              if (noteIds.has(el.target)) return null
+              const anim = el.born === animIdx
+              return (
+                <motion.g key={elKey(el)} exit={{ opacity: 0, transition: { duration: 0.25 } }}>
+                  <InkGuard svg cue={guardCue(cueOf(el))} tag={`mark:${el.target}`}>
+                    <MarkElement el={el} animate={anim} reduced={reduced} measure={measure} duration={durOf(el.act, el.born)} />
+                  </InkGuard>
                 </motion.g>
               )
             }
@@ -909,6 +929,7 @@ export function WhiteboardPlayer({
       </AnimatePresence>
       </div>
     </div>
+    </ActDurations.Provider>
   )
 
   const leftMs = suffixMs[Math.min(cursor, steps.length)] ?? 0

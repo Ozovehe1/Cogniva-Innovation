@@ -30,9 +30,9 @@ export interface StepTimeline {
 const BREATH_MS = 280
 
 /** Actions the pen draws (their ink follows the narration clock, see ./pen). */
-export const PEN_ACTIONS = new Set(['draw', 'write', 'math', 'highlight'])
+export const PEN_ACTIONS = new Set(['draw', 'write', 'math', 'highlight', 'annotate'])
 /** Actions that move or change what is already drawn. */
-const MOTION_ACTIONS = new Set(['animate', 'move', 'scale', 'camera', 'transform', 'fade', 'color'])
+const MOTION_ACTIONS = new Set(['animate', 'move', 'scale', 'camera', 'transform', 'fade', 'color', 'morph', 'along', 'pulse'])
 /**
  * How long before its cue a pen action's element is put on the board (still blank): the hand travels to its first
  * stroke in this time, so the ink starts on the cue word itself.
@@ -115,10 +115,10 @@ export function buildTimeline(step: Step, index: number, timing: NarrationTiming
           // further so the board is still moving while the sentence finishes.
           dur = gap > 0 ? clamp(gap - 120, natural * 0.8, i === raw.length - 1 ? Math.max(natural * 2.6, 7000) : natural * 2.6) : natural
           break
-        case 'move': case 'scale': case 'camera': case 'transform':
+        case 'move': case 'scale': case 'camera': case 'transform': case 'morph': case 'along':
           dur = gap > 0 ? clamp(gap - 100, Math.min(natural, 700), 6000) : natural
           break
-        case 'highlight': case 'fade': case 'color':
+        case 'highlight': case 'fade': case 'color': case 'pulse': case 'annotate':
           dur = gap > 0 ? clamp(gap - 100, Math.min(natural, 500), 3200) : natural
           break
         default: dur = natural

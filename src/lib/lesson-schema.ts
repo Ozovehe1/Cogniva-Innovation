@@ -101,6 +101,8 @@ export type Shape =
       xStep?: number
       yStep?: number
     }
+  /** A finished picture (an exact maths diagram or an illustration, sanitised SVG) placed in a frame of the board. */
+  | { kind: 'figure'; x: number; y: number; w: number; h: number; svg: string; alt?: string }
   | {
       kind: 'function'
       /** Expression in x (and board variables), e.g. "x^2", "sin(x) + 0.5*x", "m*(x - 1) + 1". */
@@ -119,6 +121,8 @@ export interface DrawStep extends StepBase {
   fill?: boolean
   /** Id of an axes shape whose graph coordinates this shape uses. Required for `function`. */
   on?: string
+  /** Hand-drawn look (Rough.js): sketchy outline, and hachure instead of a flat tint when `fill` is set. */
+  rough?: boolean
 }
 
 export interface HighlightStep extends StepBase {
@@ -229,7 +233,49 @@ export interface CameraStep extends StepBase {
   on?: string
 }
 
+/** Morph a drawn shape into another shape (GSAP MorphSVG): a circle into an ellipse-like polygon, a line into a curve. */
+export interface MorphStep extends StepBase {
+  type: 'morph'
+  target: string
+  shape: Shape
+  color?: Ink
+}
+
+/** Move an element along a path (GSAP MotionPath): `path` points (board units, or graph units for shapes on axes), or `via` the id of a drawn line/arrow/polyline/polygon/circle/arc/function. */
+export interface AlongStep extends StepBase {
+  type: 'along'
+  target: string
+  path?: Pt[]
+  via?: string
+  /** Turn with the path (for arrows, cars, particles). */
+  rotate?: boolean
+}
+
+/** Draw the eye to an element: beat (pulses in size), glow (a soft halo), or trace (a bright pen runs along its outline). */
+export interface PulseStep extends StepBase {
+  type: 'pulse'
+  target: string
+  style?: 'beat' | 'glow' | 'trace'
+  color?: Ink
+  /** 1..4 beats. */
+  times?: number
+}
+
+/** A hand-drawn mark on an element (perfect-freehand ink): circle it, underline, cross out, tick, bracket, or an arrow from a short note. */
+export interface AnnotateStep extends StepBase {
+  type: 'annotate'
+  target: string
+  mark: 'circle' | 'underline' | 'cross' | 'tick' | 'bracket' | 'arrow'
+  color?: Ink
+  /** Short handwritten note beside the mark (under 24 characters). */
+  note?: string
+}
+
 export type Step =
+  | MorphStep
+  | AlongStep
+  | PulseStep
+  | AnnotateStep
   | SetStep
   | AnimateStep
   | MoveStep
@@ -248,10 +294,10 @@ export type Step =
   | ManimClipStep
 
 export type StepType = Step['type']
-export const STEP_TYPES: StepType[] = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'pause', 'check', 'manim_clip', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera']
+export const STEP_TYPES: StepType[] = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'pause', 'check', 'manim_clip', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera', 'morph', 'along', 'pulse', 'annotate']
 
 /** Step types that can also be fired as cues during another step's narration. */
-export const ACTION_TYPES = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera'] as const
+export const ACTION_TYPES = ['write', 'math', 'draw', 'highlight', 'transform', 'clear', 'set', 'animate', 'move', 'fade', 'scale', 'color', 'camera', 'morph', 'along', 'pulse', 'annotate'] as const
 export type ActionType = (typeof ACTION_TYPES)[number]
 type ActionStep = Extract<Step, { type: ActionType }>
 /** An action fired at a word of the step's narration. */
@@ -395,8 +441,14 @@ function validateShape(s: unknown, errs: string[], at: string, vars: Set<string>
       }
       break
     }
+    case 'figure':
+      reqNum(s, 'x', errs, at, -50, BOARD_W); reqNum(s, 'y', errs, at, -50, BOARD_H)
+      reqNum(s, 'w', errs, at, 20, BOARD_W + 50); reqNum(s, 'h', errs, at, 20, BOARD_H + 50)
+      if (!isStr(s.svg) || !/^<svg[\s>]/.test(s.svg) || s.svg.length > 60_000) errs.push(`${at}.svg must be an <svg> document under 60 KB`)
+      optStr(s, 'alt', errs, at, 300)
+      break
     default:
-      errs.push(`${at}.kind must be one of line|arrow|circle|rect|polyline|polygon|arc|sector|point|axes|function|secant|tangent`)
+      errs.push(`${at}.kind must be one of line|arrow|circle|rect|polyline|polygon|arc|sector|point|axes|function|secant|tangent|figure`)
   }
 }
 
@@ -467,6 +519,35 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: Ctx, cueOf?
       if (!isStr(s.color) || !(INKS as readonly string[]).includes(s.color)) errs.push(`${at}.color must be one of ${INKS.join('|')}`)
       if (s.pulse !== undefined && typeof s.pulse !== 'boolean') errs.push(`${at}.pulse must be boolean`)
       break
+    case 'morph':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      validateShape(s.shape, errs, `${at}.shape`, ctx.vars)
+      if (isObj(s.shape) && ['axes', 'figure', 'point'].includes(String(s.shape.kind))) errs.push(`${at}.shape cannot be ${String(s.shape.kind)} (morph between drawn outlines)`)
+      optEnum(s, 'color', INKS, errs, at)
+      break
+    case 'along':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      if (s.path === undefined && s.via === undefined) errs.push(`${at} needs "path" [[x,y],...] or "via" (id of a drawn line or curve)`)
+      if (s.path !== undefined && (!Array.isArray(s.path) || s.path.length < 2 || s.path.length > 200 || !s.path.every(isPt))) errs.push(`${at}.path must be 2..200 [x,y] points`)
+      if (s.via !== undefined && (!isStr(s.via) || !ctx.ids.has(s.via))) errs.push(`${at}.via "${String(s.via)}" is not an element on the board`)
+      if (s.rotate !== undefined && typeof s.rotate !== 'boolean') errs.push(`${at}.rotate must be boolean`)
+      break
+    case 'pulse':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      optEnum(s, 'style', ['beat', 'glow', 'trace'] as const, errs, at)
+      optEnum(s, 'color', INKS, errs, at)
+      optNum(s, 'times', errs, at, 1, 4)
+      break
+    case 'annotate':
+      reqStr(s, 'target', errs, at, 40)
+      if (isStr(s.target) && !ctx.ids.has(s.target)) errs.push(`${at}.target "${s.target}" is not an element on the board`)
+      if (!isStr(s.mark) || !['circle', 'underline', 'cross', 'tick', 'bracket', 'arrow'].includes(s.mark)) errs.push(`${at}.mark must be one of circle|underline|cross|tick|bracket|arrow`)
+      optEnum(s, 'color', INKS, errs, at)
+      optStr(s, 'note', errs, at, 40)
+      break
     case 'camera':
       reqNum(s, 'zoom', errs, at, 1, 4)
       if (s.center !== undefined && !isPt(s.center)) errs.push(`${at}.center must be [x,y]`)
@@ -494,6 +575,7 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: Ctx, cueOf?
       optNum(s, 'width', errs, at, 0.5, 12)
       if (s.dashed !== undefined && typeof s.dashed !== 'boolean') errs.push(`${at}.dashed must be boolean`)
       if (s.fill !== undefined && typeof s.fill !== 'boolean') errs.push(`${at}.fill must be boolean`)
+      if (s.rough !== undefined && typeof s.rough !== 'boolean') errs.push(`${at}.rough must be boolean`)
       if (s.on !== undefined) {
         if (!isStr(s.on)) errs.push(`${at}.on must be an axes id`)
         else if (!ctx.axes.has(s.on)) errs.push(`${at}.on refers to unknown axes "${s.on}"`)
@@ -576,7 +658,7 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: Ctx, cueOf?
 
 /** What a valid step adds to / removes from the board context. */
 function registerEffects(s: Obj, ctx: Ctx) {
-  if (isStr(s.id) && ['write', 'math', 'draw'].includes(s.type as string)) ctx.ids.add(s.id)
+  if (isStr(s.id) && ['write', 'math', 'draw', 'annotate'].includes(s.type as string)) ctx.ids.add(s.id)
   if (s.type === 'clear') {
     if (Array.isArray(s.targets)) for (const t of s.targets) { ctx.ids.delete(t as string); ctx.axes.delete(t as string) }
     else { ctx.ids.clear(); ctx.axes.clear() }
@@ -652,8 +734,8 @@ export function normalizeScript(input: unknown): unknown {
       if (isStr(s[k]) && s[k] !== '' && Number.isFinite(Number(s[k]))) s[k] = Number(s[k])
     }
     if (s.type === 'draw' && !isObj(s.shape) && isStr(s.kind)) {
-      const { type, id, say, color, width, dashed, fill, on, ...shape } = s
-      return fixStep({ type, id, say, color, width, dashed, fill, on, shape })
+      const { type, id, say, color, width, dashed, fill, on, rough, ...shape } = s
+      return fixStep({ type, id, say, color, width, dashed, fill, on, rough, shape })
     }
     if (s.type === 'draw' && isObj(s.shape)) {
       const sh: Obj = { ...s.shape }
@@ -699,7 +781,7 @@ export function boardIdsAfter(steps: Step[]): { ids: string[]; axes: string[]; v
   const axes = new Set<string>()
   const vars = new Set<string>()
   const one = (s: Step | CueAction) => {
-    if ((s.type === 'write' || s.type === 'math' || s.type === 'draw') && s.id) {
+    if ((s.type === 'write' || s.type === 'math' || s.type === 'draw' || s.type === 'annotate') && s.id) {
       ids.add(s.id)
       if (s.type === 'draw' && s.shape.kind === 'axes') axes.add(s.id)
     }
@@ -860,6 +942,8 @@ Motion (like Manim's ValueTracker and animate):
 - {"type":"set","vars":{"h":1}} — named numeric variables (letters only, not x, e or pi). Coordinates of line/arrow/point, secant x1/x2, tangent "at", and function "expr" may use them as expressions ("1 + h", "(1+h)^2"); write/math text may show a live value with {{expr}} or {{expr:2}} (2 decimals).
 - {"type":"animate","var":"h","to":0.05,"from"?,"ease"?:"smooth|linear|there_and_back"} — glides a variable; everything that depends on it moves continuously (a point sliding along a curve, a secant turning into a tangent, a live number counting).
 - {"type":"move","target","by":[dx,dy] | "to":[x,y]} | {"type":"fade","target","to":0..1} | {"type":"scale","target","by"} | {"type":"color","target","color","pulse"?} | {"type":"camera","zoom":1..4,"center"?:[x,y],"on"?: axes id} (zoom 1 resets).
+- {"type":"morph","target","shape"} (the drawn outline smoothly becomes the new shape, e.g. a square into a circle, a straight line into a curve) | {"type":"along","target","path":[[x,y],...] | "via": id of a drawn line/curve,"rotate"?} (glides along the path: a ball along its trajectory, a charge round a circuit) | {"type":"pulse","target","style"?:"beat|glow|trace","times"?} (draws the eye) | {"type":"annotate","target","mark":"circle|underline|cross|tick|bracket|arrow","note"? (short handwritten note),"color"?} (hand-drawn mark, like a teacher circling a term).
+- Draw shapes may set "rough": true for a hand-sketched look (with "fill": hachure shading).
 - Extra shapes (need "on"): {"kind":"secant","expr","x1","x2","extend"?} (line through the curve at x1 and x2) | {"kind":"tangent","expr","at","len"?}.
 Timing to the voice (every step may use these):
 - "at": the word (or short phrase, or 0-based word index) of the step's "say" at which its action starts; "until": the word where it should be finished. Without them the action starts with the narration and stretches to fill the sentence.
