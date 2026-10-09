@@ -173,9 +173,9 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
               onFocus={() => setTyping(true)} onBlur={() => setTyping(false)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); void send(input) } }}
               placeholder={lessonId ? 'Ask about this lesson…' : 'Ask GeniusMap…'} aria-label="Message"
-              className="max-h-36 min-h-11 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug text-ink placeholder:text-faint focus:outline-none" />
-            <button type="submit" disabled={busy || !input.trim()} aria-label="Send" className="mb-1 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-accent text-white transition-opacity disabled:opacity-35">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.25} />}
+              className="max-h-36 min-h-11 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug text-ink placeholder:text-faint focus:outline-none focus-visible:outline-none" />
+            <button type="submit" disabled={busy || !input.trim()} aria-label="Send" className="-mr-1 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-accent">
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-white">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.25} />}</span>
             </button>
           </div>
         </div>

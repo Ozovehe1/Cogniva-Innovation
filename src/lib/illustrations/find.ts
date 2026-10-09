@@ -43,7 +43,7 @@ export async function findIllustration(
       const labelled = h.item.src === 'commons' && !/blank|without text|no text|unlabel|numbered|numlabels/i.test(h.item.t)
       return {
         ...p, item: h.item, via, labelled,
-        alt: `${h.item.t}${h.item.d ? ` — ${h.item.d.slice(0, 160)}` : ''} (${SOURCE_NAME[h.item.src]})`.slice(0, 280),
+        alt: `${h.item.t.replace(/\s+(en|EN|eng)$/, "")}${h.item.d ? ` — ${h.item.d.slice(0, 160)}` : ''} (${SOURCE_NAME[h.item.src]})`.slice(0, 280),
         creditText: creditLine(p.credit),
         alternatives: hits.filter(x => x !== h).slice(0, 3).map(x => `${x.item.t} [${SOURCE_NAME[x.item.src]}]`),
       }
