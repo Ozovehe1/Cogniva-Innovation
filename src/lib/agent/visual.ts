@@ -237,6 +237,7 @@ export function sanitizeSvg(input: string): { svg: string | null; removed: strin
 
 export async function makeIllustration(brief: string, trace?: string[]): Promise<{ svg: string; removed: string[]; alt: string }> {
   const prompt = `Draw a clean, labelled teaching diagram as a single SVG for: """${brief.slice(0, 800)}"""
+Composition: use the WHOLE viewBox: the main subject spans 60-80% of the width and is centred; leave a clear margin of 24 for labels. Every label sits in empty space next to what it names (offset 8-14 px from the line or arrow tip, with a thin leader line if needed); no label may overlap a shape, an arrow or another label. Arrows are long enough to read (60-140 px).
 Style: editorial and calm on a white background: thin ink lines (#14141A, stroke-width 2), deep green (#1F4D3A) for the key idea, warm clay (#A4502A) for contrast, navy (#23406A) and amber (#8A5A00) as extra colours, light fills only (opacity 0.12-0.2). Font: font-family="Inter, sans-serif", labels 14-18px, never overlapping lines or each other. viewBox="0 0 640 400". Arrows via a <marker> in <defs>. Physically and scientifically correct proportions and labels.
 Allowed elements only: svg g path rect circle ellipse line polyline polygon text tspan defs marker linearGradient radialGradient stop title desc clipPath. No <style>, <script>, <image>, <foreignObject>, <use>, no CSS, no event attributes, no external links.
 Return JSON {"alt": one-sentence description, "svg": "<svg ...>...</svg>"}.`
