@@ -38,6 +38,9 @@ export interface IxSpec {
 const RESERVED = new Set(['x', 'y', 'e', 'pi', 't', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'exp', 'ln', 'log', 'sqrt', 'abs', 'sinh', 'cosh', 'tanh', 'floor', 'ceil'])
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null)
 const str = (v: unknown, n = 80) => (typeof v === 'string' ? v.trim().slice(0, n) : '')
+/** Common slips from code-minded models: Math.sin → sin, ** → ^, Math.PI → pi. Anything else must parse as is. */
+const normExpr = (e: string) => e.replace(/\b(?:Math|math|np|numpy)\./g, '').replace(/\*\*/g, '^').replace(/\bPI\b/g, 'pi').replace(/\bE\b/g, 'e')
+const ex = (v: unknown, n: number) => normExpr(str(v, n))
 const color = (v: unknown, d: IxColor): IxColor => (typeof v === 'string' && v in IX_HEX ? (v as IxColor) : d)
 const arr = (v: unknown, n: number): Record<string, unknown>[] => (Array.isArray(v) ? v.slice(0, n).map(x => (x && typeof x === 'object' ? x : {}) as Record<string, unknown>) : [])
 const range = (v: unknown): [number, number] | null => (Array.isArray(v) && v.length === 2 && num(v[0]) !== null && num(v[1]) !== null && num(v[0])! < num(v[1])! && num(v[1])! - num(v[0])! <= 1e6 ? [num(v[0])!, num(v[1])!] : null)
@@ -83,8 +86,8 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   const points: IxPoint[] = []
   arr(o.points, 10).forEach((q, i) => {
     const name = str(q.name, 3)
-    const xe = typeof q.x === 'string' && num(q.x) === null ? q.x.trim().slice(0, 120) : ''
-    const ye = typeof q.y === 'string' && num(q.y) === null ? q.y.trim().slice(0, 120) : ''
+    const xe = typeof q.x === 'string' && num(q.x) === null ? normExpr(q.x.trim().slice(0, 120)) : ''
+    const ye = typeof q.y === 'string' && num(q.y) === null ? normExpr(q.y.trim().slice(0, 120)) : ''
     // Dependent coordinates may use sliders and earlier points (checked before this point's own name is claimed).
     if (xe && !check(xe, `points[${i}].x`, [], false)) return
     if (ye && !check(ye, `points[${i}].y`, [], false)) return
@@ -99,7 +102,7 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
 
   const functions: IxFunction[] = []
   arr(o.functions, 4).forEach((q, i) => {
-    const expr = str(q.expr, 200).replace(/^\s*(y|f\s*\(\s*x\s*\))\s*=\s*/i, '')
+    const expr = ex(q.expr, 200).replace(/^\s*(y|f\s*\(\s*x\s*\))\s*=\s*/i, '')
     if (!check(expr, `functions[${i}].expr`)) return
     const name = str(q.name, 8) || `f${i + 1}`
     functions.push({ name, expr, label: str(q.label, 30), color: color(q.color, (['accent', 'navy', 'clay', 'amber'] as IxColor[])[i % 4]), dashed: q.dashed === true })
@@ -121,7 +124,7 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   let aux = 0
   const known = (n: unknown, at: string): boolean => {
     if (Array.isArray(n) && n.length === 2) {
-      const [ax, ay] = n.map(v => (typeof v === 'number' ? String(v) : str(v, 120)))
+      const [ax, ay] = n.map(v => (typeof v === 'number' ? String(v) : ex(v, 120)))
       if (!check(ax, `${at}[0]`, [], false) || !check(ay, `${at}[1]`, [], false)) return false
       const name = `Z${'ABCDEFGHIJKLMNOPQRSTUVWXY'[aux++ % 25]}`
       if (!claim(name, at, 'point')) return false
@@ -157,7 +160,7 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
     if (!known(q.center, `circles[${i}].center`)) return
     const center = lastName()
     if (q.through !== undefined) { if (!known(q.through, `circles[${i}].through`)) return; circles.push({ center, through: lastName(), color: color(q.color, 'navy') }); return }
-    const r = typeof q.radius === 'number' ? String(q.radius) : str(q.radius, 80)
+    const r = typeof q.radius === 'number' ? String(q.radius) : ex(q.radius, 80)
     if (!check(r, `circles[${i}].radius`, [], false)) return
     circles.push({ center, radius: r, color: color(q.color, 'navy') })
   })
@@ -166,25 +169,25 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   if (o.field && typeof o.field === 'object') {
     const f = o.field as Record<string, unknown>
     const kind = f.kind === 'slope' ? 'slope' : 'vector'
-    const dx = kind === 'slope' ? '1' : str(f.dx, 160), dy = str(f.dy, 160)
+    const dx = kind === 'slope' ? '1' : ex(f.dx, 160), dy = ex(f.dy, 160)
     if (check(dx, 'field.dx', ['y']) && check(dy, 'field.dy', ['y'])) field = { dx, dy, kind }
   }
   let ode: IxSpec['ode']
   if (o.ode && typeof o.ode === 'object') {
     const f = o.ode as Record<string, unknown>
-    const expr = str(f.dydx ?? f.expr, 160).replace(/^\s*(dy\/dx|y')\s*=\s*/i, '')
+    const expr = ex(f.dydx ?? f.expr, 160).replace(/^\s*(dy\/dx|y')\s*=\s*/i, '')
     if (check(expr, 'ode.dydx', ['y']) && known(f.from, 'ode.from')) ode = { expr, from: String(f.from), color: color(f.color, 'clay') }
   }
   let surface: IxSpec['surface']
   if (o.surface && typeof o.surface === 'object') {
     const f = o.surface as Record<string, unknown>
-    const expr = str(f.expr, 160).replace(/^\s*z\s*=\s*/i, '')
+    const expr = ex(f.expr, 160).replace(/^\s*z\s*=\s*/i, '')
     if (check(expr, 'surface.expr', ['y'])) surface = { expr, z: range(f.z_range) ?? undefined, label: str(f.label, 30) || undefined }
   }
 
   const readouts: IxReadout[] = []
   arr(o.readouts, 4).forEach((q, i) => {
-    const expr = str(q.expr, 160)
+    const expr = ex(q.expr, 160)
     if (!check(expr, `readouts[${i}].expr`, [], false)) return
     readouts.push({ label: str(q.label, 30) || expr.slice(0, 30), expr, unit: str(q.unit, 10) || undefined })
   })
