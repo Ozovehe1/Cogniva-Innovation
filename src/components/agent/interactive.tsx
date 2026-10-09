@@ -64,7 +64,7 @@ export default function InteractiveFigure({ spec, alt }: { spec: IxSpec; alt: st
           for (const p of spec.points) {
             const k2 = k
             const coords = p.xExpr || p.yExpr ? [() => (p.xExpr ? k2.px[p.name](0, env()) : p.x), () => (p.yExpr ? k2.py[p.name](0, env()) : p.y)] : [p.x, p.y]
-            pts[p.name] = board.create('point', coords, pointStyle(IX_HEX[p.color], p.drag, p.label))
+            pts[p.name] = board.create('point', coords, { ...pointStyle(IX_HEX[p.color], p.drag, p.label), visible: !p.hidden, withLabel: !p.hidden })
           }
           const curves: Record<string, any> = {}
           for (const f of spec.functions) curves[f.name] = board.create('functiongraph', [(x: number) => k.fn[f.name](x, env())], { strokeColor: IX_HEX[f.color], strokeWidth: 2.6, dash: f.dashed ? 2 : 0, name: f.label, withLabel: !!f.label, label: { fontSize: 13, color: IX_HEX[f.color] }, highlight: false })

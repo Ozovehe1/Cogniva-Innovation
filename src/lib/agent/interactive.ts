@@ -10,7 +10,7 @@ export type IxColor = 'ink' | 'accent' | 'clay' | 'navy' | 'amber'
 export const IX_HEX: Record<IxColor, string> = { ink: '#14141A', accent: '#1F4D3A', clay: '#A4502A', navy: '#23406A', amber: '#8A5A00' }
 
 export interface IxSlider { name: string; label: string; min: number; max: number; step: number; value: number }
-export interface IxPoint { name: string; x: number; y: number; xExpr?: string; yExpr?: string; drag: boolean; label: string; color: IxColor }
+export interface IxPoint { name: string; x: number; y: number; xExpr?: string; yExpr?: string; drag: boolean; label: string; color: IxColor; hidden?: boolean }
 export interface IxGlider { name: string; on: string; x: number; label: string; color: IxColor }
 export interface IxFunction { name: string; expr: string; label: string; color: IxColor; dashed: boolean }
 export interface IxSegment { from: string; to: string; color: IxColor; arrow: boolean; dashed: boolean; line: boolean }
@@ -117,26 +117,49 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   }
 
   const pointNames = new Set([...points.map(p => p.name), ...gliders.map(g => g.name)])
-  const known = (n: unknown, at: string) => { const ok = typeof n === 'string' && pointNames.has(n); if (!ok) errors.push(`${at}: "${String(n)}" is not a point`); return ok }
+  // An end given as [x, y] (numbers or expressions, e.g. ["px", 0] for the foot below P) becomes a hidden helper point.
+  let aux = 0
+  const known = (n: unknown, at: string): boolean => {
+    if (Array.isArray(n) && n.length === 2) {
+      const [ax, ay] = n.map(v => (typeof v === 'number' ? String(v) : str(v, 120)))
+      if (!check(ax, `${at}[0]`, [], false) || !check(ay, `${at}[1]`, [], false)) return false
+      const name = `Z${'ABCDEFGHIJKLMNOPQRSTUVWXY'[aux++ % 25]}`
+      if (!claim(name, at, 'point')) return false
+      points.push({ name, x: num(ax) ?? 0, y: num(ay) ?? 0, xExpr: num(ax) === null ? ax : undefined, yExpr: num(ay) === null ? ay : undefined, drag: false, label: '', color: 'ink', hidden: true })
+      pointNames.add(name)
+      ;(known as unknown as { last: string }).last = name
+      return true
+    }
+    const ok = typeof n === 'string' && pointNames.has(n)
+    if (!ok) errors.push(`${at}: "${String(n)}" is not a point (use a point name, or [x, y] with numbers or expressions)`)
+    else (known as unknown as { last: string }).last = n
+    return ok
+  }
+  const lastName = () => (known as unknown as { last: string }).last
 
   const segments: IxSegment[] = []
   arr(o.segments, 10).forEach((q, i) => {
-    if (!known(q.from, `segments[${i}].from`) || !known(q.to, `segments[${i}].to`)) return
-    segments.push({ from: String(q.from), to: String(q.to), color: color(q.color, 'navy'), arrow: q.arrow === true, dashed: q.dashed === true, line: q.line === true })
+    if (!known(q.from, `segments[${i}].from`)) return
+    const from = lastName()
+    if (!known(q.to, `segments[${i}].to`)) return
+    segments.push({ from, to: lastName(), color: color(q.color, 'navy'), arrow: q.arrow === true, dashed: q.dashed === true, line: q.line === true })
   })
   const polygons: IxPolygon[] = []
   arr(o.polygons, 3).forEach((q, i) => {
     const pts = Array.isArray(q.points) ? q.points.slice(0, 8) : []
-    if (pts.length < 3 || !pts.every((p, j) => known(p, `polygons[${i}].points[${j}]`))) { if (pts.length < 3) errors.push(`polygons[${i}] needs 3+ points`); return }
-    polygons.push({ points: pts.map(String), color: color(q.color, 'accent') })
+    if (pts.length < 3) { errors.push(`polygons[${i}] needs 3+ points`); return }
+    const names: string[] = []
+    for (const [j, p] of pts.entries()) { if (!known(p, `polygons[${i}].points[${j}]`)) return; names.push(lastName()) }
+    polygons.push({ points: names, color: color(q.color, 'accent') })
   })
   const circles: IxCircle[] = []
   arr(o.circles, 3).forEach((q, i) => {
     if (!known(q.center, `circles[${i}].center`)) return
-    if (q.through !== undefined) { if (!known(q.through, `circles[${i}].through`)) return; circles.push({ center: String(q.center), through: String(q.through), color: color(q.color, 'navy') }); return }
+    const center = lastName()
+    if (q.through !== undefined) { if (!known(q.through, `circles[${i}].through`)) return; circles.push({ center, through: lastName(), color: color(q.color, 'navy') }); return }
     const r = typeof q.radius === 'number' ? String(q.radius) : str(q.radius, 80)
     if (!check(r, `circles[${i}].radius`, [], false)) return
-    circles.push({ center: String(q.center), radius: r, color: color(q.color, 'navy') })
+    circles.push({ center, radius: r, color: color(q.color, 'navy') })
   })
 
   let field: IxSpec['field']
@@ -311,6 +334,7 @@ export function interactiveSvg(spec: IxSpec): string {
     for (const p of [...spec.points, ...spec.gliders]) {
       const [x, y] = pos[p.name]
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+      if ('hidden' in p && p.hidden) continue
       const drag = 'drag' in p ? p.drag : true
       parts.push(`<circle cx="${f1(sx(x))}" cy="${f1(sy(y))}" r="${drag ? 6.5 : 4.5}" fill="${IX_HEX[p.color]}"${drag ? ' stroke="#fff" stroke-width="2"' : ''}/><text x="${f1(sx(x) + 10)}" y="${f1(sy(y) - 10)}" font-size="15" fill="${IX_HEX[p.color]}">${esc(p.label)}</text>`)
     }
@@ -324,7 +348,7 @@ export function interactiveAlt(spec: IxSpec): string {
   const what = [
     spec.functions.length ? `graph of ${spec.functions.map(f => `y = ${f.expr}`).join(', ')}` : '',
     spec.field ? `${spec.field.kind} field` : '', spec.ode ? `solution curve of dy/dx = ${spec.ode.expr}` : '', spec.surface ? `surface z = ${spec.surface.expr}` : '',
-    spec.polygons.length ? 'a shape' : '', spec.points.length ? `points ${spec.points.map(p => p.name).join(', ')}` : '',
+    spec.polygons.length ? 'a shape' : '', spec.points.some(p => !p.hidden) ? `points ${spec.points.filter(p => !p.hidden).map(p => p.name).join(', ')}` : '',
   ].filter(Boolean).join('; ')
   const drag = [...spec.points.filter(p => p.drag).map(p => p.name), ...spec.gliders.map(g => g.name)]
   return `${spec.title}: ${what}.${drag.length ? ` Drag ${drag.join(', ')}.` : ''}${spec.sliders.length ? ` Sliders: ${spec.sliders.map(s => s.label).join(', ')}.` : ''}`.slice(0, 300)
