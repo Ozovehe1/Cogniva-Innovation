@@ -8,6 +8,7 @@
 import type { Step } from '../lesson-schema'
 import { toPlainText } from '../math-text'
 import type { AssessItem } from './spec'
+import { COMMON_WORDS } from './common-words'
 
 export interface Taught {
   /** Plain text of what was taught (narration, board, maths), lower-cased. */
@@ -107,12 +108,18 @@ export function objectivesFromDigest(digest: string): string[] {
 const contentWords = (s: string) => wordsOf(s).filter(w => w.length >= 4).map(stem).filter(w => !COMMON.has(w))
 
 /** Untaught technical words in a piece of item text (7+ letter content words the lesson never used). */
+/** An everyday word in any of its forms (tripled → triple, batteries → battery, measuring → measure). */
+export function isCommonWord(w: string): boolean {
+  const c = [w, w.replace(/ed$/, ''), w.replace(/d$/, ''), w.replace(/s$/, ''), w.replace(/es$/, ''), w.replace(/ing$/, ''), w.replace(/ing$/, 'e'), w.replace(/ies$/, 'y'), w.replace(/ied$/, 'y'), w.replace(/ly$/, ''), w.replace(/er$/, ''), w.replace(/est$/, '')]
+  return c.some(x => COMMON_WORDS.has(x)) || COMMON.has(stem(w))
+}
+
 export function untaughtTerms(text: string, taught: Taught): string[] {
   const seen = new Set<string>()
   for (const w of wordsOf(text)) {
     if (w.length < 7) continue
     const s = stem(w)
-    if (COMMON.has(s) || taught.vocab.has(s) || taught.text.includes(w.slice(0, 5))) continue
+    if (isCommonWord(w) || taught.vocab.has(s) || taught.text.includes(w.slice(0, 5))) continue
     seen.add(w)
   }
   return [...seen]

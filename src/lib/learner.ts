@@ -457,20 +457,23 @@ Return JSON {"items": [${ITEM_JSON}]}.`
   const ctx = { surface: 'mastery' as const, curriculum, taught, goal: goalWords, level: levelLine(input.learner), skill: `${input.topicTitle} ${input.summary}`, requireCalc: true }
   const first = await gateItems(parseItems((await generateStructuredJson(prompt(4, ''), opts) as Record<string, unknown>)?.items), ctx, { admin: input.admin })
   const good: AssessItem[] = [...first.good]
-  if (good.length < 4) {
-    // One re-ask for the missing questions, with what was wrong.
+  // Up to two re-asks for the missing questions, each with what was wrong.
+  let rejected = first.rejected
+  for (let round = 0; round < 2 && good.length < 4; round++) {
     const need = 4 - good.length
-    const avoid = first.rejected.length ? `\nEarlier questions were rejected by automatic checks; do not repeat these mistakes:\n${feedbackLines(first.rejected)}` : ''
+    const avoid = rejected.length ? `\nEarlier questions were rejected by automatic checks; do not repeat these mistakes:\n${feedbackLines(rejected)}` : ''
     try {
       const again = await gateItems(parseItems((await generateStructuredJson(prompt(need, avoid), opts) as Record<string, unknown>)?.items), ctx, { admin: input.admin })
       good.push(...again.good.slice(0, need))
+      rejected = again.rejected.length ? again.rejected : rejected
     } catch (err) {
       if (good.length < 3) throw err
+      break
     }
   }
   if (good.length < 3) {
-    const why = first.rejected.map(r => r.problems[0]).filter(Boolean)
-    console.warn('Mastery items rejected:', JSON.stringify(first.rejected.map(r => r.problems)).slice(0, 1500))
+    const why = rejected.map(r => r.problems[0]).filter(Boolean)
+    console.warn('Mastery items rejected:', JSON.stringify(rejected.map(r => r.problems)).slice(0, 1500))
     throw new Error(`The AI could not write mastery questions that pass the checks (${good.length} passed; ${why.slice(0, 4).join(' | ').slice(0, 600)})`)
   }
   return finishSet(good.slice(0, 4))
