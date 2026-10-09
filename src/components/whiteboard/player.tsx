@@ -5,6 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ListOrdered, Lock, Pause, Play, RotateCcw, Undo2, Volume2, VolumeX } from 'lucide-react'
 import { BOARD_H, BOARD_W, boardIdsAfter, type CheckStep, type ManimClipStep, type StageStep, type Step } from '@/lib/lesson-schema'
 import { StageView } from './stage'
+import { LessonRecap } from './recap'
 import { applyAction, buildBoard, compactPartition, contentBox, segmentStart, shapeBox, textBoxAt, unionBox, type BoardState, type Box } from './board-state'
 import { ActDurations, BoardScale, EASE_SMOOTH, FxWrap, HighlightElement, MarkElement, ShapeElement, TextElement, type NoteMarkSpec } from './elements'
 import { loadGsap, needsGsap } from './gsap-fx'
@@ -1261,16 +1262,7 @@ export function WhiteboardPlayer({
               />
             </div>
           ) : atEnd && started && steps.length > 0 && !embedded ? (
-            <motion.div
-              key="end"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="mt-4 rounded-[12px] border border-accent-line bg-accent-soft px-4 py-3.5"
-            >
-              <p className="text-[15px] font-medium text-accent">End of lesson</p>
-              <p className="mt-0.5 text-sm text-ink-2">Replay any step with the controls above, or start again from the top.</p>
-            </motion.div>
+            <LessonRecap key="end" steps={steps} title={title} answered={steps.filter((x, i) => x.type === 'check' && x.kind !== 'understand' && resolved.has(i)).length} reduced={reduced} onReplay={restart} />
           ) : null}
         </AnimatePresence>
         {notice && !check && !thinking && <p className="mt-3 text-[13px] text-muted">{notice}</p>}
@@ -1436,6 +1428,7 @@ const RENDER_REVEAL_MS = 3500
 function checkAnswerText(st: CheckStep): string | null {
   if (st.kind === 'choice' && st.options && typeof st.answer === 'number' && st.options[st.answer] !== undefined) return st.options[st.answer]
   if (st.kind === 'short' && st.accept?.length) return st.accept[0]
+  if (st.kind === 'explore' && st.goal) return `${st.goal.readout} = ${st.goal.equals}`
   return null
 }
 
@@ -1450,7 +1443,7 @@ function RecordedCheck({ step, reveal }: { step: CheckStep; reveal: boolean }) {
       transition={{ duration: 0.3 }}
     >
       <div className="w-full max-w-[640px] rounded-[16px] border border-line bg-surface p-6 shadow-[var(--shadow-raised)]">
-        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{step.kind === 'understand' ? 'Quick check' : 'Your turn'}</p>
+        <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-accent">{step.kind === 'understand' ? 'Quick check' : step.kind === 'explore' ? 'Try it' : 'Your turn'}</p>
         <p className="mt-2 font-display text-[22px] leading-snug text-ink"><RichText text={step.prompt} /></p>
         {step.kind === 'choice' && step.options && (
           <ol className="mt-4 grid gap-2">
@@ -1465,7 +1458,7 @@ function RecordedCheck({ step, reveal }: { step: CheckStep; reveal: boolean }) {
             })}
           </ol>
         )}
-        {step.kind === 'short' && reveal && answer && (
+        {(step.kind === 'short' || step.kind === 'explore') && reveal && answer && (
           <p className="mt-4 rounded-[12px] border border-accent bg-accent-soft px-3.5 py-2.5 text-[16px] text-ink"><span className="mr-2 text-[12px] font-medium uppercase tracking-[0.08em] text-accent">Answer</span><RichText text={answer} /></p>
         )}
         {reveal && step.explanation && <p className="mt-3 text-[15px] leading-relaxed text-ink-2"><RichText text={step.explanation} /></p>}

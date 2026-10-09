@@ -158,8 +158,16 @@ export interface PauseStep extends StepBase {
 
 export interface CheckStep extends StepBase {
   type: 'check'
-  kind: 'understand' | 'choice' | 'short'
+  /** explore: the learner manipulates a live figure until a readout reaches the goal ("drag P so that sin θ = 0.5"). */
+  kind: 'understand' | 'choice' | 'short' | 'explore'
   prompt: string
+  /**
+   * A live figure the question is about (validated with validateInteractive): required for explore, optional for
+   * choice/short (the learner reads the answer off it).
+   */
+  figure?: Record<string, unknown> | IxSpec
+  /** For kind=explore: the readout (by its label) that must reach `equals` within `tol` (default 2 % of the range, min 0.02). */
+  goal?: { readout: string; equals: number; tol?: number }
   /** For kind=choice. */
   options?: string[]
   /** For kind=choice: index of the correct option. */
@@ -627,8 +635,18 @@ function validateStep(raw: unknown, errs: string[], at: string, ctx: Ctx, cueOf?
       reqNum(s, 'ms', errs, at, 200, 10_000)
       break
     case 'check': {
-      optEnum(s, 'kind', ['understand', 'choice', 'short'] as const, errs, at)
-      if (s.kind === undefined) errs.push(`${at}.kind is required (understand|choice|short)`)
+      optEnum(s, 'kind', ['understand', 'choice', 'short', 'explore'] as const, errs, at)
+      if (s.kind === undefined) errs.push(`${at}.kind is required (understand|choice|short|explore)`)
+      if (s.figure !== undefined || s.kind === 'explore') {
+        const fv = validateInteractive(s.figure)
+        if (!fv.spec) errs.push(...(s.figure === undefined ? [`${at}.figure is required for an explore check`] : fv.errors.slice(0, 3).map(e => `${at}.figure: ${e}`)))
+        else if (s.kind === 'explore') {
+          const g = isObj(s.goal) ? s.goal : null
+          if (!g || !isStr(g.readout) || !isNum(g.equals)) errs.push(`${at}.goal must be {"readout": a readout label, "equals": number, "tol"?}`)
+          else if (!fv.spec.readouts.some(r => r.label.trim().toLowerCase() === String(g.readout).trim().toLowerCase())) errs.push(`${at}.goal.readout must be the label of one of the figure's readouts`)
+          else if (g.tol !== undefined && (!isNum(g.tol) || g.tol <= 0)) errs.push(`${at}.goal.tol must be a positive number`)
+        }
+      }
       reqStr(s, 'prompt', errs, at, 400)
       if (s.kind === 'choice') {
         if (!Array.isArray(s.options) || s.options.length < 2 || s.options.length > 6 || !s.options.every(o => isStr(o) && o.length <= 200))
@@ -968,7 +986,8 @@ Return a JSON object {"steps": Step[]}. Each Step is one of:
 - {"type":"transform","target": id of a write/math element,"tex"? or "text"? (new content),"x"?,"y"? (new position),"color"?,"say"?}  — morphs the element, e.g. one equation into the next.
 - {"type":"clear","targets"?: [ids]} — omit targets to wipe the board.
 - {"type":"pause","ms": 200..10000}
-- {"type":"check","kind":"understand"|"choice"|"short","prompt","options"? (choice: 2..6),"answer"? (choice: index),"accept"? (short: accepted answers),"explanation"?}
+- {"type":"check","kind":"understand"|"choice"|"short"|"explore","prompt","options"? (choice: 2..6),"answer"? (choice: index),"accept"? (short: accepted answers),"explanation"?,"figure"?,"goal"?}
+  "figure" (same shape as a stage "spec") puts a live figure in the question: with choice/short the learner reads the answer off it; with kind "explore" the learner drags or slides until a readout hits the goal — {"kind":"explore","prompt":"Drag the angle until sin θ = 0.5","figure":{...,"readouts":[{"label":"sin θ","expr":"py"}]},"goal":{"readout":"sin θ","equals":0.5,"tol"?:0.03}}. Prefer an explore check when the lesson used a live figure: doing beats choosing.
 - {"type":"manim_clip","url","caption"?} — only reuse URLs you were given; never invent one.
 - {"type":"stage","kind":"interactive","spec":{...},"play"?:{"slider","seconds"?},"say","caption"?} — hands the whole lesson area to a LIVE figure the learner drags (JSXGraph), then back to the board. spec: {"title","x_range":[a,b],"y_range":[c,d],"functions"?:[{"name","expr"}],"points"?:[{"name","x","y"}],"gliders"?:[{"name","on": function or circle name,"x"? | "angle"?}],"circles"?:[{"name"?,"center","radius"}],"sliders"?:[{"name","min","max","value"}],"segments"?:[{"from","to"}],"readouts"?:[{"label","expr"}]} (expressions in x, slider names, and point coords as px/py for point P). "play" glides one slider min→max as a demonstration while "say" narrates it. Use it when exploring by hand teaches better than watching (tangent slope, unit circle, a parameter's effect); at most one per section.
 Motion (like Manim's ValueTracker and animate):

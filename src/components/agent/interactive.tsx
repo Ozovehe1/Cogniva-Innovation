@@ -32,7 +32,10 @@ export function FigureSkeleton({ aspect = '3 / 2' }: { aspect?: string }) {
 const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 const buzz = () => { try { navigator.vibrate?.(8) } catch { /* not supported */ } }
 
-export default function InteractiveFigure({ spec, alt, play, demo = false, onHandOver }: {
+/** A tidy snapping step for a range: about 1/40 of it, rounded to 1, 2 or 5 × 10^k. */
+const niceStep = (span: number) => { const raw = span / 40, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p }
+
+export default function InteractiveFigure({ spec, alt, play, demo = false, onHandOver, onReadouts }: {
   spec: IxSpec; alt: string
   /** A slider that can play itself min→max (the stage's demonstration; the learner can replay it). */
   play?: { slider: string; seconds?: number }
@@ -40,6 +43,8 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
   demo?: boolean
   /** Called when the demonstration ends and the learner has control. */
   onHandOver?: () => void
+  /** Live readout values (in the spec's order), e.g. for a check that is answered by moving the figure. */
+  onReadouts?: (values: number[]) => void
 }) {
   const k = useMemo(() => compileSpec(spec), [spec])
   const geom = useMemo(() => figureGeom(spec), [spec])
@@ -119,8 +124,12 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
               this.dataX = d.map(p => p[0]); this.dataY = d.map(p => p[1])
             }
           }
-          // Keep draggable points on screen.
-          for (const p of spec.points.filter(q => q.drag)) pts[p.name].on('drag', () => { const q = pts[p.name]; const x = Math.min(spec.x[1], Math.max(spec.x[0], q.X())), y = Math.min(spec.y[1], Math.max(spec.y[0], q.Y())); if (x !== q.X() || y !== q.Y()) q.moveTo([x, y]) })
+          // Keep draggable points on screen; on release they settle onto a tidy grid (readable values) with a tick.
+          const sx = niceStep(spec.x[1] - spec.x[0]), sy = niceStep(spec.y[1] - spec.y[0])
+          for (const p of spec.points.filter(q => q.drag)) {
+            pts[p.name].on('drag', () => { const q = pts[p.name]; const x = Math.min(spec.x[1], Math.max(spec.x[0], q.X())), y = Math.min(spec.y[1], Math.max(spec.y[0], q.Y())); if (x !== q.X() || y !== q.Y()) q.moveTo([x, y]) })
+            pts[p.name].on('up', () => { const q = pts[p.name]; const x = Math.round(q.X() / sx) * sx, y = Math.round(q.Y() / sy) * sy; if (Math.abs(x - q.X()) > 1e-9 || Math.abs(y - q.Y()) > 1e-9) { q.moveTo([x, y], reducedMotion() ? 0 : 120); buzz() } })
+          }
         }
         let raf = 0
         board.on('update', () => {
@@ -164,6 +173,9 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
   }
   const stopPlay = () => { cancelAnimationFrame(playRaf.current); setPlaying(null) }
   useEffect(() => () => cancelAnimationFrame(playRaf.current), [])
+  const onReadoutsRef = useRef(onReadouts)
+  useEffect(() => { onReadoutsRef.current = onReadouts })
+  useEffect(() => { onReadoutsRef.current?.(reads) }, [reads])
   // The demonstration runs once, when the figure is ready; then the learner has control (a small buzz on phones).
   useEffect(() => {
     if (!ready || demoDone.current) return

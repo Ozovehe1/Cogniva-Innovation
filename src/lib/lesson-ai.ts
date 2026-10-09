@@ -497,7 +497,7 @@ ${LAYOUT_RULES}
 - Exact maths pictures: {"type":"draw","shape":{"kind":"diagram","library":"sets"|"geometry"|"graph"|"vectors","substance": Penrose Substance lines separated by \\n,"x","y","w","h","alt"}} lays out a precise Venn diagram, triangle construction, tree or vector sum in that box (sets: Set A, B / Element x / Intersecting(A, B) / Subset(A, B) / Disjoint(A, B) / In(x, A) / Label A "text"; geometry: Point A, B, C / Triangle(A, B, C) / Bisector(A, B, C, D) / AngleMark(A, B, C) / RightAngle(A, B, C); graph: Node r, a / Parent(r, a); vectors: Vector u, v, w / Sum(w, u, v)). Highlight or annotate it afterwards by its id.
 - When exploring by hand teaches it better (a slope changing, a point on the unit circle, a parameter's effect), hand the lesson to a live figure with one "stage" step (see the schema), then continue on the board.
 - Return 4 to 9 steps; keep it brisk. You may clear part of the board first. New ids must not clash with existing ones unless you clear them first.
-- End with a check (kind "understand", or a short "choice" question) so the student can confirm. Do not add "reteach" to it.
+- End with a check so the student can confirm: kind "understand", a short "choice" question, or — when you used a live figure — an "explore" check (the learner moves the figure until a readout hits the goal; doing beats choosing). Do not add "reteach" to it.
 Return {"steps": [...]} only.`
   return generateSteps(prompt, { knownIds: ids, knownAxes: axes, knownVars: vars, maxSteps: 14, timeoutMs: 20_000, primaryTimeoutMs: 12_000, thinking: 'minimal', meta: input.meta, played: input.played })
 }

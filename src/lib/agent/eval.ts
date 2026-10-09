@@ -127,6 +127,15 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   out.push({ id: 'lesson-stage-step', group: 'static', pass: st1.ok && st2.ok && st2.steps[0]?.type === 'stage', detail: [...st1.errors, ...st2.errors].join('; ').slice(0, 160) || 'valid, reloads' })
   const stBad = validateScript([{ ...stageRaw, play: { slider: 'zz' } }])
   out.push({ id: 'lesson-stage-rejects-bad', group: 'static', pass: !stBad.ok, detail: stBad.errors[0]?.slice(0, 160) ?? 'ACCEPTED' })
+  // A check can embed a live figure; an explore check is answered by moving it until a readout reaches its goal.
+  const exRaw = { type: 'check', kind: 'explore', prompt: 'Slide until sin a = 0.5', figure: stageRaw.spec, goal: { readout: 'sin a', equals: 0.5 } }
+  const ex1 = validateScript([exRaw]), ex2 = validateScript(ex1.steps), exBad = validateScript([{ ...exRaw, goal: { readout: 'tan a', equals: 1 } }])
+  out.push({ id: 'lesson-explore-check', group: 'static', pass: ex1.ok && ex2.ok && !exBad.ok, detail: [...ex1.errors, ...ex2.errors].join('; ').slice(0, 160) || `valid, reloads; bad goal: ${exBad.errors[0]?.slice(0, 80) ?? 'ACCEPTED'}` })
+  // Circles stay round: the still widens the shorter range to equal units.
+  const uc = validateInteractive(stageRaw.spec).spec
+  const ucSvg = uc ? interactiveSvg(uc) : ''
+  const ell = /<ellipse[^>]*rx="([\d.]+)"[^>]*ry="([\d.]+)"/.exec(ucSvg)
+  out.push({ id: 'ix-circle-round', group: 'static', pass: !!ell && Math.abs(Number(ell[1]) - Number(ell[2])) < 1.5, detail: ell ? `rx ${ell[1]} ry ${ell[2]}` : 'no circle' })
   try {
     const ex = await expandBoardDiagrams({ steps: [{ type: 'draw', id: 'v1', shape: { kind: 'diagram', library: 'sets', substance: 'Set A, B\nIntersecting(A, B)', x: 200, y: 80, w: 400, h: 300 } }] })
     const vd = validateScript((ex as { steps: unknown[] }).steps)
@@ -174,7 +183,7 @@ const TOOL_CASES: ToolCase[] = [
 
 /** Teaching space: the in-lesson Ask sheet (same chat agent, lesson context) must reach every visual tool. */
 const BOARD_CTX_PLACEHOLDER = '@board'
-const LESSON_CTX = 'They are inside the lesson "Gradients of curves" (lesson_id 00000000-0000-4000-8000-000000000000); use get_lesson_digest for what it teaches.'
+const LESSON_CTX = 'They are inside the lesson "Gradients of curves" (lesson_id 00000000-0000-4000-8000-000000000000); get_lesson_digest says what it teaches: use it for questions about the lesson, but a request to draw, show, plot or explore goes straight to the visual tool.'
 const LESSON_CASES: ToolCase[] = [
   { id: 'board', msg: 'Can you show me on the whiteboard how the gradient of a curve changes?', expect: ['draw_on_board', 'animate_concept', 'interactive', 'plot'] },
   { id: 'board-edit', msg: 'Circle the -5 from the last step on the board and say what it means.', expect: ['board_edit', 'board_inspect'], board: BOARD_CTX_PLACEHOLDER },

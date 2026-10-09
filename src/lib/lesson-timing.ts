@@ -23,7 +23,7 @@ export const VOICE_PACE = 0.87
 /** Gap between steps: the player's 40 ms advance plus fetching and starting the next cached clip. */
 export const STEP_GAP_MS = 350
 /** Time a learner spends on a check after its question is read (tap, choose, or type). */
-export const CHECK_ANSWER_MS: Record<CheckStep['kind'], number> = { understand: 5_000, choice: 14_000, short: 30_000 }
+export const CHECK_ANSWER_MS: Record<CheckStep['kind'], number> = { understand: 5_000, choice: 14_000, short: 30_000, explore: 25_000 }
 /** A rendered clip is timed to its narration; never shorter than this. */
 export const CLIP_MIN_MS = 12_000
 
