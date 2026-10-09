@@ -14,6 +14,8 @@ import type { AssessItem, ItemFigure } from './spec'
 /** Phone legibility: every text in a 640-wide figure at least 20 viewBox units (≈11 px on a 360-390 px screen). */
 export function phoneSvg(svg: string, minFont = 20, scale = 1.5): string {
   return svg
+    // A paper-coloured halo under every label keeps it readable where a curve or axis runs through it.
+    .replace(/<text(?![^>]*paint-order)/g, '<text paint-order="stroke" stroke="#FBFAF7" stroke-width="5" stroke-linejoin="round"')
     .replace(/font-size="(\d+(?:\.\d+)?)(px)?"/g, (_m, n: string) => `font-size="${Math.max(minFont, Math.round(Number(n) * scale))}"`)
     .replace(/font-size:\s*(\d+(?:\.\d+)?)px/g, (_m, n: string) => `font-size:${Math.max(minFont, Math.round(Number(n) * scale))}px`)
 }
@@ -22,7 +24,8 @@ export function phoneSvg(svg: string, minFont = 20, scale = 1.5): string {
 export function graphSvg(spec0: Record<string, unknown>): { svg: string | null; error?: string } {
   const v = validateInteractive({ ...spec0, sliders: [{ name: 'zz', min: 0, max: 1, value: 0 }] })
   if (!v.spec) return { svg: null, error: v.errors[0] ?? 'invalid graph' }
-  const spec = { ...v.spec, sliders: [], points: v.spec.points.map(p => ({ ...p, drag: false, color: p.color === 'clay' ? 'accent' as const : p.color })) }
+  // One curve: the stem names it, so no in-plot label to collide with the curve. Points are static (not draggable).
+  const spec = { ...v.spec, sliders: [], functions: v.spec.functions.length === 1 ? v.spec.functions.map(f => ({ ...f, label: '' })) : v.spec.functions, points: v.spec.points.map(p => ({ ...p, drag: false, color: p.color === 'clay' ? 'accent' as const : p.color })) }
   try { return { svg: phoneSvg(interactiveSvg(spec)) } } catch (err) { return { svg: null, error: err instanceof Error ? err.message : String(err) } }
 }
 
