@@ -128,6 +128,8 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
   // An end given as [x, y] (numbers or expressions, e.g. ["px", 0] for the foot below P) becomes a hidden helper point.
   let aux = 0
   const known = (n: unknown, at: string): boolean => {
+    // Models sometimes send the [x, y] end as a string ("[-2, 4]" or "(px, 0)").
+    if (typeof n === 'string' && !pointNames.has(n)) { const m = n.trim().match(/^[[(]\s*([^,]+?)\s*,\s*([^,]+?)\s*[\])]$/); if (m) n = [m[1], m[2]] }
     if (Array.isArray(n) && n.length === 2) {
       const [ax, ay] = n.map(v => (typeof v === 'number' ? String(v) : ex(v, 120)))
       if (!check(ax, `${at}[0]`, [], false) || !check(ay, `${at}[1]`, [], false)) return false
@@ -140,7 +142,7 @@ export function validateInteractive(input: unknown): { spec: IxSpec | null; erro
     }
     const ok = typeof n === 'string' && pointNames.has(n)
     if (!ok) errors.push(`${at}: "${String(n)}" is not a point (use a point name, or [x, y] with numbers or expressions)`)
-    else (known as unknown as { last: string }).last = n
+    else (known as unknown as { last: string }).last = n as string
     return ok
   }
   const lastName = () => (known as unknown as { last: string }).last

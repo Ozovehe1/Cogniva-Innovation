@@ -138,7 +138,10 @@ async function commitBoard(ctx: AgentCtx, doc: BoardDoc, from: number, title: st
   if (opts.replace || !ctx.boardTurn) ctx.boardTurn = { blockId: bid(), from }
   const start = Math.min(ctx.boardTurn.from, from)
   ctx.boardTurn.from = start
-  ctx.emit({ kind: 'board', id: ctx.boardTurn.blockId, title: title.slice(0, 60) || 'Whiteboard', steps, start: start || undefined, rev: next.rev, plot: opts.plot || undefined, diagram: opts.diagram || undefined })
+  // A fresh diagram board (title + figure) shows its title at once and only fades the figure in: no handwriting or
+  // narration of the title before the picture appears.
+  const shownFrom = opts.diagram && opts.replace ? Math.max(start, steps.length - 1) : start
+  ctx.emit({ kind: 'board', id: ctx.boardTurn.blockId, title: title.slice(0, 60) || 'Whiteboard', steps, start: shownFrom || undefined, rev: next.rev, plot: opts.plot || undefined, diagram: opts.diagram || undefined })
   const scene = sceneOf(next)
   return {
     shown: true,
