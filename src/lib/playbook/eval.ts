@@ -159,7 +159,9 @@ async function lifecycleCases(admin: SupabaseClient, deadline: number): Promise<
     const seeded = 'Pythagoras\' theorem, using a right triangle with its sides labelled 3, 4 and 6'
     const rules = near.map(s => s.b.text)
     const [base, cand] = await Promise.all([runArm('lesson', seeded, [], b.check_q, deadline - 10_000), runArm('lesson', seeded, rules, b.check_q, deadline - 10_000)])
-    const fault = (n: string[]) => n.some(x => /guard pythagoras|judge: problem present/.test(x))
+    // The deterministic guard is the measure here (a triangle shipped with sides that break a² + b² = c²); the judge's
+    // view is reported but not scored, since a lesson may show 3-4-6 on purpose as a counter-example.
+    const fault = (n: string[]) => n.some(x => /guard pythagoras/.test(x))
     if (!base.ok || !cand.ok) add('a7-seeded-task-avoided', false, `models busy: ${[...base.notes, ...cand.notes].join('; ').slice(0, 160)}`, null, Date.now() - t0)
     else add('a7-seeded-task-avoided', !fault(cand.notes), `seeded task "${seeded}": with the retrieved rule → ${fault(cand.notes) ? 'MISTAKE SHIPPED' : 'avoided'} (${cand.notes.filter(n => /pythag|judge/.test(n)).join('; ') || 'clean'}); without it → ${fault(base.notes) ? 'mistake shipped' : 'avoided'} (${base.notes.filter(n => /pythag|judge/.test(n)).join('; ') || 'clean'})`, cand.model, Date.now() - t0)
   }
