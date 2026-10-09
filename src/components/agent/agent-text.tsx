@@ -12,7 +12,7 @@ export function AgentText({ text }: { text: string }) {
   // Models write maths as \( \) and \[ \] too: normalise to $ … $ for RichText.
   const norm = text.replace(/\r/g, '')
     .replace(/\[shown in chat:[^\]\n]*\]/gi, '')
-    .replace(/!\[[^\]\n]*\]\([^)\s]+\)/g, '')
+    .replace(/!\[[^\]\n]*\](\([^)\s]*\))?/g, '')
     .replace(/\\\[([\s\S]+?)\\\]/g, (_, m: string) => `$${m.trim()}$`).replace(/\\\(([\s\S]+?)\\\)/g, (_, m: string) => `$${m.trim()}$`)
     .replace(/\n{3,}/g, '\n\n').trim()
   // A list that starts right under a sentence (no blank line, as models often write) is still a list.

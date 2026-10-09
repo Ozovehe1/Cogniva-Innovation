@@ -226,7 +226,7 @@ async function runDraftWorkInner(lessonId: string, opts: { origin?: string } = {
   const onQuota = async (err: GeminiQuotaError): Promise<'continue' | 'paused'> => {
     const wait = err.retryAfterMs ?? MAX_INLINE_WAIT_MS
     if (!err.daily && wait <= MAX_INLINE_WAIT_MS && Date.now() + wait + BEAT_RESERVE_MS < hardEnd) { await sleep(wait); return 'continue' }
-    await db.from('lessons').update({ draft_status: 'paused', draft_error: 'quota', draft_retry_at: retryAt(err) }).eq('id', lessonId)
+    await db.from('lessons').update({ draft_status: 'paused', draft_error: `quota: ${err.message.slice(0, 400)}`, draft_retry_at: retryAt(err) }).eq('id', lessonId)
     return 'paused'
   }
 
