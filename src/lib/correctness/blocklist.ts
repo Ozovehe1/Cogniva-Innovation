@@ -30,10 +30,18 @@ export function topicKey(topic: string): string {
   return [...new Set((topic.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(w => w.length > 1 && !STOP.has(w)))].sort().join(' ').slice(0, 80)
 }
 
-/** Illustration ids not to show for this topic (blocked for the topic or everywhere). */
+/** Same topic: most of the shorter topic's words appear in the other ("human heart" ~ "inside the human heart"). */
+export function sameTopic(a: string, b: string): boolean {
+  const A = a.split(' ').filter(Boolean), B = new Set(b.split(' ').filter(Boolean))
+  if (!A.length || !B.size) return false
+  const [small, big] = A.length <= B.size ? [A, B] : [[...B], new Set(A)]
+  return small.filter(w => big.has(w)).length / small.length >= 0.5
+}
+
+/** Illustration ids not to show for this topic (blocked for the same topic, or everywhere). */
 export async function blockedIllustrations(topic: string, admin?: SupabaseClient | null): Promise<Set<string>> {
   const key = topicKey(topic)
-  return new Set((await loadBlocklist(admin)).filter(r => r.kind === 'illustration' && (!r.topic || r.topic === key)).map(r => r.value))
+  return new Set((await loadBlocklist(admin)).filter(r => r.kind === 'illustration' && (!r.topic || sameTopic(r.topic, key))).map(r => r.value))
 }
 
 /** Confirmed mistakes to steer the writers away from, as prompt lines ("Avoid: …"). */

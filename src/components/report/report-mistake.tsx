@@ -34,28 +34,35 @@ const CATEGORIES: { id: ReportCategory; label: string; hint: string }[] = [
 ]
 
 /** The small trigger placed under a piece of teaching output. */
-export function ReportButton({ payload, onReported, onRetry, what = 'this', className, compact = false, defaultCategory }: {
+export function ReportButton({ payload, onReported, onDone, onRetry, what = 'this', className, compact = false, short = false, defaultCategory }: {
   /** Built at send time (the category is known by then), so a picture complaint can target the picture. */
   payload: (category: ReportCategory | null) => ReportPayload | null
+  /** Right after the report is stored (the sheet is still showing its thanks). */
   onReported?: (r: ReportResult) => void
+  /** When the sheet closes after a report (flag the artefact here if flagging unmounts this button). */
+  onDone?: (r: ReportResult) => void
   /** Offer a corrected version once the report is in. */
   onRetry?: (r: ReportResult) => void
   /** "this picture", "this answer"… used in the sheet's copy. */
   what?: string
   className?: string
   compact?: boolean
+  /** "Report" on phones (tight rows), "Report a mistake" from sm up. */
+  short?: boolean
   defaultCategory?: ReportCategory
 }) {
   const [open, setOpen] = useState(false)
   // A fresh sheet each time it opens (no stale note or category).
   const [n, setN] = useState(0)
+  const sent = useRef<ReportResult | null>(null)
+  const close = () => { setOpen(false); const r = sent.current; sent.current = null; if (r) onDone?.(r) }
   return (
     <>
       <button type="button" onClick={() => { setN(x => x + 1); setOpen(true) }} aria-label={`Report a mistake in ${what}`} aria-haspopup="dialog"
         className={cx('inline-flex min-h-11 items-center gap-1.5 rounded-full px-2.5 text-[12.5px] font-medium text-muted transition-colors hover:bg-sunken hover:text-ink-2 focus-visible:outline-2 focus-visible:outline-accent', className)}>
-        <Flag className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />{compact ? <span className="sr-only">Report a mistake</span> : 'Report a mistake'}
+        <Flag className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />{compact ? <span className="sr-only">Report a mistake</span> : short ? <><span className="sm:hidden">Report</span><span className="hidden sm:inline">Report a mistake</span></> : 'Report a mistake'}
       </button>
-      <ReportSheet key={n} open={open} onClose={() => setOpen(false)} payload={payload} onReported={onReported} onRetry={onRetry} what={what} defaultCategory={defaultCategory} />
+      <ReportSheet key={n} open={open} onClose={close} payload={payload} onReported={r => { sent.current = r; onReported?.(r) }} onRetry={onRetry} what={what} defaultCategory={defaultCategory} />
     </>
   )
 }

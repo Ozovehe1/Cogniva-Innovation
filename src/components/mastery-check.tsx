@@ -82,7 +82,7 @@ export function MasteryCheck({ topicId, lessonId, mastered, recheck: startRechec
               <div className="-mb-2 -ml-2.5 mt-1 flex items-center gap-2">
                 {flagged.has(qi) ? <p className="flex min-h-11 items-center gap-1.5 px-2.5 text-[12.5px] text-accent"><Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />Flagged — thanks, we’ll check this question</p>
                   : <ReportButton what="this question" payload={() => ({ surface: 'mastery', lessonId, artefact: { question: q.q, options: q.options, index: qi, topic: q.topic ?? null, topicId, recheck: mode === 'recheck' } })}
-                      onReported={() => setFlagged(f => new Set(f).add(qi))} />}
+                      onDone={() => setFlagged(f => new Set(f).add(qi))} />}
               </div>
             </li>
           ))}

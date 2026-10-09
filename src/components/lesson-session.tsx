@@ -282,7 +282,7 @@ export function LessonSession({
     {/* The character looks down toward the board by default. */}
     <div className="mb-2 flex items-center gap-2">
       <TutorPresence variant="lesson" look={{ x: 0.2, y: 0.55 }} className="min-w-0 flex-1" />
-      {mode === 'student' && <ReportButton what="this part of the lesson" payload={reportPayload} onReported={onReported} onRetry={r => void correctedRetry(r)} className="flex-shrink-0" />}
+      {mode === 'student' && <ReportButton short what="this part of the lesson" payload={reportPayload} onReported={onReported} onRetry={r => void correctedRetry(r)} className="flex-shrink-0" />}
     </div>
     <WhiteboardPlayer
       controlRef={control}

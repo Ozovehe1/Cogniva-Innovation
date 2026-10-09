@@ -76,7 +76,8 @@ export async function POST(request: Request) {
   const step = artefact.step as { shape?: { kind?: string; src?: string } } | undefined
   const figureSrc = step?.shape?.kind === 'figure' ? step.shape.src : (artefact.block as { url?: string } | undefined)?.url
   const illustrationId = str(body.illustrationId, 200) || await illustrationIdFromSrc(figureSrc) || null
-  const query = str(body.query, 200) || (illustrationId ? str((artefact.block as { alt?: string } | undefined)?.alt ?? (step?.shape as { alt?: string } | undefined)?.alt ?? problem, 200) : '') || null
+  // The topic the picture was for: the lesson's title, or the learner's question in Ask (the blocklist matches by topic words).
+  const query = str(body.query, 200) || (illustrationId ? str(problem || (artefact.block as { alt?: string } | undefined)?.alt || (step?.shape as { alt?: string } | undefined)?.alt || '', 200) : '') || null
   const clipJobId = isUuid(body.clipJobId) ? body.clipJobId : isUuid((artefact.block as { jobId?: string } | undefined)?.jobId) ? (artefact.block as { jobId: string }).jobId : null
   if (clipJobId) {
     const { data: job } = await admin.from('manim_jobs').select('prompt, status, verdict, error, scene_name').eq('id', clipJobId).maybeSingle()

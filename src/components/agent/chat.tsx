@@ -36,7 +36,7 @@ function ReportableBlock({ block, sessionId, done, onRetry }: { block: Block; se
         <div className="-mb-2 mt-0.5 flex justify-end">
           <ReportButton what={meta.what} defaultCategory={block.kind === 'svg' ? 'wrong_picture' : undefined}
             payload={() => ({ surface: meta.surface, sessionId, blockId: block.id, artefact: { kind: block.kind } })}
-            onReported={r => { setFlag({ reportId: r.id, category: r.category }); setRetryPrompt(r.retry?.prompt ?? null) }}
+            onDone={r => { setFlag({ reportId: r.id, category: r.category }); setRetryPrompt(r.retry?.prompt ?? null) }}
             onRetry={r => onRetry(r.retry?.prompt ?? retryFor(meta.what, r.category))} />
         </div>
       )}
@@ -191,14 +191,14 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
                 )}
                 {m.content && m.flagged && !revealed.has(i) ? <FlaggedNotice what="this answer" onRetry={() => void send(retryFor('answer', m.flagged?.category))} onShow={() => setRevealed(r => new Set(r).add(i))} />
                   : m.content ? <AgentText text={m.content} /> : busy && i === messages.length - 1 && !(m.blocks ?? []).length ? <p className="flex items-center gap-2 text-[14px] text-muted"><Loader2 className="h-4 w-4 animate-spin" />Thinking…</p> : null}
-                {(m.blocks ?? []).map(b => <ReportableBlock key={b.id + b.kind} block={b} sessionId={sessionId} done={!(busy && i === messages.length - 1)} onRetry={p => void send(p)} />)}
                 {m.content && !m.flagged && sessionId && !(busy && i === messages.length - 1) && (
-                  <div className="-mb-2 -ml-2.5 -mt-1">
+                  <div className="-my-2 -ml-2.5">
                     <ReportButton what="this answer" payload={() => ({ surface: 'ask', sessionId, text: m.content })}
-                      onReported={r => setMessages(ms => ms.map((x, k) => (k === i ? { ...x, flagged: { reportId: r.id, category: r.category } } : x)))}
+                      onDone={r => setMessages(ms => ms.map((x, k) => (k === i ? { ...x, flagged: { reportId: r.id, category: r.category } } : x)))}
                       onRetry={r => void send(r.retry?.prompt ?? retryFor('answer', r.category))} />
                   </div>
                 )}
+                {(m.blocks ?? []).map(b => <ReportableBlock key={b.id + b.kind} block={b} sessionId={sessionId} done={!(busy && i === messages.length - 1)} onRetry={p => void send(p)} />)}
                 {m.error && <p className="rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 text-[14px] text-danger">{m.error}</p>}
               </div>
             ))}
