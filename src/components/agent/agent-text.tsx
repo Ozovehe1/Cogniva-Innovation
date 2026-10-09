@@ -20,9 +20,10 @@ export function AgentText({ text }: { text: string }) {
     <a key={k} href={href} target="_blank" rel="noopener noreferrer nofollow" className="break-words font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent">{label}</a>
   )
   const inline = (s: string, k: string) => {
-    const parts = s.split(/(\*\*[^*]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s)\]]+)/g)
+    const parts = s.split(/(\*\*[^*]+\*\*|(?<![*\w])\*[^*\s](?:[^*\n]*[^*\s])?\*(?![*\w])|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s)\]]+)/g)
     return parts.map((p, i) => {
       if (p.startsWith('**') && p.endsWith('**')) return <strong key={`${k}${i}`} className="font-semibold text-ink"><RichText text={p.slice(2, -2)} /></strong>
+      if (/^\*[^*\n]+\*$/.test(p)) return <em key={`${k}${i}`} className="text-ink-2"><RichText text={p.slice(1, -1)} /></em>
       const md = /^\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(p)
       if (md) return link(md[2], md[1], `${k}${i}`)
       if (/^https?:\/\//.test(p)) return link(p, p.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').slice(0, 42) + (p.length > 52 ? '…' : ''), `${k}${i}`)

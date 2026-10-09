@@ -5,15 +5,14 @@
  * labels are readable without leaving the lesson (cognitive load: no context switch; Fitts: the whole picture is the
  * target). Escape, the close button (44 px, thumb zone) or a tap on the backdrop closes it and focus returns.
  */
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { Maximize2, Minus, Plus, X } from 'lucide-react'
 import { cx } from './ui'
 
 const EASE = [0.2, 0, 0, 1] as const
 const LEVELS = [1, 1.6, 2.4, 3.2]
-const noop = () => () => {}
 
 export function ZoomableImage({ src, alt, className, imgClassName, label = 'Tap to zoom', onLoad, onError, imgRef, loading, children }: {
   src: string
@@ -52,7 +51,6 @@ export function ZoomableImage({ src, alt, className, imgClassName, label = 'Tap 
 function ZoomDialog({ open, src, alt, onClose }: { open: boolean; src: string; alt: string; onClose: () => void }) {
   // Phones open at 160 %: the point of opening is to read the small labels. (A fresh dialog per opening: keyed.)
   const [lvl, setLvl] = useState(() => (typeof window !== 'undefined' && window.innerWidth < 640 ? 1 : 0))
-  const mounted = useSyncExternalStore(noop, () => true, () => false)
   const closeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (!open) return
@@ -67,13 +65,14 @@ function ZoomDialog({ open, src, alt, onClose }: { open: boolean; src: string; a
     document.body.style.overflow = 'hidden'
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
   }, [open, onClose])
-  if (!mounted) return null
+  // Only ever open after a tap, so this never renders during SSR/hydration.
+  if (!open || typeof document === 'undefined') return null
   const scale = LEVELS[lvl]
+  // Rendered only while open (no exit animation): closing must be instant and certain.
   return createPortal(
-    <AnimatePresence>
-      {open && (
+    (
         <motion.div className="fixed inset-0 z-[95] flex flex-col bg-[#F7F5F0]" role="dialog" aria-modal="true" aria-label={alt}
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, ease: EASE }}>
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: EASE }}>
           <div className="pt-safe flex items-center justify-between gap-3 border-b border-line bg-surface/90 px-3 py-1.5 backdrop-blur-sm">
             <p className="min-w-0 truncate pl-1 text-[14px] font-medium text-ink-2">{alt}</p>
             <button ref={closeRef} type="button" onClick={onClose} aria-label="Close the larger picture"
@@ -94,8 +93,7 @@ function ZoomDialog({ open, src, alt, onClose }: { open: boolean; src: string; a
               className="flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface text-ink-2 disabled:opacity-40"><Plus className="h-4 w-4" /></button>
           </div>
         </motion.div>
-      )}
-    </AnimatePresence>,
+    ),
     document.body,
   )
 }
