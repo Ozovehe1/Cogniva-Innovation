@@ -111,9 +111,10 @@ export async function runArm(target: Target, topic: string, rules: string[], che
       const r = await pbJson(PROBE_LESSON(topic, block), { system: TUTOR_VOICE, purpose: 'json', maxTokens: 5000, deadline, temperature: 0.4 })
       model = r.model
       const v = validateScript(r.json, { maxSteps: 40 })
-      // Invalid steps are dropped by the validator; an unusable output (most steps invalid) counts as a fault.
-      if (!v.steps.length || v.steps.length < v.total / 2) { score += 2; notes.push(`invalid steps (${v.steps.length}/${v.total} valid): ${v.errors[0]?.slice(0, 80) ?? ''}`) }
-      else if (!v.ok) notes.push(`${v.total - v.steps.length} step(s) dropped: ${v.errors[0]?.slice(0, 60) ?? ''}`)
+      // Schema slips (fill: "none") are repaired by the real writer's validate-and-repair loop and say nothing about a
+      // teaching rule, so they are noted, not scored (scoring them made the gate noisy). Only an empty output scores.
+      if (!v.steps.length) { score += 2; notes.push(`no valid steps: ${v.errors[0]?.slice(0, 80) ?? ''}`) }
+      else if (!v.ok) notes.push(`(${v.total - v.steps.length} step(s) dropped by the schema check)`)
       const g = guardSteps(v.steps)
       score += g.issues.length
       notes.push(...g.issues.slice(0, 4).map(i => `guard ${i.kind}: ${i.detail.slice(0, 80)}`))
@@ -133,8 +134,8 @@ export async function runArm(target: Target, topic: string, rules: string[], che
   }
   const j = await judge(check, output, deadline)
   if (j.yes === true) { score += 1; notes.push(`judge: problem present (${j.why})`) }
-  else if (j.yes === null && check) notes.push(j.why)
-  return { score, notes, ok: true, model, output }
+  else if (j.yes === null && check && j.why) notes.push(j.why)
+  return { score, notes: notes.filter(Boolean), ok: true, model, output }
 }
 
 /* ───────────── Regression checks per target ───────────── */

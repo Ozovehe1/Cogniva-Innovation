@@ -92,7 +92,7 @@ A candidate goes live only if the relevant checks do not get worse. Stages, wher
 
    | Target | Output written | Score |
    | --- | --- | --- |
-   | `lesson` | 8–14 board steps with a check | guard issues (`correctness/steps.ts`), +2 if invalid |
+   | `lesson` | 8–14 board steps with a check | guard issues (`correctness/steps.ts`), +2 if no step is valid. Schema slips are noted, not scored: the real writer repairs them |
    | `ask` | a tutor reply | wrong numeric claims (`claims.ts`) |
    | `diagram`, `manim` | a numbered plan | judge only |
 
