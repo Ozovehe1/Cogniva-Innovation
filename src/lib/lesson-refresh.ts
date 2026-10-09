@@ -22,8 +22,10 @@ import { LESSON_CLIPS_MAX, clipTargets, queueLessonClip } from './lesson-clip'
 import { loadSections, syncLessonScript, type SectionRow } from './lesson-drafting'
 import { readVisual } from './visual-policy'
 import { validateScript, type Step } from './lesson-schema'
+import { hasRichVisual, stageStep, stageTemplateFor, type StageTemplate } from './lesson-stages'
 
-export const VISUAL_REFRESH_VERSION = 2
+/** 3: live field figures (lesson-stages.ts), one clip per section, field-board re-draft (redraftFieldBoards). */
+export const VISUAL_REFRESH_VERSION = 3
 const MAX_PICTURES = 2
 
 function afterTitle(steps: Step[]) {
@@ -55,9 +57,13 @@ export async function refreshLessonVisuals(db: SupabaseClient, lessonId: string,
   const { data: jobs } = await db.from('manim_jobs').select('id, status, video_path, prompt').eq('lesson_id', lessonId).eq('auto_insert', true)
   const js = (jobs ?? []) as { id: string; status: string; video_path: string | null; prompt: string }[]
   const placed = new Set(sections.flatMap(s => s.steps).filter(st => st.type === 'manim_clip').map(st => (st as { jobId?: string }).jobId).filter(Boolean))
+  const forSeen = new Set(js.filter(j => placed.has(j.id)).map(j => /section "([^"]+)"/.exec(j.prompt ?? '')?.[1]).filter(Boolean))
   for (const j of js) {
     if (j.status !== 'done' || !j.video_path || placed.has(j.id)) continue
     const forTitle = /section "([^"]+)"/.exec(j.prompt ?? '')?.[1]
+    // A duplicate job for a section that already has its clip (concurrent queueing before the guard): withdrawn.
+    if (forTitle && forSeen.has(forTitle)) { await db.from('manim_jobs').update({ status: 'failed', error: 'duplicate clip for this section (not shown)' }).eq('id', j.id); continue }
+    if (forTitle) forSeen.add(forTitle)
     const own = sections.findIndex(s => s.title === forTitle)
     let k = own >= 0 && own >= at ? own : sections.findIndex((_, i) => i > at && i > 0)
     if (k < 0) k = Math.min(sections.length - 1, Math.max(own, at))
@@ -110,6 +116,25 @@ export async function refreshLessonVisuals(db: SupabaseClient, lessonId: string,
     }
   }
 
+  // 4. Live field figures (wire field, magnet + coil, charges in a wire) for field / current lessons: the first demo
+  //    section per kind (at most 2) gets the figure at its end. A stage takes over the lesson area and hands back to
+  //    the board, so the section's board continues exactly as before.
+  if (!sections.some(s => s.steps.some(st => st.type === 'stage'))) {
+    const lessonTpl = stageTemplateFor(`${lesson.title}. ${(lesson.objectives ?? []).join('. ')}`)
+    const used: StageTemplate[] = []
+    const demos = sections.filter(s => (s.kind ?? 'demo') === 'demo')
+    for (const s of [...demos.filter(x => x.position >= at), ...demos.filter(x => x.position < at)]) {
+      if (used.length >= 2) break
+      const tpl = stageTemplateFor(`${s.title}. ${s.goal}. ${(s.key_points ?? []).join('. ')}`) ?? (used.length === 0 ? lessonTpl : null)
+      if (!tpl || used.includes(tpl)) continue
+      const st = stageStep(tpl, `stage_${tpl}_${s.position}`)
+      if (!st) continue
+      s.steps = [...s.steps, st]
+      used.push(tpl); dirty.add(s.id)
+      trace.push(`stage ${tpl} placed in section ${s.position}`)
+    }
+  }
+
   // Done once no clip is still on its way and drafting has finished.
   const { data: after } = await db.from('manim_jobs').select('status').eq('lesson_id', lessonId).eq('auto_insert', true)
   const pending = ((after ?? []) as { status: string }[]).some(j => !['approved', 'failed'].includes(j.status)) || ['outlining', 'drafting', 'paused'].includes(lesson.draft_status)
@@ -119,4 +144,76 @@ export async function refreshLessonVisuals(db: SupabaseClient, lessonId: string,
   for (const s of sections.filter(x => dirty.has(x.id))) await db.from('lesson_sections').update({ steps: s.steps }).eq('id', s.id)
   await syncLessonScript(db, lessonId)
   return { changed: true, trace }
+}
+
+/** Field topics whose board steps draw a curve on axes instead of the field (the old "field profile" sine). */
+export function fieldBoardNeedsRedraft(lesson: { title: string; objectives?: string[] | null }, s: SectionRow): boolean {
+  const kind = s.kind ?? 'demo'
+  if (kind !== 'demo' && kind !== 'example') return false
+  const text = `${lesson.title}. ${s.title}. ${s.goal}. ${(s.key_points ?? []).join('. ')}`
+  if (!readVisual(text).families.includes('field') && !stageTemplateFor(text)) return false
+  if (hasRichVisual(s.steps)) return false
+  const kinds = s.steps.filter(st => st.type === 'draw').map(st => (st as { shape?: { kind?: string } }).shape?.kind)
+  const arrows = kinds.filter(k => k === 'arrow' || k === 'vector').length
+  const curves = kinds.filter(k => k === 'function' || k === 'axes' || k === 'parametric').length
+  return curves > 0 && arrows < 3
+}
+
+/**
+ * Versioned re-draft of an owner's older lesson (style_notes.visual_redraft): demo / example sections about fields
+ * whose board only plots a curve are written again with today's beat drafter (which draws field lines / arrows that
+ * move, and adds a live figure or picture), chapter by chapter so the board stays consistent. Titles, objectives,
+ * checks and the learner's progress are kept; a kept check whose board references no longer exist keeps only its
+ * valid steps. At most 2 chapters per lesson per run. Per learner: only this learner's own lesson is touched.
+ */
+export const VISUAL_REDRAFT_VERSION = 1
+export async function redraftFieldBoards(db: SupabaseClient, lessonId: string, ownerId: string, trace: string[] = []): Promise<{ redrafted: number; trace: string[] }> {
+  const { data: l } = await db.from('lessons').select('id, title, subject, objectives, owner_student_id, generated_by, draft_status, style_notes').eq('id', lessonId).maybeSingle()
+  const lesson = l as { id: string; title: string; subject: string; objectives: string[] | null; owner_student_id: string | null; generated_by: string; draft_status: string; style_notes: Record<string, unknown> | null } | null
+  if (!lesson || lesson.owner_student_id !== ownerId || lesson.generated_by !== 'ai') return { redrafted: 0, trace }
+  if (((lesson.style_notes as { visual_redraft?: number } | null)?.visual_redraft ?? 0) >= VISUAL_REDRAFT_VERSION) return { redrafted: 0, trace }
+  if (['outlining', 'drafting'].includes(lesson.draft_status)) return { redrafted: 0, trace }
+  const { draftBeat } = await import('./lesson-beats')
+  const { toPlan } = await import('./lesson-drafting')
+  const { withLlmContext } = await import('./agent/pool')
+  const all = (await loadSections(db, lessonId)).filter(s => s.status === 'ready' && Array.isArray(s.steps))
+  const chapterOf = (s: SectionRow) => s.chapter ?? s.title
+  const chapters = [...new Set(all.filter(s => fieldBoardNeedsRedraft(lesson, s)).map(chapterOf))].slice(0, 2)
+  const lite = { title: lesson.title, subject: lesson.subject, objectives: lesson.objectives ?? [] }
+  const plan = all.map(toPlan)
+  let redrafted = 0
+  for (const ch of chapters) {
+    const secs = all.filter(s => chapterOf(s) === ch)
+    const board: Step[] = []
+    const firstInLesson = all[0]?.id === secs[0]?.id
+    for (const [k, s] of secs.entries()) {
+      const kind = s.kind ?? 'demo'
+      if (kind === 'check' || kind === 'your_turn') {
+        // Kept as written; steps that pointed at the old board are dropped (the check itself stays).
+        const v = validateScript(s.steps, { knownIds: board.flatMap(st => (st as { id?: string }).id ? [(st as { id: string }).id] : []) })
+        if (v.steps.length !== s.steps.length && v.steps.some(st => st.type === 'check')) { s.steps = v.steps; await db.from('lesson_sections').update({ steps: s.steps }).eq('id', s.id) }
+        board.push(...s.steps)
+        continue
+      }
+      try {
+        const index = all.findIndex(x => x.id === s.id)
+        let steps = await withLlmContext({ priority: 'background', learnerId: ownerId, label: 'lesson-redraft' }, () => draftBeat({ lesson: lite, plan, index, board: k === 0 ? [] : [...board], recentSay: '', chapterStart: k === 0, deadline: Date.now() + 60_000 }))
+        if (k === 0 && !firstInLesson && !(steps[0]?.type === 'clear' && !(steps[0] as { targets?: string[] }).targets)) steps = [{ type: 'clear' } as Step, ...steps]
+        s.steps = steps
+        await db.from('lesson_sections').update({ steps }).eq('id', s.id)
+        redrafted++
+        trace.push(`redrafted section ${s.position} (${s.title.slice(0, 40)})`)
+      } catch (err) {
+        trace.push(`section ${s.position} kept: ${err instanceof Error ? err.message.slice(0, 80) : err}`)
+      }
+      board.push(...s.steps)
+    }
+  }
+  await db.from('lessons').update({ style_notes: { ...(lesson.style_notes ?? {}), visual_redraft: VISUAL_REDRAFT_VERSION, visual_redraft_at: new Date().toISOString(), visual_redraft_sections: redrafted } }).eq('id', lessonId)
+  if (redrafted) await syncLessonScript(db, lessonId)
+  return { redrafted, trace }
+}
+
+export function needsRedraft(styleNotes: unknown): boolean {
+  return ((styleNotes as { visual_redraft?: number } | null)?.visual_redraft ?? 0) < VISUAL_REDRAFT_VERSION
 }

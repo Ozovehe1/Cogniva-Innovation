@@ -1,6 +1,5 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { after } from 'next/server'
 import { headers } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { prefetchNextLesson } from '@/lib/path'
@@ -15,7 +14,8 @@ import { LessonSession } from '@/components/lesson-session'
 import { LessonPreparing } from '@/components/lesson-preparing'
 import { LessonDelete, LessonDownload } from '@/components/lesson-actions'
 import { AskSheet } from '@/components/agent/ask-sheet'
-import { needsVisualRefresh, refreshLessonVisuals } from '@/lib/lesson-refresh'
+import { needsRedraft, needsVisualRefresh, redraftFieldBoards, refreshLessonVisuals } from '@/lib/lesson-refresh'
+import { after } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -41,6 +41,9 @@ export default async function LessonPage({ params, searchParams }: { params: Pro
       if (fresh) { l.script = (fresh as { script: unknown }).script; l.chapters = (fresh as { chapters: unknown }).chapters }
     }
   }
+  // Older field lessons whose board only plots a curve: re-drafted in the background with today's beat drafter
+  // (this learner's own lesson only; the next open plays the new boards).
+  if (own && needsRedraft(l.style_notes)) after(() => redraftFieldBoards(createAdminClient(), id, profile!.id).then(r => { if (r.redrafted) console.log('visual redraft', id, r.trace.join(' | ')) }).catch(err => console.warn('visual redraft failed', err instanceof Error ? err.message : err)))
   const { data: topicRow } = own ? await supabase.from('path_topics').select('id, status, path_id, position').eq('lesson_id', id).maybeSingle() : { data: null }
   // What follows this lesson on the learner's path: its mastery check until the topic is mastered, then the next
   // topic's lesson (written ahead while this one plays).

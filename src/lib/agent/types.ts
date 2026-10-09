@@ -11,7 +11,7 @@ export type Block =
   | { kind: 'svg'; id: string; svg: string; alt: string; credit?: Credit; url?: string }
   | { kind: 'sim'; id: string; spec: SimSpec }
   /** A live JSXGraph figure from a validated spec (boardFigure: its static picture was also placed on the board). */
-  | { kind: 'interactive'; id: string; spec: IxSpec; alt: string; boardFigure?: string }
+  | { kind: 'interactive'; id: string; spec: IxSpec; alt: string; boardFigure?: string; play?: { slider: string; seconds?: number } }
   | { kind: 'clip'; id: string; jobId: string; status: 'rendering' | 'done' | 'failed'; url?: string | null; caption?: string }
   | { kind: 'image'; id: string; png: string; caption?: string }
   | { kind: 'code'; id: string; code: string; stdout: string; error?: string | null; engine: string }

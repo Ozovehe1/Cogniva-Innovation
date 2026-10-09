@@ -83,6 +83,8 @@ export interface WhiteboardPlayerProps {
    * is at most one spoken line (a diagram's title) — the chat text already carries the explanation.
    */
   embedded?: boolean
+  /** More sections are still being written: the end of the current steps is not the end of the lesson. */
+  more?: boolean
 }
 
 export interface PlayerControl {
@@ -146,6 +148,7 @@ export function WhiteboardPlayer({
   slow = false,
   renderMode = false,
   embedded = false,
+  more = false,
 }: WhiteboardPlayerProps) {
   const reduced = !!useReducedMotion()
   const [steps, setSteps] = useState<Step[]>(initialSteps)
@@ -978,7 +981,7 @@ export function WhiteboardPlayer({
             {multi && <p className="mt-0.5 truncate font-display text-[19px] leading-snug text-ink md:text-[21px]">{sectionTitle}</p>}
           </div>
           <div className="flex flex-shrink-0 items-center gap-1">
-            <span className="tnum hidden text-[13px] text-muted sm:inline">{atEnd ? 'Finished' : `${formatDuration(leftMs)} left`}</span>
+            <span className="tnum hidden text-[13px] text-muted sm:inline">{atEnd ? (more ? 'More coming' : 'Finished') : `${formatDuration(leftMs)} left`}</span>
             {multi && (
               <button
                 type="button"
@@ -1220,7 +1223,7 @@ export function WhiteboardPlayer({
             ))}
           </div>
           <span className="tnum hidden flex-shrink-0 text-[12px] text-muted sm:inline">{multi ? `${section + 1} / ${chapters.length}` : `${cursor} / ${steps.length}`}</span>
-          {(multi || steps.length > 40) && <span className="tnum flex-shrink-0 text-[12px] text-muted sm:hidden">{atEnd ? 'Done' : formatDuration(leftMs).replace(' min', 'm').replace(' h', 'h')}</span>}
+          {(multi || steps.length > 40) && <span className="tnum flex-shrink-0 text-[12px] text-muted sm:hidden">{atEnd ? (more ? '…' : 'Done') : formatDuration(leftMs).replace(' min', 'm').replace(' h', 'h')}</span>}
         </div>
         {voiceOk && (
           <button
@@ -1274,6 +1277,12 @@ export function WhiteboardPlayer({
                 onRespond={onCheck}
               />
             </div>
+          ) : atEnd && started && steps.length > 0 && !embedded && more ? (
+            <motion.div key="more" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-4 flex items-start gap-3 rounded-[14px] border border-line bg-surface p-4" role="status" aria-live="polite">
+              <span className="relative mt-1.5 flex h-2.5 w-2.5 flex-shrink-0"><span className="absolute inline-flex h-full w-full rounded-full bg-accent/50 motion-safe:animate-ping" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent" /></span>
+              <span><span className="block font-display text-[19px] leading-snug text-ink">Next part on its way</span>
+              <span className="mt-0.5 block text-[14.5px] leading-relaxed text-muted">Your tutor is finishing the next part of this lesson. It carries on here by itself the moment it is ready.</span></span>
+            </motion.div>
           ) : atEnd && started && steps.length > 0 && !embedded ? (
             <LessonRecap key="end" steps={steps} title={title} answered={steps.filter((x, i) => x.type === 'check' && x.kind !== 'understand' && resolved.has(i)).length} reduced={reduced} onReplay={restart} />
           ) : null}

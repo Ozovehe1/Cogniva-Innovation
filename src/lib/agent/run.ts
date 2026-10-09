@@ -4,9 +4,10 @@
  * data. Guardrails stay in code: distress is screened before this is ever called, injection-flagged runs
  * get no write or web tools, write caps, idempotency and the audit log live in the tools. Server only.
  */
-import { CONCEPT_ASK, GENERIC_REASK, visualPlanHint, visualText } from '@/lib/visual-policy'
+import { CONCEPT_ASK, GENERIC_REASK, readVisual, richToolsFor, visualPlanHint, visualText } from '@/lib/visual-policy'
 import { chat, AllModelsBusyError, type Msg } from './llm'
 import { selectTools, toolsFor, type AgentCtx } from './tools'
+import { chatFigureFor } from '@/lib/lesson-stages'
 
 export const MAX_STEPS = 6
 export const MAX_WRITES = 3
@@ -47,6 +48,19 @@ At most 3 writes. Do not repeat what is already in place. Only report actions wh
 /** The learner explicitly asked for a visual or a tool: the first step must call a tool. */
 export const EXPLICIT_TOOL = /\b(on the (white)?board|whiteboard|draw|drag|let me (move|explore|play)|venn|interactive|circle (the|it|that)|underline|cross (it )?out|annotate|erase|diagram|illustrat|graph|plot|chart|simulat|slider|animat|clip|video|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
 
+/** The visual tools a teaching turn always offers (the model picks; descriptions say when each fits). */
+const VISUAL_TOOLS = ['find_illustration', 'interactive', 'simulate', 'animate_concept', 'plot', 'math_diagram', 'illustrate', 'draw_on_board']
+/** Blocks that count as a real picture or a moving figure (a board scene alone does not). */
+const RICH_BLOCKS = new Set(['interactive', 'sim', 'svg', 'clip', 'image'])
+const VISUAL_PLAN_NOTE = `Teaching turn. First make your visual plan: what IS this idea (a real object, a process, an invisible field, a motion, a function, exact geometry, or working steps)? Then call the tool that SHOWS it best, before you explain:
+- real object / organism / device (heart, cell, leaf, motor, generator, solenoid, atom, circuit) -> find_illustration {topic: "electric motor"}
+- something that moves or changes that the learner can play with (a field around a wire, a magnet moving into a coil, charges drifting, a thrown ball, a tangent sliding along a curve) -> interactive (sliders + points that follow them, field {dx, dy} for a vector field) or simulate (an object moving along its path)
+- a process in stages (blood through the heart, photosynthesis, induction step by step) -> animate_concept (arrives in 1-3 min: pair it with a picture or live figure now)
+- a function or graph -> plot, or interactive with a point gliding along it
+- exact geometry, sets, vectors -> math_diagram
+- step-by-step working or algebra -> draw_on_board
+Usually one or two visuals. Then explain in 2-6 short sentences that walk through what the visual shows, in its order.`
+
 export interface RunResult { text: string; model: string | null; steps: number; toolCalls: string[]; busy?: boolean }
 
 export async function runAgent(input: {
@@ -67,22 +81,100 @@ export async function runAgent(input: {
   const used: string[] = []
   let model: string | null = null
   let text = ''
-  // Explicit visual asks, and un-hinted concept questions with a visual subject ("explain how the heart pumps
-  // blood"): the first step must call a tool (otherwise free models often answer in words only).
-  const plan = ctx.mode === 'chat' ? visualPlanHint(visualText(lastUser, ctx.visualTopic)) : null
-  const forceFirst = ctx.mode === 'chat' && !ctx.restricted && (EXPLICIT_TOOL.test(lastUser) || (!!plan && (CONCEPT_ASK.test(lastUser) || GENERIC_REASK.test(lastUser))))
-  if (plan && !EXPLICIT_TOOL.test(lastUser)) messages.splice(messages.length - 1, 0, { role: 'system', content: plan })
+  // Teaching turns: a concept question, a re-ask, or anything the routing hint reads as having a visual subject.
+  // The MODEL decides which visual fits (all visual tools are offered with descriptions + the system prompt's
+  // guide); the regex reading is only a hint line and, at the end, a fallback. Its first step must call a visual tool
+  // (the visual plan: the model reads the concept and picks the tool and what to show), the board only for working.
+  const vt = visualText(lastUser, ctx.visualTopic)
+  const plan = ctx.mode === 'chat' ? visualPlanHint(vt) : null
+  const explicit = EXPLICIT_TOOL.test(lastUser)
+  const teaching = ctx.mode === 'chat' && !ctx.restricted && !explicit && (CONCEPT_ASK.test(lastUser) || GENERIC_REASK.test(lastUser) || !!plan || /\?\s*$/.test(lastUser) && lastUser.length > 12)
+  const forceFirst = ctx.mode === 'chat' && !ctx.restricted && (explicit || teaching)
+  const visualSpecs = VISUAL_TOOLS.map(n => byName.get(n)).filter((t): t is NonNullable<typeof t> => !!t)
+  const offerAll = teaching ? [...specs, ...visualSpecs.filter(t => !specs.some(x => x.def.name === t.def.name))] : specs
+  // Step 0 of a teaching turn: the visual tools only; the board joins them when the idea is working/derivation (hint) or
+  // when nothing richer was read. From step 1 every tool is offered (labels, working on the board, lookups).
+  const hintRich = richToolsFor(readVisual(vt))
+  const firstSpecs = teaching ? visualSpecs.filter(t => t.def.name !== 'draw_on_board' || !hintRich.length) : []
+  if (teaching) {
+    messages.splice(messages.length - 1, 0, { role: 'system', content: `${VISUAL_PLAN_NOTE}${plan ? `\nHint from the app's subject reader (a suggestion, you decide): ${plan}` : ''}` })
+    ctx.trace.push(`visual-first: ${firstSpecs.map(t => t.def.name).join(',')}`)
+  } else if (plan && !explicit) messages.splice(messages.length - 1, 0, { role: 'system', content: plan })
+  const richShown = () => (ctx.blocks ?? []).some(b => RICH_BLOCKS.has(b.kind))
+  const runTool = async (name: string, args: Record<string, unknown>, tag: string) => {
+    const spec = byName.get(name)
+    if (!spec) return null
+    input.onTool?.(name, spec.label, 'start')
+    try {
+      const r = await withTimeout(spec.run(args, ctx), 25_000) as Record<string, unknown> | null
+      const failed = !r || typeof r !== 'object' || 'error' in r
+      input.onTool?.(name, spec.label, failed ? 'error' : 'done')
+      ctx.trace.push(`tool ${name}: ${failed ? `error: ${String((r as { error?: unknown } | null)?.error ?? 'none').slice(0, 100)}` : 'ok'} (${tag})`)
+      used.push(name)
+      return failed ? null : r
+    } catch (err) {
+      input.onTool?.(name, spec.label, 'error')
+      ctx.trace.push(`tool ${name}: error: ${err instanceof Error ? err.message.slice(0, 100) : err} (${tag})`)
+      return null
+    }
+  }
+  /** Last resort when a teaching turn still has no picture or moving figure: the app shows the one the hint reads. */
+  const fallbackVisual = async (): Promise<string | null> => {
+    const read = readVisual(vt)
+    const jobs: Promise<unknown>[] = []
+    let say: string | null = null
+    if (read.structure) jobs.push(runTool('find_illustration', { topic: read.structure }, 'fallback'))
+    const fig = chatFigureFor(vt)
+    if (fig) { say = fig.say; jobs.push(runTool('interactive', { ...(fig.spec as unknown as Record<string, unknown>), play: fig.play }, 'fallback')) }
+    await Promise.all(jobs)
+    return richShown() ? (say ?? (read.structure ? `Here is a picture of the ${read.structure}: look at its parts as I explain.` : null)) : null
+  }
+  let retried = false
+  let forcedRetry = false
   for (let step = 0; step < MAX_STEPS; step++) {
     const last = step === MAX_STEPS - 1
-    const res = await chat({
+    const offer = (step === 0 || forcedRetry) && firstSpecs.length ? firstSpecs : offerAll
+    const mustCall = (step === 0 && forceFirst) || forcedRetry
+    forcedRetry = false
+    let res: Awaited<ReturnType<typeof chat>>
+    try {
+      res = await chat({
       purpose: ctx.mode === 'chat' ? 'chat' : 'director',
-      messages, tools: last ? undefined : specs.map(t => t.def), toolChoice: step === 0 && forceFirst ? 'required' : 'auto',
+      messages, tools: last ? undefined : offer.map(t => t.def), toolChoice: mustCall ? 'required' : 'auto',
       maxTokens: ctx.mode === 'chat' ? 1000 : 1200, temperature: 0.5,
       onText: input.onText, trace: ctx.trace, deadline: input.deadline,
-    })
+      })
+    } catch (err) {
+      // Every model busy on a teaching turn: still show the idea (the hint's picture / live figure) and say so.
+      if (err instanceof AllModelsBusyError && teaching && !text && !richShown()) {
+        const say = await fallbackVisual()
+        if (say) {
+          const d = `${say} I’ll add more as soon as I have a free moment: ask me anything about it.`
+          input.onText?.(d)
+          return { text: d, model, steps: step + 1, toolCalls: used }
+        }
+      }
+      throw err
+    }
     model = res.model
     text += res.text
-    if (!res.toolCalls.length) return { text, model, steps: step + 1, toolCalls: used }
+    if (!res.toolCalls.length) {
+      // Post-turn check: a teaching turn must leave a picture or a moving figure on screen. Once, the model is asked
+      // to add one (visual tools only, a call required); if it still has none, the app shows the hint's fallback.
+      if (teaching && !richShown() && !retried && step < MAX_STEPS - 1) {
+        retried = true
+        ctx.trace.push('visual-check: none shown, retrying with a visual')
+        messages.push({ role: 'assistant', content: res.text || '(no visual yet)' })
+        messages.push({ role: 'system', content: 'Your answer has no picture or moving figure yet. Call ONE visual tool now that shows this idea (find_illustration for a real object, interactive or simulate for something that moves or changes, plot for a function, math_diagram for exact geometry, animate_concept for a process), then add one short sentence telling the learner what to look at. Do not repeat what you already said.' })
+        forcedRetry = true
+        continue
+      }
+      if (teaching && !richShown()) {
+        const say = await fallbackVisual()
+        if (say) { const d = `${text && !/\s$/.test(text) ? '\n\n' : ''}${say}`; text += d; input.onText?.(d) }
+      }
+      return { text, model, steps: step + 1, toolCalls: used }
+    }
     const calls = res.toolCalls.slice(0, MAX_CALLS_PER_STEP)
     messages.push({ role: 'assistant', content: res.text, toolCalls: calls })
     for (const call of calls) {

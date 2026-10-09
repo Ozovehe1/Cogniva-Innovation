@@ -37,7 +37,7 @@ export function AgentBlock({ block }: { block: Block }) {
         <p className={label}>Interactive</p>
         <h3 className="mt-1 font-display text-[20px] leading-snug text-ink"><RichText text={block.spec.title} /></h3>
         {block.spec.explain && <p className="mt-1 text-[14px] leading-relaxed text-ink-2"><RichText text={block.spec.explain} /></p>}
-        <InteractiveFigure spec={block.spec} alt={block.alt} />
+        <InteractiveFigure spec={block.spec} alt={block.alt} play={block.play} demo={!!block.play} />
       </div>
     )
     case 'clip': return <ClipBlock block={block} />

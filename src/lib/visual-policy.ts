@@ -23,6 +23,7 @@ const STRUCTURE_TERMS: [RegExp, string][] = [
   [/\bgenerators?\b|\bdynamo|\balternator/i, 'electric generator'],
   [/\btransformers?\b/i, 'transformer'],
   [/\bcoil\b|\binduction coil/i, 'solenoid'],
+  [/\belectric(al)? current|\bvoltage|\bpotential difference|\bohm'?s law/i, 'electric circuit'],
   [/\bcurrent[- ]carrying (wire|conductor)|\bmagnetic field (around|of) a (wire|conductor)/i, 'magnetic field around a wire'],
   [/\bheart\b|\bcardiac\b|\bventricle|\batri(um|a)\b/i, 'human heart'],
   [/\blungs?\b|\balveol|\bbreathing\b|respiratory system/i, 'human lungs'],
@@ -63,10 +64,10 @@ const STRUCTURE_TERMS: [RegExp, string][] = [
   [/\bwater cycle/i, 'water cycle'],
 ]
 
-const PROCESS = /\b(how (does|do|is|are|can) .{2,60}\b(works?|happens?|moves?|flows?|pumps?|forms?|grows?|made|produced?|travels?|fires?|spreads?|make|makes|generates?|creates?|converts?|turns?|changes?)|pumps?|pumping|circulat\w*|flows?\b|flowing|cycles?\b|photosynthe\w*|respir\w*|digest\w*|diffusion|osmosis|transport\w*|mitosis|meiosis|fires?\b|action potential|signal\w*|charging|discharg\w*|reaction|erosion|evaporat\w*|condens\w*|stages?\b|process|life cycle|germinat\w*|pollinat\w*|replicat\w*|transcription|translation|heat (flow|transfer)|conduction|convection|current flows?|electrons? (flow|move))\b/i
+const PROCESS = /\b(how (does|do|is|are|can) .{2,60}\b(works?|happens?|moves?|flows?|pumps?|forms?|grows?|made|produced?|travels?|fires?|spreads?|make|makes|generates?|creates?|converts?|turns?|changes?)|pumps?|pumping|circulat\w*|flows?\b|flowing|cycles?\b|photosynthe\w*|respir\w*|digest\w*|diffusion|osmosis|transport\w*|mitosis|meiosis|fires?\b|action potential|signal\w*|charging|discharg\w*|reaction|erosion|evaporat\w*|condens\w*|stages?\b|process|life cycle|germinat\w*|pollinat\w*|replicat\w*|transcription|translation|heat (flow|transfer)|conduction|convection|current flows?|electrons? (flow|move)|electric(al)? current|electric charges?|charges? (flow|move)|drift velocity|voltage|potential difference)\b/i
 const MOTION = /\b(thrown|throw|falls?\b|falling|dropped|projectile|trajectory|orbit\w*|swing\w*|pendulum|oscillat\w*|waves?\b|rolls?\b|rolling|accelerat\w*|decelerat\w*|velocity|speed(s)? up|momentum|collision|gravity|free fall|comes? (back )?down|goes up|spring|bounc\w*|equations of motion|suvat|kinematics|friction|newton'?s (first|second|third|laws?))\b/i
 const FIELD = /\b(electromagnet\w*|magnetic (field|flux|force)|electric (field|flux)|field lines?|flux|induc(ed|tion|es)|faraday|lenz|amp(e|è)re|biot|gauss'?s law|maxwell|right[- ]hand (rule|grip)|left[- ]hand rule|fleming|vector fields?|line integrals?|curl|divergence|electromagnetic (wave|induction|fields?)|current-carrying)\b/i
-const FUNCTION = /\b(derivative|differentiat\w*|gradient|slope|rate of change|functions?\b|graphs?\b|quadratic|parabola|sine|cosine|sin\b|cos\b|tan\b|trig\w*|exponential|logarithm\w*|log\b|limit|integral|integrat\w*|area under|tangent|asymptote|inverse function|linear (graph|function)|straight line|y\s*=|f\(x\))/i
+const FUNCTION = /\b(zero product|roots? of|derivative|differentiat\w*|gradient|slope|rate of change|functions?\b|graphs?\b|quadratic|parabola|sine|cosine|sin\b|cos\b|tan\b|trig\w*|exponential|logarithm\w*|log\b|limit|integral|integrat\w*|area under|tangent|asymptote|inverse function|linear (graph|function)|straight line|y\s*=|f\(x\))/i
 const GEOMETRY = /\b(triangle|angles?\b|circle theorem|pythag\w*|polygon|bisect\w*|perpendicular|parallel lines|congruen\w*|similar triangles|vectors?\b|resultant|venn|sets?\b|subset|union|intersection|unit circle|coordinates?\b|transformation|reflection|rotation|locus)\b/i
 const DERIVATION = /\b(solve|simplify|expand|factori[sz]\w*|prove|derive|derivation|step by step|work (it )?out|calculate|evaluate|rearrange|make .{1,10} the subject|simultaneous|long division|worked example)\b/i
 
@@ -103,6 +104,19 @@ export function toolsForFamilies(r: VisualRead): string[] {
   if (f.has('geometry')) add('math_diagram', 'interactive')
   if (f.has('derivation')) add('draw_on_board')
   return out
+}
+
+/**
+ * The rich (non-board) tools for a subject, in the order the first step should prefer them. Empty when the board is
+ * the right tool (a derivation with no richer family) or nothing visual was read. Used to keep the board from being
+ * the default sink: an un-hinted concept question's first step may only call these.
+ */
+export function richToolsFor(r: VisualRead): string[] {
+  const f = new Set(r.families)
+  if (!f.size || (f.size === 1 && f.has('derivation'))) return []
+  // "Solve / calculate …" about a field or a function is working: the board leads.
+  if (f.has('derivation') && !f.has('structure') && !f.has('process') && !f.has('field') && !f.has('motion')) return []
+  return toolsForFamilies(r).filter(n => n !== 'draw_on_board' && n !== 'illustrate')
 }
 
 /**

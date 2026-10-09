@@ -144,7 +144,10 @@ export async function syncLessonScript(db: SupabaseClient, lessonId: string, sec
 
 /** When to try again after a quota error. */
 function retryAt(err: GeminiQuotaError) {
-  const wait = err.daily ? 30 * 60_000 : Math.max(60_000, err.retryAfterMs ?? 90_000)
+  // The pool spans many keys and models: one model's daily window is rarely all of them, and a learner may be
+  // watching the lesson wait on its next section (measured: a fresh lesson paused 30 min after its opening beat while
+  // other slots were healthy). Retry within 3 minutes; the pool itself paces background work.
+  const wait = Math.min(3 * 60_000, err.daily ? 3 * 60_000 : Math.max(60_000, err.retryAfterMs ?? 90_000))
   return new Date(Date.now() + wait).toISOString()
 }
 
@@ -176,7 +179,7 @@ export function needsWorker(l: { draft_status: string; draft_retry_at: string | 
 
 /* ───────────── The worker ───────────── */
 
-function toPlan(r: SectionRow): BeatPlan {
+export function toPlan(r: SectionRow): BeatPlan {
   return { chapter: r.chapter ?? r.title, title: r.title, kind: (r.kind ?? 'demo') as BeatKind, seconds: r.seconds ?? Math.round((Number(r.minutes) || 1) * 60), points: r.key_points ?? [], optional: !!r.optional }
 }
 

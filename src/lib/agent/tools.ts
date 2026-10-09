@@ -686,6 +686,7 @@ const VISUAL: ToolSpec[] = [
         surface: { type: 'object', properties: { expr: { type: 'string' }, z_range: { type: 'array', items: { type: 'number' } } }, required: ['expr'] },
         readouts: { type: 'array', maxItems: 4, items: { type: 'object', properties: { label: { type: 'string' }, expr: { type: 'string' }, unit: { type: 'string' } }, required: ['label', 'expr'] } },
         on_board: { type: 'boolean', description: 'also pin a still of it on the chat whiteboard (to annotate it later)' },
+        play: { type: 'object', properties: { slider: { type: 'string' }, seconds: { type: 'number' } }, required: ['slider'], description: 'make it MOVE: this slider glides min→max once when the figure appears (a magnet sliding in, current reversing, time running, a point travelling along a curve)' },
       }, ['title']),
     },
     tier: 'visual', modes: ['chat'], label: 'Building an interactive figure',
@@ -708,7 +709,10 @@ const VISUAL: ToolSpec[] = [
           void out
         }
       }
-      ctx.emit({ kind: 'interactive', id: bid(), spec: v.spec, alt, boardFigure })
+      // A demonstration (server-planned figures only): the slider plays itself once when the figure appears.
+      const pl = a.play && typeof a.play === 'object' ? a.play as { slider?: unknown; seconds?: unknown } : null
+      const play = pl && typeof pl.slider === 'string' && v.spec.sliders.some(x => x.name === pl.slider) ? { slider: pl.slider, seconds: typeof pl.seconds === 'number' ? Math.min(20, Math.max(1, pl.seconds)) : 6 } : undefined
+      ctx.emit({ kind: 'interactive', id: bid(), spec: v.spec, alt, boardFigure, ...(play ? { play } : {}) })
       return { shown: true, alt, board_figure: boardFigure, note: 'Tell the learner what to drag and what to notice (1-3 sentences).' }
     },
   },

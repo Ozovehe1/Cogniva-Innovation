@@ -58,6 +58,12 @@ export async function queueLessonClip(db: SupabaseClient, lessonId: string) {
     const prompt = `A short animation for the section "${s.title}" of the lesson "${l.title}" (${l.subject}). Goal: ${s.goal}. Show visually, in order: ${(s.key_points ?? []).slice(0, 4).join('; ')}. Show the real thing moving (fields as arrows or lines that form, objects that move, quantities that change), not a static graph. 10 to 25 seconds, one clear idea, no paragraphs of text.`.slice(0, 1800)
     const { data: job, error } = await db.from('manim_jobs').insert({ lesson_id: lessonId, requested_by: l.owner_student_id, prompt, status: 'queued', auto_insert: true }).select('*').single()
     if (error || !job) continue
+    // Concurrent callers (page opens, the drafting worker, the refresh) can all pass the checks above at once; the
+    // oldest job for this section wins and the others are withdrawn before anything is rendered (measured: one lesson
+    // got 8 jobs for one section within 3 minutes and played 6 clips back to back).
+    const { data: rivals } = await db.from('manim_jobs').select('id, created_at').eq('lesson_id', lessonId).eq('auto_insert', true).like('prompt', `A short animation for the section "${s.title.replace(/[%_]/g, '')}"%`).order('created_at').order('id')
+    const first = (rivals ?? [])[0] as { id: string } | undefined
+    if (first && first.id !== (job as ManimJob).id) { await db.from('manim_jobs').delete().eq('id', (job as ManimJob).id); continue }
     existing.push({ id: (job as ManimJob).id, prompt }); budget--
     try {
       // The render service's scene language first (the model writes objects + relations; sympy, the constraint solver and
@@ -100,6 +106,8 @@ export async function attachReadyClips(db: SupabaseClient, lessonId: string, pos
     const forPos = forTitle ? sections.find(x => x.title === forTitle)?.position : undefined
     if (forPos !== undefined && position < forPos) continue
     if (s.steps.some(st => st.type === 'manim_clip' && (st as { jobId?: string }).jobId === job.id)) { await db.from('manim_jobs').update({ status: 'approved' }).eq('id', job.id); continue }
+    // One clip per section: a second one would play back to back with the first.
+    if (s.steps.some(st => st.type === 'manim_clip')) continue
     // After the section title (and its opening clear), before the teaching starts.
     const titleAt = s.steps.findIndex(st => st.type === 'write' && (st as { id?: string }).id === 'title')
     const at = titleAt >= 0 ? titleAt + 1 : Math.min(1, s.steps.length)

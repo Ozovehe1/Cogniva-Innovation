@@ -298,13 +298,8 @@ export function LessonSession({
       onEvent={onEvent}
       transcriptAside={transcriptAside}
       autoPlay={autoPlay}
+      more={partial}
     />
-    {waitingForMore && partial && (
-      <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-line bg-surface p-4 text-[15px] leading-relaxed text-ink-2" role="status">
-        <Spinner />
-        <span>Your tutor is finishing the next part. It will carry on here by itself as soon as it’s ready.</span>
-      </div>
-    )}
     {finished && mode === 'student' && <MicroQuestion />}
     {(finished || (waitingForMore && !partial)) && upNext && mode === 'student' && <UpNextCard {...upNext} />}
     {basicsOffer && checkHref && (

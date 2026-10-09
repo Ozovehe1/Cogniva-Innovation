@@ -12,7 +12,8 @@
  */
 import { generateStructuredJson } from './gemini'
 import { LAYOUT_RULES, SHOW_DONT_TELL, TUTOR_VOICE, WORDS_PER_MINUTE, generateSteps, type GenMeta, type LessonLite } from './lesson-ai'
-import { beatVisualLine } from './visual-policy'
+import { beatVisualLine, readVisual } from './visual-policy'
+import { figureStage, functionFigure, functionFor, hasRichVisual, stageStep, stageTemplateFor } from './lesson-stages'
 import { SCRIPT_SCHEMA_PROMPT, boardIdsAfter, type Step } from './lesson-schema'
 import { lengthReport } from './lesson-timing'
 
@@ -241,6 +242,7 @@ ${ctx.opening ? 'This is the OPENING beat of the lesson.' : `Lesson plan:\n${pla
 THIS BEAT: [${beat.kind}] "${beat.title}"${ctx.opening ? '' : ` in chapter "${beat.chapter}"`}
 Show: ${beat.points.join('; ')}
 ${KIND_RULES[beat.kind]}
+${beat.kind === 'demo' || beat.kind === 'example' ? `VISUAL PLAN (required): first decide what this idea IS, then include ONE rich visual step that shows it while you narrate (the board is for the working around it): a real object, organism or device -> one {"type":"illustration","query":"2-5 words",x,y,w,h,"say"}; anything that moves, changes, flows, or is an invisible field, or a function -> one {"type":"stage","kind":"interactive","spec":{...},"play":{"slider":"..."},"say":"..."} whose "play" slider makes it move while "say" tells the learner what to watch (a field: "field":{"dx":"...","dy":"..."} arrows; a moving object: a point whose x and y follow a time slider; a function: a point that follows a slider along the curve). Pure algebra working: the board alone.` : ''}
 ${beatVisualLine(`${ctx.lesson.title}. ${beat.title}. ${beat.points.join('; ')}`, beat.kind) ?? ''}
 ${first ? `Open the lesson: write the lesson title (write, id "title", size lg, x 40, y 30), then hook the learner with a concrete picture of where "${ctx.lesson.title}" shows up in real life (draw it, make it move). Do not teach the method yet; end by saying what they will be able to do by the end.` : ''}
 ${ctx.recentSay ? `What the tutor just said (continue naturally from here; do not repeat it, no recap): ${ctx.recentSay}` : ''}
@@ -283,7 +285,71 @@ Rewrite the beat so it is demonstrated visually (draw, then animate / move / tra
     if (!p2 && (problem || lengthReport(fixed, 1).ms > lengthReport(steps, 1).ms)) steps = fixed
     else if (problem) throw new Error(`Beat tells more than it shows (${p2 ?? problem})`)
   }
-  return steps
+  return withRichVisual(ctx, steps)
+}
+
+const beatText = (lesson: LessonLite, b: BeatPlan | undefined) => b ? `${b.title}. ${b.points.join('; ')}` : lesson.title
+
+/**
+ * Every concept beat (demo / example) shows a real picture or a moving figure while the tutor talks. The beat writer
+ * is asked to plan it itself (VISUAL PLAN in the prompt); when it did not, the code adds one, chosen from what the
+ * beat is about (fallback, no model call):
+ *  - a ready-made live figure for fields and current (wire field, magnet + coil, charges in a wire) or a thrown ball;
+ *  - the beat's own function (or the idea's standard one) traced by a moving point, with its tangent for rates;
+ *  - a credited library picture of the real structure (heart, cell, motor), narrated after the beat title, then cleared.
+ * Live figures are "stage" steps: they take over the lesson area while their narration plays and hand back to the
+ * board, so the board's own steps are untouched.
+ */
+export async function withRichVisual(ctx: BeatContext, steps: Step[]): Promise<Step[]> {
+  const beat = ctx.plan[ctx.index]
+  if (!beat || (beat.kind !== 'demo' && beat.kind !== 'example') || hasRichVisual(steps)) return steps
+  const out = [...steps]
+  const own = beatText(ctx.lesson, beat)
+  const lessonText = `${ctx.lesson.title}. ${ctx.lesson.objectives.join('; ')}`
+  const prevTpl = ctx.index > 0 ? stageTemplateFor(beatText(ctx.lesson, ctx.plan[ctx.index - 1])) : null
+  // 1. A field / current / motion figure for this beat's own subject, else the lesson's (not the same one twice running).
+  const tpl = stageTemplateFor(own) ?? stageTemplateFor(lessonText)
+  if (tpl && (tpl !== prevTpl || stageTemplateFor(own))) {
+    const st = stageStep(tpl, `stage_${tpl}_${ctx.index}`)
+    if (st) return insertAfterOpening(out, st)
+  }
+  // 2. Functions: the beat's own drawn function, else the idea's standard one, traced live.
+  const famOwn = new Set(readVisual(own).families), famLesson = new Set(readVisual(lessonText).families)
+  if (famOwn.has('function') || famLesson.has('function')) {
+    const drawn = steps.find(st => st.type === 'draw' && (st as { shape?: { kind?: string } }).shape?.kind === 'function') as { shape?: { expr?: string } } | undefined
+    const tangentIdea = /derivative|gradient|slope|tangent|rate/i.test(own + lessonText)
+    const fromBoard = drawn?.shape?.expr ? functionFigure({ expr: drawn.shape.expr, tangent: tangentIdea, x: [-5, 5] }) : null
+    const fn = functionFor(own) ?? functionFor(lessonText)
+    const fig = fromBoard ?? (fn ? functionFigure(fn) : null)
+    const st = fig ? figureStage(fig, `stage_fn_${ctx.index}`, String(fig.spec.title)) : null
+    if (st) return insertAfterOpening(out, st)
+  }
+  // 3. A real structure: a credited library picture.
+  const query = readVisual(own).structure ?? readVisual(lessonText).structure
+  if (!query) return out
+  try {
+    const { findIllustration } = await import('./illustrations/find')
+    const { createAdminClient } = await import('./supabase/admin')
+    const f = await Promise.race([findIllustration({ topic: query }, createAdminClient()), new Promise<null>(res => setTimeout(() => res(null), 9_000))])
+    if (!f?.url) return out
+    const box = { x: 200, y: 90, w: 400, h: 330 }
+    const k = Math.min(box.w / f.width, box.h / f.height)
+    const w = Math.round(f.width * k), h = Math.round(f.height * k)
+    const id = `pic_${ctx.index}`
+    const fig = { type: 'draw', id, say: `Here is what a real ${query} looks like. Look at its main parts while I explain, then we build the idea up on the board.`, shape: { kind: 'figure', x: Math.round(box.x + (box.w - w) / 2), y: Math.round(box.y + (box.h - h) / 2), w, h, svg: '', src: f.url, alt: `${f.alt}. Credit: ${f.creditText}`.slice(0, 300) } } as unknown as Step
+    const t = out.findIndex(st => st.type === 'write' && (st as { id?: string }).id === 'title')
+    const pos = t >= 0 ? t + 1 : (out[0]?.type === 'clear' ? 1 : 0)
+    out.splice(pos, 0, fig, { type: 'pause', ms: 2500 } as Step, { type: 'clear', targets: [id] } as Step)
+  } catch { /* the beat stands as written */ }
+  return out
+}
+
+/** Right after the beat's opening (its clear / title and first narrated line), so it shows while the idea is introduced. */
+function insertAfterOpening(steps: Step[], st: Step): Step[] {
+  let k = 0
+  while (k < steps.length && (steps[k].type === 'clear' || (steps[k].type === 'write' && (steps[k] as { id?: string }).id === 'title'))) k++
+  if (k < steps.length && (steps[k] as { say?: string }).say) k++
+  return [...steps.slice(0, k), st, ...steps.slice(k)]
 }
 
 /** A compact description of what is on the board (ids, kinds and where), for the next beat's prompt. */
