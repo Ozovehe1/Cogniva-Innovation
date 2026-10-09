@@ -4,6 +4,7 @@ import { normalizeLessonMath } from './lesson-math'
 import { autoFixLayout, layoutIssues } from './lesson-layout'
 import { MANIM_API_SHEET, describeProblems, guardManimCode, hintsFor, tracebackOf } from './manim-guard'
 import { buildBoard } from '@/components/whiteboard/board-state'
+import { resolveIllustrationSteps } from './illustrations/lesson-steps'
 import { SECTION_MAX_STEPS, visualCounts, visualProblem, withSectionStart } from './lesson-sections'
 
 /** What the AI tutor knows about the learner (from the intake and diagnostic). Never a learning-style label. */
@@ -128,10 +129,12 @@ export async function generateSteps(
   }
   meta.trace = []
   let answered: string | null = null
+  // Library illustrations the writer asked for become credited figure steps before validation.
+  const genJson = async (p: string, g: GenerateOptions) => expandBoardDiagrams(await resolveIllustrationSteps(await generateStructuredJson(p, g), meta.trace))
   const gen = { systemInstruction: TUTOR_VOICE, timeoutMs: opts.timeoutMs, primaryTimeoutMs: opts.primaryTimeoutMs, thinking: opts.thinking, trace: meta.trace, deadline: opts.deadline, preferFast: opts.preferFast, onModel: (m: string) => { answered = m } }
   let raw: unknown
   try {
-    raw = await expandBoardDiagrams(await generateStructuredJson(prompt, gen))
+    raw = await genJson(prompt, gen)
   } catch (err) {
     if (err instanceof GeminiQuotaError) throw err
     // Malformed JSON: fall through to repair with the error message.
@@ -147,7 +150,7 @@ export async function generateSteps(
     // One repair pass (layout and/or maths).
     meta.repaired = true
     try {
-      const fixedRaw = await generateStructuredJson(`${prompt}
+      const fixedRaw = await genJson(`${prompt}
 
 Your previous answer was valid but has these problems${layout.length ? ' (elements collide on the board)' : ''}${mathIssues.length ? ' (maths must be valid KaTeX LaTeX; inline maths in text inside $...$)' : ''}:
 ${issues.map(i => `- ${i}`).join('\n')}
@@ -181,7 +184,7 @@ ${JSON.stringify(raw).slice(0, 12000)}
 
 Return the corrected JSON object {"steps": [...]} only.`
   try {
-    raw = await expandBoardDiagrams(await generateStructuredJson(repairPrompt, gen))
+    raw = await genJson(repairPrompt, gen)
     result = validateScript(raw, { knownIds: opts.knownIds, knownAxes: opts.knownAxes, knownVars: opts.knownVars, maxSteps: opts.maxSteps })
   } catch (err) {
     if (err instanceof GeminiQuotaError) throw err

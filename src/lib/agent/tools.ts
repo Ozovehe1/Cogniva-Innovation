@@ -23,6 +23,7 @@ import { dispatchCompose, dispatchRender, renderServiceConfigured, type ManimJob
 import { generateManimCode } from '../lesson-ai'
 import { chatJson } from './llm'
 import { buildPlot, makeBoardScene, makeIllustration, validateSim } from './visual'
+import { findIllustration } from '../illustrations/find'
 import { MAX_BOARD_STEPS, REGIONS, emptyDoc, ensureIds, idsInRegion, loadBoard, opsToSteps, saveBoard, sceneOf, sceneText, type BoardDoc } from './board-scene'
 import { reviewBoard } from './board-review'
 import { boardSnapshotSvg, svgToPng } from './board-render'
@@ -552,6 +553,47 @@ const VISUAL: ToolSpec[] = [
     },
   },
   {
+    // Free illustration library (src/lib/illustrations): Wikimedia Commons, Servier Medical Art (vectorised), Bioicons; credited.
+    def: {
+      name: 'find_illustration',
+      description: 'Find an accurate, ready-made textbook illustration in a free library (Wikimedia Commons, Servier Medical Art, Bioicons): organs, cells, plants, animals, apparatus, circuits, atoms, molecules, planets, simple machines, landforms. Prefer it over illustrate for any standard school subject; use illustrate only for a custom scene a library would not have. The credit line is added automatically. place=board puts it on the chat whiteboard as a figure you can annotate with board_edit (add labels if it has none).',
+      parameters: obj({
+        topic: { type: 'string', description: 'what to show in 1-5 words, e.g. "plant cell", "human heart", "Bohr model atom"' },
+        keywords: { type: 'array', items: { type: 'string' }, description: 'other names: formal term, synonyms' },
+        place: { type: 'string', enum: ['chat', 'board'], description: 'chat (default) or the whiteboard' },
+        style: { type: 'string', enum: ['diagram', 'icon'], description: 'diagram (default, labelled when possible) or a small icon' },
+        alternative: { type: 'number', description: '1-3 to show the next-best match instead (if the last one did not fit)' },
+      }, ['topic']),
+    },
+    tier: 'visual', modes: ['chat'], label: 'Finding an illustration',
+    run: async (a, ctx) => {
+      const topic = s(a.topic, 120)
+      if (!topic) return { error: 'topic is required' }
+      const keywords = Array.isArray(a.keywords) ? a.keywords.slice(0, 6).map(k => s(k, 40)).filter(Boolean) : []
+      const f = await findIllustration({ topic, keywords, want: a.style === 'icon' ? 'icon' : 'diagram', alternative: typeof a.alternative === 'number' ? a.alternative : 0 }, ctx.admin, ctx.trace)
+      if (!f) {
+        const r = await makeIllustration(`${topic}${keywords.length ? ` (${keywords.join(', ')})` : ''}: a clean labelled teaching diagram`, ctx.trace)
+        ctx.emit({ kind: 'svg', id: bid(), svg: r.svg, alt: r.alt })
+        return { shown: true, source: 'drawn', alt: r.alt, note: 'No library illustration matched, so one was drawn. Check its labels as you explain.' }
+      }
+      if (a.place === 'board') {
+        const doc0 = await getBoard(ctx)
+        const append = doc0.steps.length > 0
+        const area = append ? { x: 420, y: 70, w: 360, h: 410 } : { x: 30, y: 64, w: 740, h: 424 }
+        const k = Math.min(area.w / f.width, area.h / f.height)
+        const w = Math.round(f.width * k), h = Math.round(f.height * k)
+        const fig = { type: 'draw', shape: { kind: 'figure', x: Math.round(area.x + (area.w - w) / 2), y: Math.round(area.y + (area.h - h) / 2), w, h, svg: f.url ? '' : f.svg, ...(f.url ? { src: f.url } : {}), alt: f.alt } } as unknown as Step
+        const title = topic.charAt(0).toUpperCase() + topic.slice(1, 50)
+        const steps = append ? ensureIds([...doc0.steps, fig]) : ensureIds([{ type: 'write', text: title, x: 24, y: 22, size: 'lg' } as unknown as Step, fig])
+        const out = await commitBoard(ctx, append ? { ...doc0, steps } : { ...emptyDoc(), rev: doc0.rev, steps }, append ? doc0.steps.length : 0, append ? boardTitle(doc0) : title, { vision: false, replace: !append, diagram: true })
+        const figure = sceneOf(ctx.board!).elements.filter(e => e.type === 'figure').pop()?.id
+        return { ...out, figure_id: figure, title: f.item.t, credit: f.creditText, labelled: f.labelled, alternatives: f.alternatives, note: `On the board as figure ${figure}; its credit line is part of the picture.${f.labelled ? '' : ' It has no labels: add the key ones with board_edit (arrows + text beside the parts).'}` }
+      }
+      ctx.emit({ kind: 'svg', id: bid(), svg: f.url ? '' : f.svg, url: f.url ?? undefined, alt: f.alt, credit: f.credit })
+      return { shown: true, title: f.item.t, source: f.credit.source, license: f.credit.license, credit: f.creditText, labelled: f.labelled, alternatives: f.alternatives, note: `Shown with its credit line.${f.labelled ? '' : ' It has no labels: name the parts in your explanation, or place it on the board and label it.'} If it does not fit, call again with alternative=1.` }
+    },
+  },
+  {
     def: {
       name: 'math_diagram',
       description: `An EXACT maths diagram laid out by a constraint solver (Penrose): Venn/Euler diagrams, geometry constructions (right angles, bisectors, midpoints, perpendicular feet), graphs and trees, vector sums. You write only a short Substance program in one library; layout, colours and labels are automatic. It goes on the chat whiteboard as a figure (annotatable later by id). Libraries:\n${(Object.keys(LIBRARY) as DiagramLibrary[]).map(k => `${k}: ${LIBRARY[k].help}\n  e.g. ${LIBRARY[k].example.replace(/\n/g, '; ')}`).join('\n')}\nOne statement per line; names are single words.`,
@@ -820,6 +862,9 @@ const ROUTES: [RegExp, string[]][] = [
 ]
 const CORE = ['compute', 'draw_on_board', 'search_my_learning', 'get_path_progress', 'get_learner_snapshot']
 const VISUAL_DEFAULT = ['plot', 'illustrate', 'simulate']
+// Free illustration library: textbook subjects route to find_illustration as well (offered alongside illustrate).
+ROUTES.push([/\b(diagram|label(l)?ed|illustrat|picture of|structure of|cells?|organ|anatomy|parts of|heart|lungs?|kidney|liver|brain|eye|ear|skeleton|skull|tooth|teeth|flower|leaf|root|stem|seed|insect|apparatus|microscope|circuit|atom|molecule|planet|solar system|moon|volcano|earthquake|lever|pulley|dna|chromosome|neuron|virus|bacteri\w*|photosynthe\w*|digestive|respirat\w*|water cycle|food (chain|web)|ecosystem)\b/i, ['find_illustration']])
+VISUAL_DEFAULT.push('find_illustration')
 
 /** The tools offered for one chat turn: a core set plus what the message (and the last turns) point to. */
 export function selectTools(ctx: Pick<AgentCtx, 'mode' | 'restricted' | 'lessonId' | 'hasBoard'>, text: string): ToolSpec[] {

@@ -103,7 +103,8 @@ export type Shape =
       yStep?: number
     }
   /** A finished picture (an exact maths diagram or an illustration, sanitised SVG) placed in a frame of the board. */
-  | { kind: 'figure'; x: number; y: number; w: number; h: number; svg: string; alt?: string }
+  /** src: a credited library illustration served from our public illustrations bucket (then svg may be empty). */
+  | { kind: 'figure'; x: number; y: number; w: number; h: number; svg: string; alt?: string; src?: string }
   | {
       kind: 'function'
       /** Expression in x (and board variables), e.g. "x^2", "sin(x) + 0.5*x", "m*(x - 1) + 1". */
@@ -469,7 +470,11 @@ function validateShape(s: unknown, errs: string[], at: string, vars: Set<string>
     case 'figure':
       reqNum(s, 'x', errs, at, -50, BOARD_W); reqNum(s, 'y', errs, at, -50, BOARD_H)
       reqNum(s, 'w', errs, at, 20, BOARD_W + 50); reqNum(s, 'h', errs, at, 20, BOARD_H + 50)
-      if (!isStr(s.svg) || !/^<svg[\s>]/.test(s.svg) || s.svg.length > 60_000) errs.push(`${at}.svg must be an <svg> document under 60 KB`)
+      if (s.src !== undefined) {
+        // Library illustrations are referenced by URL (they are too large to inline); only our own public bucket.
+        if (!isStr(s.src) || !ILLUSTRATION_SRC.test(s.src)) errs.push(`${at}.src must be a GeniusMap illustration URL`)
+        if (s.svg !== undefined && s.svg !== '' && (!isStr(s.svg) || !/^<svg[\s>]/.test(s.svg) || s.svg.length > 60_000)) errs.push(`${at}.svg must be an <svg> document under 60 KB`)
+      } else if (!isStr(s.svg) || !/^<svg[\s>]/.test(s.svg) || s.svg.length > 60_000) errs.push(`${at}.svg must be an <svg> document under 60 KB`)
       optStr(s, 'alt', errs, at, 300)
       break
     default:
@@ -976,6 +981,9 @@ export function compileExpr(src: string, vars?: Iterable<string>, allowX = true)
 /* ───────────── Prompt helper ───────────── */
 
 /** Compact description of the schema for Gemini prompts. */
+/** Where library illustrations live (public, read-only bucket written by the server). */
+export const ILLUSTRATION_SRC = /^https:\/\/[a-z0-9]+\.supabase\.co\/storage\/v1\/object\/public\/illustrations\/[\w./-]+\.svg$/
+
 export const SCRIPT_SCHEMA_PROMPT = `Board: ${BOARD_W} wide x ${BOARD_H} tall units, origin top-left, y grows downward. Keep everything inside x 24..${BOARD_W - 24}, y 24..${BOARD_H - 24}. Text y is the TOP of the text line.
 Return a JSON object {"steps": Step[]}. Each Step is one of:
 - {"type":"write","id"?,"text","x","y","size"?:"sm|md|lg|xl","color"?,"font"?:"serif|sans","align"?:"left|center|right","maxWidth"?,"say"?}
@@ -990,6 +998,7 @@ Return a JSON object {"steps": Step[]}. Each Step is one of:
   "figure" (same shape as a stage "spec") puts a live figure in the question: with choice/short the learner reads the answer off it; with kind "explore" the learner drags or slides until a readout hits the goal — {"kind":"explore","prompt":"Drag the angle until sin θ = 0.5","figure":{...,"readouts":[{"label":"sin θ","expr":"py"}]},"goal":{"readout":"sin θ","equals":0.5,"tol"?:0.03}}. Prefer an explore check when the lesson used a live figure: doing beats choosing.
 - {"type":"manim_clip","url","caption"?} — only reuse URLs you were given; never invent one.
 - {"type":"stage","kind":"interactive","spec":{...},"play"?:{"slider","seconds"?},"say","caption"?} — hands the whole lesson area to a LIVE figure the learner drags (JSXGraph), then back to the board. spec: {"title","x_range":[a,b],"y_range":[c,d],"functions"?:[{"name","expr"}],"points"?:[{"name","x","y"}],"gliders"?:[{"name","on": function or circle name,"x"? | "angle"?}],"circles"?:[{"name"?,"center","radius"}],"sliders"?:[{"name","min","max","value"}],"segments"?:[{"from","to"}],"readouts"?:[{"label","expr"}]} (expressions in x, slider names, and point coords as px/py for point P). "play" glides one slider min→max as a demonstration while "say" narrates it. Use it when exploring by hand teaches better than watching (tangent slope, unit circle, a parameter's effect); at most one per section.
+- {"type":"illustration","id"?,"query" (2-5 words naming a standard textbook subject, e.g. "human heart", "plant cell", "Bohr model atom"),"x","y","w","h" (the box it fills, usually the diagram region),"say"?} — places a real, accurate, credited textbook drawing from a free library in that box (its credit line is printed under it). Use it for real-world structures (organs, cells, plants, animals, apparatus, circuits, atoms, planets, landforms) instead of building them from shapes; then point at the parts that matter with arrows and short labels beside it. At most 2 per answer; never for maths.
 Motion (like Manim's ValueTracker and animate):
 - {"type":"set","vars":{"h":1}} — named numeric variables (letters only, not x, e or pi). Coordinates of line/arrow/point, secant x1/x2, tangent "at", and function "expr" may use them as expressions ("1 + h", "(1+h)^2"); write/math text may show a live value with {{expr}} or {{expr:2}} (2 decimals).
 - {"type":"animate","var":"h","to":0.05,"from"?,"ease"?:"smooth|linear|there_and_back"} — glides a variable; everything that depends on it moves continuously (a point sliding along a curve, a secant turning into a tangent, a live number counting).

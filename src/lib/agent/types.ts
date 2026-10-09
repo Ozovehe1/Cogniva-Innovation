@@ -2,11 +2,13 @@
 import type { Step } from '../lesson-schema'
 import type { SimSpec } from './visual'
 import type { IxSpec } from './interactive'
+import type { Credit } from '../illustrations/types'
 
 export type Block =
   /** start: steps before it are already on the board (shown at once); the rest animate (a board edit). */
   | { kind: 'board'; id: string; title: string; steps: Step[]; plot?: boolean; start?: number; rev?: number; diagram?: boolean }
-  | { kind: 'svg'; id: string; svg: string; alt: string }
+  /** credit: attribution for a library illustration (shown under it; CC BY needs it). */
+  | { kind: 'svg'; id: string; svg: string; alt: string; credit?: Credit; url?: string }
   | { kind: 'sim'; id: string; spec: SimSpec }
   /** A live JSXGraph figure from a validated spec (boardFigure: its static picture was also placed on the board). */
   | { kind: 'interactive'; id: string; spec: IxSpec; alt: string; boardFigure?: string }

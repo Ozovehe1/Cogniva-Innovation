@@ -26,6 +26,7 @@ import { chat, type Msg } from './llm'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES } from './run'
 import { selectTools, type AgentCtx } from './tools'
 import type { Block } from './types'
+import { illustrationStaticCases, illustrationVisualCases } from '../illustrations/eval'
 
 export interface CaseResult { id: string; group: string; pass: boolean; detail: string; model?: string | null; ms?: number }
 
@@ -143,6 +144,7 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
     out.push({ id: 'lesson-board-diagram', group: 'static', pass: vd.ok && sh?.kind === 'figure', detail: vd.errors.join('; ').slice(0, 160) || 'figure on the lesson board' })
   } catch (err) { out.push({ id: 'lesson-board-diagram', group: 'static', pass: false, detail: String(err).slice(0, 160) }) }
   out.push({ id: 'md-rejects-bad-substance', group: 'static', pass: badPred.length > 0 && badType.length > 0 && notSub.errors.length > 0, detail: [...badPred, ...badType, ...notSub.errors].join('; ').slice(0, 160) })
+  out.push(...(await illustrationStaticCases()))
   return out
 }
 
@@ -167,7 +169,7 @@ interface ToolCase { id: string; msg: string; expect: string[]; board?: string }
 const TOOL_CASES: ToolCase[] = [
   { id: 'board', msg: 'Can you explain on the whiteboard how a lever lets you lift heavy things?', expect: ['draw_on_board', 'animate_concept'] },
   { id: 'plot', msg: 'Graph y = x^2 - 4 and show me where it crosses the x-axis.', expect: ['plot', 'compute', 'run_python'] },
-  { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['illustrate', 'draw_on_board'] },
+  { id: 'illustrate', msg: 'Draw me a labelled diagram of a plant cell.', expect: ['find_illustration', 'illustrate', 'draw_on_board'] },
   { id: 'simulate', msg: 'I want to play with how the launch angle changes how far a ball flies. Make something I can drag.', expect: ['simulate', 'interactive'] },
   { id: 'compute', msg: 'What is 23.5 multiplied by 17.2?', expect: ['compute', 'run_python'] },
   { id: 'rag', msg: 'What did we cover in my last lesson? Remind me of the example.', expect: ['search_my_learning', 'get_lesson_digest', 'get_path_progress'] },
@@ -318,7 +320,7 @@ export async function injectionCases(admin: SupabaseClient, studentId: string): 
 }
 
 export async function visualCases(admin: SupabaseClient, studentId: string): Promise<CaseResult[]> {
-  void admin; void studentId
+  void studentId
   const out: CaseResult[] = []
   const timed = async (id: string, fn: () => Promise<{ pass: boolean; detail: string }>) => {
     const t0 = Date.now()
@@ -331,6 +333,7 @@ export async function visualCases(admin: SupabaseClient, studentId: string): Pro
   await timed('python-sandbox', async () => { const r = await runPython('import numpy as np\nimport matplotlib.pyplot as plt\nx=np.linspace(0,6.28,50)\nplt.plot(x,np.sin(x))\nprint(round(float(np.trapezoid(np.sin(x)**2,x)),3))'); return { pass: r.ok && /3\.1/.test(r.stdout) && r.images.length === 1, detail: `${r.engine}: ${r.stdout.trim().slice(0, 60)} images=${r.images.length} ${r.error ?? ''} ${r.ms} ms` } })
   await timed('python-no-network', async () => { const r = await runPython('import numpy as np\nprint(np.__version__)\nimport urllib.request\nurllib.request.urlopen("https://example.com")'); return { pass: !r.ok && /Refused/.test(r.error ?? ''), detail: r.error ?? r.stdout.slice(0, 80) } })
   await timed('python-network-blocked-in-sandbox', async () => { const r = await runPython('import pandas as pd\ntry:\n    pd.read_csv("https://people.sc.fsu.edu/~jburkardt/data/csv/addresses.csv")\n    print("NET-OK")\nexcept Exception as e:\n    print("NET-BLOCKED", type(e).__name__)'); return { pass: !/NET-OK/.test(r.stdout) && (r.engine !== 'modal' || /NET-BLOCKED/.test(r.stdout)), detail: `${r.engine}: ${r.stdout.trim().slice(0, 80)} ${r.error ?? ''}` } })
+  out.push(...(await illustrationVisualCases(admin)))
   return out
 }
 

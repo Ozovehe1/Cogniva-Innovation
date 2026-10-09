@@ -813,7 +813,7 @@ function ShapeBody({ el, animate, reduced, vars: boardVars = NO_VARS }: ShapePro
   switch (shape.kind) {
     case 'figure': {
       // A finished picture (sanitised SVG), shown as an image: nothing inside it can run. Wiped in left to right.
-      const href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(shape.svg)}`
+      const href = shape.src || `data:image/svg+xml;charset=utf-8,${encodeURIComponent(shape.svg)}`
       return <image href={href} x={shape.x} y={shape.y} width={shape.w} height={shape.h} preserveAspectRatio="xMidYMid meet" data-ink={ink ? 'text' : undefined}><title>{shape.alt ?? 'diagram'}</title></image>
     }
     case 'line':
