@@ -40,7 +40,7 @@ Use your tools, then reply with ONE short sentence on what you did and why.
 At most 3 writes. Do not repeat what is already in place. Only report actions whose tool result confirmed them (a result with "error" or "already" did not change anything).`
 
 /** The learner explicitly asked for a visual or a tool: the first step must call a tool. */
-const EXPLICIT_TOOL = /\b(on the (white)?board|whiteboard|draw|circle (the|it|that)|underline|cross (it )?out|annotate|erase|diagram|illustrat|graph|plot|chart|simulat|slider|animat|clip|video|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
+const EXPLICIT_TOOL = /\b(on the (white)?board|whiteboard|draw|drag|let me (move|explore|play)|venn|interactive|circle (the|it|that)|underline|cross (it )?out|annotate|erase|diagram|illustrat|graph|plot|chart|simulat|slider|animat|clip|video|python|run (the )?code|practice (set|questions)|quiz me|search (the web|online|for)|look up|read (it )?aloud|listen)\b/i
 
 export interface RunResult { text: string; model: string | null; steps: number; toolCalls: string[]; busy?: boolean }
 
