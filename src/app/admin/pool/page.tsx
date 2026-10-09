@@ -35,10 +35,10 @@ function Bar({ value, label }: { value: number; label: string }) {
 
 function Stat({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div className="rounded-[14px] border border-line bg-surface p-4 shadow-card">
+    <div className="rounded-[14px] border border-line bg-surface p-3.5 shadow-card sm:p-4">
       <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">{label}</p>
-      <p className="mt-1.5 font-display text-[30px] leading-none text-ink tabular-nums">{value}</p>
-      <p className="mt-2 text-[13px] leading-snug text-muted">{note}</p>
+      <p className="mt-1.5 font-display text-[26px] leading-none text-ink tabular-nums sm:text-[30px]">{value}</p>
+      <p className="mt-2 text-[12px] leading-snug text-muted sm:text-[13px]">{note}</p>
     </div>
   )
 }
@@ -53,11 +53,11 @@ function SlotRow({ s }: { s: Slot }) {
           <span className={cx('rounded-full border px-2 py-0.5 text-[12px]', st.cls)}>{st.label}</span>
           {s.reserved && <span className="rounded-full border border-navy-line bg-navy-soft px-2 py-0.5 text-[12px] text-navy">Reserved for learners</span>}
         </p>
-        <p className="mt-0.5 text-[12px] text-muted tabular-nums">{s.limits.rpm} RPM · {fmt(s.limits.rpd)} RPD · {fmt(s.limits.tpm)} TPM{s.limits.tpd < 1e8 ? ` · ${fmt(s.limits.tpd)} TPD` : ''} · day {s.day}</p>
+        <p className="mt-0.5 text-[12px] text-muted tabular-nums">{s.limits.rpm} RPM · {fmt(s.limits.rpd)} RPD · {fmt(s.limits.tpm)} TPM{s.limits.tpd < 1e8 ? ` · ${fmt(s.limits.tpd)} TPD` : ''}</p>
         {s.lastError && s.state !== 'healthy' && <p className="mt-1 line-clamp-2 text-[12px] text-ink-2">{s.lastError}</p>}
       </div>
-      <Bar label={`This minute · ${s.minute.req} req`} value={s.headroom.minute} />
-      <Bar label={`Today · ${fmt(s.dayUsed.req)} req · ${fmt(s.dayUsed.tok)} tok`} value={s.headroom.day} />
+      <Bar label={`This minute · ${s.minute.req} req`} value={Math.min(1 - s.minute.req / s.limits.rpm, 1 - s.minute.tok / s.limits.tpm)} />
+      <Bar label={`Today (${s.day}) · ${fmt(s.dayUsed.req)} req · ${fmt(s.dayUsed.tok)} tok`} value={Math.min(1 - s.dayUsed.req / s.limits.rpd, 1 - s.dayUsed.tok / s.limits.tpd)} />
       <div className="grid grid-cols-3 gap-2 text-[12px] text-muted md:text-right">
         <p><span className="block text-[15px] text-ink tabular-nums">{s.latencyMs != null ? `${(s.latencyMs / 1000).toFixed(1)} s` : '—'}</span>latency</p>
         <p><span className="block text-[15px] text-ink tabular-nums">{pct(s.errRate)}</span>errors</p>
@@ -90,7 +90,7 @@ export default async function PoolPage() {
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4">
           <Logo href="/dashboard" />
-          <p className="flex items-center gap-2 text-[13px] text-muted"><span className="h-2 w-2 rounded-full bg-accent motion-safe:animate-pulse" aria-hidden />Live · refreshes every 20 s</p>
+          <p className="flex items-center gap-2 text-[12px] text-muted sm:text-[13px]"><span className="h-2 w-2 rounded-full bg-accent motion-safe:animate-pulse" aria-hidden />Live · refreshes every 20 s</p>
         </div>
       </header>
       <div className="mx-auto max-w-6xl px-5 py-8 md:py-12">
@@ -98,7 +98,7 @@ export default async function PoolPage() {
         <h1 className="mt-2 font-display text-[34px] leading-tight text-ink md:text-[42px]">Model pool</h1>
         <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-ink-2">{headline} {h.keys.filter(k => k.provider === 'groq').length} Groq and {h.keys.filter(k => k.provider === 'gemini').length} Gemini keys, {h.slots.length} slots. Updated {new Date(h.at).toLocaleTimeString('en-GB', { timeZone: 'Africa/Lagos', hour: '2-digit', minute: '2-digit', second: '2-digit' })} WAT.</p>
 
-        <section className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Capacity">
+        <section className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Capacity">
           <Stat label="Live capacity" value={`${fmt(h.capacity.liveRpmNow)}`} note="requests a minute free right now on healthy slots" />
           <Stat label="Requests left today" value={fmt(h.capacity.dailyRequestsLeft)} note="across healthy slots, before each provider's daily reset" />
           <Stat label="Groq tokens left" value={fmt(h.capacity.dailyTokensLeftGroq)} note="the usual binding limit (200K a model a day)" />
@@ -130,12 +130,23 @@ export default async function PoolPage() {
           </div>
         </section>
 
-        {[...groups].map(([name, slots]) => (
-          <section key={name} className="mt-8" aria-label={name}>
-            <h2 className="font-display text-[20px] text-ink">{name}</h2>
-            <ul className="mt-3 overflow-hidden rounded-[14px] border border-line bg-surface shadow-card">{slots.map(s => <SlotRow key={s.id} s={s} />)}</ul>
-          </section>
-        ))}
+        {/* Progressive disclosure: a key whose slots are all healthy starts folded; one with a problem starts open. */}
+        {[...groups].map(([name, slots]) => {
+          const ok = slots.filter(s => s.state === 'healthy').length
+          const reserved = slots.filter(s => s.reserved).length
+          return (
+            <details key={name} open={ok < slots.length || reserved > 0} className="group mt-6 overflow-hidden rounded-[14px] border border-line bg-surface shadow-card">
+              <summary className="flex min-h-[52px] cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                <span className="font-display text-[19px] text-ink">{name}</span>
+                <span className="flex items-center gap-2 text-[13px] text-muted">
+                  <span className="tabular-nums">{ok}/{slots.length} healthy{reserved ? ` · ${reserved} reserved` : ''}</span>
+                  <span aria-hidden className="text-faint transition-transform group-open:rotate-90">›</span>
+                </span>
+              </summary>
+              <ul className="border-t border-line">{slots.map(s => <SlotRow key={s.id} s={s} />)}</ul>
+            </details>
+          )
+        })}
         <p className="mt-8 text-[12px] text-muted">Gemini quotas are per Google Cloud project: two keys from the same project share one quota. Limits can be overridden with GROQ_RPM / GROQ_RPD / GROQ_TPM / GROQ_TPD; reserve and pacing with POOL_RESERVE_SLOTS / POOL_BG_SHARE / POOL_ASK_SHARE.</p>
       </div>
     </main>
