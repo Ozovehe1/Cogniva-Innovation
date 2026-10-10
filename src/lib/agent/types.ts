@@ -20,6 +20,8 @@ export type Block =
   /** A verified worked example (src/lib/examples): the client re-solves it live; practice answers stay on the server. */
   /** A live scene (lib/scene): a validated scene spec the engine renders and animates. */
   | { kind: 'scene'; id: string; spec: import('../scene/types').SceneSpec; alt: string }
+  /** An external stage tool (lib/live/tools/embeds.ts): circuit sim, 3D molecule, diagram, physics, GeoGebra, PhET, Desmos. */
+  | { kind: 'embed'; id: string; tool: import('../live/tools/embed-meta').EmbedKind; spec: Record<string, unknown>; title: string; alt: string }
   | { kind: 'worked_example'; id: string; spec: import('../examples/spec').ExampleSpec; practice?: { actionId: string; items: { q: string; svg?: string; unit?: string }[] } }
   | { kind: 'confirm'; id: string; actionId: string; title: string; detail: string; status: 'proposed' | 'done' | 'declined' | 'undone' }
   | { kind: 'sources'; id: string; items: { title: string; url: string; source: string }[] }

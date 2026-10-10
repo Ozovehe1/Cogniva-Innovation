@@ -13,6 +13,7 @@ import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
 import { IX_HEX, compileSpec, figureGeom, initialEnv, odeCurve, type IxEnv, type IxSpec } from '@/lib/agent/interactive'
 import { LazySceneStage } from '@/components/scene'
+import { emitSignal } from '@/lib/live/signals'
 import { legacySceneSpec } from '@/lib/scene/templates'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -151,7 +152,7 @@ function JsxFigure({ spec, alt, play, demo = false, onHandOver, onReadouts, task
           const sx = niceStep(spec.x[1] - spec.x[0]), sy = niceStep(spec.y[1] - spec.y[0])
           for (const p of spec.points.filter(q => q.drag)) {
             pts[p.name].on('drag', () => { const q = pts[p.name]; const x = Math.min(spec.x[1], Math.max(spec.x[0], q.X())), y = Math.min(spec.y[1], Math.max(spec.y[0], q.Y())); if (x !== q.X() || y !== q.Y()) q.moveTo([x, y]) })
-            pts[p.name].on('up', () => { const q = pts[p.name]; const x = Math.round(q.X() / sx) * sx, y = Math.round(q.Y() / sy) * sy; if (Math.abs(x - q.X()) > 1e-9 || Math.abs(y - q.Y()) > 1e-9) { q.moveTo([x, y], reducedMotion() ? 0 : 120); buzz() } })
+            pts[p.name].on('up', () => { const q = pts[p.name]; emitSignal({ kind: 'slider', where: `live figure "${spec.title}"`, param: `point ${p.name}`, detail: `dragged point ${p.name} to (${Number(q.X().toFixed(2))}, ${Number(q.Y().toFixed(2))})`, value: q.X(), min: spec.x[0], max: spec.x[1] }); const x = Math.round(q.X() / sx) * sx, y = Math.round(q.Y() / sy) * sy; if (Math.abs(x - q.X()) > 1e-9 || Math.abs(y - q.Y()) > 1e-9) { q.moveTo([x, y], reducedMotion() ? 0 : 120); buzz() } })
           }
         }
         let raf = 0
@@ -246,7 +247,7 @@ function JsxFigure({ spec, alt, play, demo = false, onHandOver, onReadouts, task
             <div key={s.name} className="flex items-end gap-2">
               <label className="block min-w-0 flex-1">
                 <span className="flex items-baseline justify-between text-[13px]"><span className="text-ink-2"><RichText text={s.label} /></span><span className="tnum text-[15px] font-medium text-ink">{fmt(vals[s.name.toLowerCase()])}</span></span>
-                <input type="range" min={s.min} max={s.max} step={s.step} value={vals[s.name.toLowerCase()]} onChange={e => { stopPlay(); setSlider(s.name, Number(e.target.value)) }} aria-label={s.label} className="mt-1 h-11 w-full accent-[#1F4D3A]" />
+                <input type="range" min={s.min} max={s.max} step={s.step} value={vals[s.name.toLowerCase()]} onChange={e => { stopPlay(); const v = Number(e.target.value); emitSignal({ kind: 'slider', where: `live figure "${spec.title}"`, param: s.label || s.name, value: v, from: vals[s.name.toLowerCase()], min: s.min, max: s.max }); setSlider(s.name, v) }} aria-label={s.label} className="mt-1 h-11 w-full accent-[#1F4D3A]" />
               </label>
               <button type="button" onClick={() => (playing === s.name ? stopPlay() : runPlay(s.name, play?.slider === s.name ? play.seconds : 4))} aria-label={playing === s.name ? `Pause ${s.label}` : `Play ${s.label} from ${fmt(s.min)} to ${fmt(s.max)}`}
                 className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-line bg-surface text-accent shadow-[var(--shadow-card)] transition-colors hover:border-accent-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">

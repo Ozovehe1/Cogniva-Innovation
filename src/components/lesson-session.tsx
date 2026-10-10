@@ -16,6 +16,7 @@ import type { Step } from '@/lib/lesson-schema'
 import type { Chapter } from '@/lib/lesson-sections'
 import { TutorPresence } from '@/components/genie/tutor-presence'
 import { genie } from '@/components/genie/presence'
+import { LiveStage, useLiveTutor } from '@/components/live/live-tutor'
 
 /** Fired by IdleTimeout just before the away sign-out, so progress is saved while the session is still valid. */
 export const BEFORE_SIGNOUT_EVENT = 'geniusmap:before-signout'
@@ -81,6 +82,8 @@ export function LessonSession({
   const wrongTotal = useRef(0)
   const [basicsOffer, setBasicsOffer] = useState(false)
   const activeMs = useRef(0)
+  // The Live Tutor agent: watches learner signals and acts on the stage under the board (server flag LIVE_AGENT).
+  const live = useLiveTutor({ lessonId, control, enabled: mode === 'student' })
 
   // Active time: counted only while the lesson is playing and the page is visible.
   useEffect(() => {
@@ -170,8 +173,10 @@ export function LessonSession({
     } else if (e.type === 'complete') genie.react('happy', 3200)
   }, [steps])
 
+  const liveEvent = live.onPlayerEvent
   const onEvent = useCallback((e: PlayerEvent) => {
     tutorReact(e)
+    liveEvent(e)
     // The tutor sheet reads where the learner is and what they just answered (lesson-live.ts).
     if (e.type === 'position') setLessonLive({ lessonId, cursor: e.cursor, section: e.section, total: e.total })
     else if (e.type === 'check' && (e.response === 'answer' || e.response === 'differently' || e.response === 'explain_wrong')) setLessonLive({ lessonId, lastCheck: { step: e.origIndex, correct: e.correct, answer: e.answer?.slice(0, 200), response: e.response, at: Date.now() } })
@@ -206,7 +211,7 @@ export function LessonSession({
       post({ completed: true, event: { type: 'complete' } })
       setFinished(true)
     }
-  }, [post, flush, schedule, partial, checkHref, mode, tutorReact, lessonId])
+  }, [post, flush, schedule, partial, checkHref, mode, tutorReact, lessonId, liveEvent])
 
   const onNeedSteps = useCallback(async (req: NeedStepsRequest): Promise<Step[]> => {
     history.current.push({ reason: req.reason, answer: req.answer })
@@ -304,6 +309,7 @@ export function LessonSession({
       transcriptAside={transcriptAside}
       autoPlay={autoPlay}
       more={partial}
+      stageSlot={mode === 'student' ? <LiveStage acts={live.acts} off={live.off} onDismiss={live.dismiss} onResume={() => control.current?.resume()} onLost={() => live.lost()} /> : null}
     />
     {finished && mode === 'student' && <MicroQuestion />}
     {(finished || (waitingForMore && !partial)) && upNext && mode === 'student' && <UpNextCard {...upNext} />}

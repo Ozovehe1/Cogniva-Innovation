@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   // The snapshot renderer loads its font from disk.
   outputFileTracingIncludes: {
     "/api/agent/**": ["./src/lib/agent/fonts/**"],
+    "/api/tutor/**": ["./src/lib/agent/fonts/**"],
   },
 };
 

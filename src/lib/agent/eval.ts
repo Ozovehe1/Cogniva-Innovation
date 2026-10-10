@@ -25,6 +25,7 @@ import { expandBoardDiagrams, nextTutorSteps } from '../lesson-ai'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES, chatOffer } from './run'
+import { liveStaticCases } from '@/lib/live/evals'
 import { CONCEPT_ASK, beatVisualLine, readVisual, visualPlanHint } from '../visual-policy'
 import { moveCases, staticMoveCases } from './move-eval'
 import { clipTargets } from '../lesson-clip'
@@ -211,6 +212,8 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   out.push(...onboardingStaticCases())
   // Move-first tutoring: the state block, the MOVE line, the point-at verb and an offer that forces nothing.
   out.push(...staticMoveCases())
+  // Phase-1 Live Tutor: wake policy, free router, loadout, busy fallback, circuits, geometry self-check.
+  out.push(...liveStaticCases())
   return out
 }
 

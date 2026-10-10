@@ -7,6 +7,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { detectDistress } from '@/lib/safety'
 import { screenInjection } from '@/lib/agent/guard'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES } from '@/lib/agent/run'
+import { liveAgentOn } from '@/lib/live/registry'
 import { isVisual, narrationFromVisual, needsNarration } from '@/lib/agent/narrate'
 import { AllModelsBusyError, chat, type Msg } from '@/lib/agent/llm'
 import { compactHistory, withLlmContext } from '@/lib/agent/pool-prompt'
@@ -203,7 +204,7 @@ export async function POST(request: Request) {
       visualTopic: lessonRow ? `${(lessonRow as { title: string }).title}. ${digest?.text.slice(0, 400) ?? ''}` : prevAsk,
       origin: new URL(request.url).origin, writes: 0, maxWrites: MAX_WRITES, restricted: inj.flagged, practiceMode: false,
       emit: b => emitChecked(b), blocks, trace: [], searchUrls: new Set(), computeCalls: 0, sources: [], limits: LIMITS(), guardIssues,
-      testFault: testFaultOf(request),
+      testFault: testFaultOf(request), shownBefore: allBlocks,
     }
     if (inj.flagged) await admin.from('agent_actions').insert({ student_id: studentId, run_id: ctx.runId, source: 'agent', tool: 'injection_screen', args: { reasons: inj.reasons.slice(0, 4), score: inj.score }, summary: 'Message flagged; run restricted to read and visual tools' })
 
@@ -223,7 +224,7 @@ export async function POST(request: Request) {
       let stopTimer: ReturnType<typeof setTimeout> | undefined
       const hardStop = new Promise<never>((_, rej) => { stopTimer = setTimeout(() => rej(new TurnTimeout()), Math.max(10_000, t0 + HARD_STOP_MS - Date.now())) })
       const r = await Promise.race([hardStop, withLlmContext({ priority: lessonId ? 'live' : 'ask', learnerId: studentId, label: 'ask' }, () => runAgent({
-        ctx, system: CHAT_SYSTEM,
+        ctx, system: CHAT_SYSTEM, selfCheck: liveAgentOn() ? { vision: false, intent: message.slice(0, 200) } : undefined,
         messages: [{ role: 'system', content: `${context}${avoid ? `\n${avoid}` : ''}` }, ...compact.messages, { role: 'user', content: message }],
         onText: d => gate.push(d),
         onTool: (name, label, state) => send({ t: 'tool', name, label, state }),
@@ -313,5 +314,5 @@ function testFaultOf(request: Request): AgentCtx['testFault'] {
   const f = request.headers.get('x-gm-test-fault')
   const tok = process.env.RENDER_TOKEN
   if (!f || !tok || request.headers.get('x-render-token') !== tok) return undefined
-  return f === 'busy' || f === 'empty' || f === 'empty_nomodel' ? f : undefined
+  return f === 'busy' || f === 'empty' || f === 'empty_nomodel' || f === 'allbusy' ? f : undefined
 }

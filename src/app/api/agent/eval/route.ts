@@ -1,3 +1,4 @@
+import { liveStaticCases } from '@/lib/live/evals'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { agentSecretOk } from '@/lib/agent/secret'
 import { regressionCases } from '@/lib/correctness/regression'
@@ -43,6 +44,7 @@ async function run(request: Request) {
   else if (group === 'visual') results = await visualCases(admin, student)
   else if (group === 'regression') results = await regressionCases(admin, student, only)
   else if (group === 'pool') results = await poolCases()
+  else if (group === 'live') results = liveStaticCases()
   else if (group === 'assessment') results = await assessmentCases(admin, student, only)
   else if (group === 'playbook') results = await playbookCases(admin, student, only)
   else return Response.json({ error: 'unknown group' }, { status: 400 })

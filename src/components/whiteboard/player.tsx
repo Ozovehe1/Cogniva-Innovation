@@ -86,6 +86,8 @@ export interface WhiteboardPlayerProps {
   embedded?: boolean
   /** More sections are still being written: the end of the current steps is not the end of the lesson. */
   more?: boolean
+  /** The adaptive stage slot right under the board: the Live Tutor's tools render here, even while a check is open. */
+  stageSlot?: React.ReactNode
 }
 
 export interface PlayerControl {
@@ -150,6 +152,7 @@ export function WhiteboardPlayer({
   renderMode = false,
   embedded = false,
   more = false,
+  stageSlot,
 }: WhiteboardPlayerProps) {
   const reduced = !!useReducedMotion()
   const [steps, setSteps] = useState<Step[]>(initialSteps)
@@ -1194,6 +1197,8 @@ export function WhiteboardPlayer({
       </BoardScale.Provider>
       </VarsContext.Provider>
       </PenProvider>
+
+      {stageSlot}
 
       {/* Controls */}
       {!renderMode && <>

@@ -1,4 +1,5 @@
 'use client'
+import { emitSignal } from '@/lib/live/signals'
 /**
  * The live scene on screen: a DPR-scaled canvas at the kind's fixed aspect (no layout jumps), the beat timeline
  * playing once with captions, then the learner owns it (drag the handle, move the sliders). Pauses off screen;
@@ -177,7 +178,7 @@ function StageInner({ spec, seek, drive, hideControls, className, onUi, onHandOv
               <label key={ct.param} className="block">
                 <span className="flex items-baseline justify-between text-[13px]"><span className="text-ink-2">{ct.label ?? d.label}</span><span className="tnum text-[14px] font-medium text-ink">{fmt(val, d.step)}{d.unit ? ` ${d.unit}` : ''}</span></span>
                 <input type="range" min={d.min} max={d.max} step={d.step ?? (d.max - d.min) / 100} value={val} aria-label={ct.label ?? d.label}
-                  onChange={e => { const sc = sceneRef.current!; sc.setParam(ct.param, Number(e.target.value)); setUi(sc.ui()) }} className="h-9 w-full accent-[#1F4D3A]" />
+                  onChange={e => { const sc = sceneRef.current!; const v = Number(e.target.value); emitSignal({ kind: 'slider', where: `live scene "${spec.title}"`, param: ct.label ?? d.label ?? ct.param, value: v, from: val, min: d.min, max: d.max }); sc.setParam(ct.param, v); setUi(sc.ui()) }} className="h-9 w-full accent-[#1F4D3A]" />
               </label>
             )
           })}

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<!--
+  Falstad CircuitJS1 (Paul Falstad and Iain Sharp), GNU GPL v2 or later: https://github.com/pfalstad/circuitjs1
+  The compiled build in ./circuitjs1 is unmodified (mirrored from falstad.com/circuit/circuitjs110); it runs here as a
+  separate iframe app. This page only adds a postMessage bridge so the Ideanimo tutor can load a circuit and read
+  its live voltages and currents. Source: https://github.com/pfalstad/circuitjs1
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Circuit simulator (CircuitJS1, GPL)</title>
+<link rel="stylesheet" href="font/fontello.css">
+<style>html,body{margin:0;padding:0;overflow:hidden;background:#fff}.gwt-MenuItem{font-size:12px!important}</style>
+<script src="lz-string.min.js"></script>
+<script>
+(function () {
+  var api = null, pending = null, last = 0, lastSig = ''
+  function post(msg) { try { parent.postMessage(Object.assign({ source: 'ideanimo-circuit' }, msg), location.origin) } catch (e) {} }
+  function read() {
+    if (!api) return []
+    var out = []
+    try {
+      var els = api.getElements() || []
+      for (var i = 0; i < els.length; i++) {
+        var e = els[i], t = e.getType()
+        if (/Wire|Text|Ground/.test(t)) continue
+        var info = []
+        try { info = (e.getInfo() || []).slice(0, 4) } catch (x) {}
+        out.push({ i: i, type: t, v: +(+e.getVoltageDiff()).toFixed(4), a: +(+e.getCurrent()).toFixed(6), info: info })
+      }
+    } catch (x) {}
+    return out
+  }
+  window.oncircuitjsloaded = function (a) {
+    api = a
+    if (pending) { api.importCircuit(pending, false); pending = null }
+    api.onupdate = function () {
+      var now = Date.now()
+      if (now - last < 1000) return
+      last = now
+      var r = read(), sig = JSON.stringify(r.map(function (x) { return [x.type, x.v.toFixed(2), x.a.toFixed(4)] }))
+      if (sig !== lastSig) { lastSig = sig; post({ op: 'readings', elements: r, t: api.getTime() }) }
+    }
+    post({ op: 'ready' })
+  }
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== location.origin || !ev.data || ev.data.target !== 'ideanimo-circuit') return
+    var d = ev.data
+    if (d.op === 'load' && typeof d.netlist === 'string') { if (api) { api.importCircuit(d.netlist, false); lastSig = '' } else pending = d.netlist }
+    else if (d.op === 'get') post({ op: 'readings', elements: read(), t: api ? api.getTime() : 0, reply: d.id })
+    else if (d.op === 'run' && api) api.setSimRunning(!!d.on)
+    else if (d.op === 'export' && api) post({ op: 'netlist', netlist: api.exportCircuit(), reply: d.id })
+  })
+})()
+</script>
+<script src="circuitjs1/circuitjs1.nocache.js"></script>
+</head>
+<body>
+<iframe src="javascript:''" id="__gwt_historyFrame" style="width:0;height:0;border:0"></iframe>
+</body>
+</html>

@@ -101,7 +101,9 @@ export interface AgentCtx {
    * after the turn's first visual, 'busy' makes the next model step throw AllModelsBusyError, 'empty' makes it end
    * with no text, 'empty_nomodel' also fails the narration retry. Proves the turn still narrates its visual.
    */
-  testFault?: 'busy' | 'empty' | 'empty_nomodel'
+  testFault?: 'busy' | 'empty' | 'empty_nomodel' | 'allbusy'
+  /** Visuals already shown in this conversation (the busy fallback answers follow-ups from them). */
+  shownBefore?: Block[]
 }
 
 export interface ToolSpec {
@@ -862,10 +864,19 @@ const VISUAL: ToolSpec[] = [
   },
 ]
 
+import { embedTools } from '@/lib/live/tools/embeds'
+import { remoteTools } from '@/lib/live/remote'
+
 export const ALL_TOOLS: ToolSpec[] = [...READ, ...WRITE, ...DIRECTOR, ...VISUAL, workedExampleTool, sceneTool]
 
+/** Every tool in the one registry: the built-in tools, the external stage tools (lib/live/tools/embeds.ts) and remote bench tools. */
+export function allTools(): ToolSpec[] {
+  const seen = new Set<string>()
+  return [...ALL_TOOLS, ...embedTools(), ...remoteTools()].filter(t => (seen.has(t.def.name) ? false : (seen.add(t.def.name), true)))
+}
+
 export function toolsFor(ctx: Pick<AgentCtx, 'mode' | 'restricted'>): ToolSpec[] {
-  return ALL_TOOLS.filter(t => t.modes.includes(ctx.mode) && !(ctx.restricted && (t.tier === 'write' || t.tier === 'confirm' || t.def.name === 'web_search' || t.def.name === 'fetch_page')))
+  return allTools().filter(t => t.modes.includes(ctx.mode) && !(ctx.restricted && (t.tier === 'write' || t.tier === 'confirm' || t.def.name === 'web_search' || t.def.name === 'fetch_page')))
 }
 
 /* ───────────── Plans ───────────── */
