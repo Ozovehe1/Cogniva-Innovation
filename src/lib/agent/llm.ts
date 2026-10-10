@@ -14,7 +14,7 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type Part } from '@google/genai'
 import { runOnPool, inventory, groqModels, estTokens as poolEst, PoolBusyError, llmContext, poolStore, type Priority, type PoolPurpose, type SlotDef } from './pool'
 
-export type Purpose = 'chat' | 'director' | 'light' | 'json'
+export type Purpose = 'chat' | 'director' | 'light' | 'json' | 'planner'
 
 export interface ToolCall { id: string; name: string; args: Record<string, unknown>; sig?: string }
 export interface Msg {
@@ -54,7 +54,7 @@ export interface ChatResult {
   text: string
   toolCalls: ToolCall[]
   model: string
-  provider: 'groq' | 'gemini'
+  provider: 'groq' | 'gemini' | 'openrouter'
   usage: { input: number; output: number; cached?: number }
   /** Groq built-in tool executions (browser_search / code_interpreter). */
   executed?: { type: string; arguments?: string; output?: string; search_results?: { results?: { title?: string; url?: string; content?: string }[] } }[]
@@ -82,7 +82,7 @@ export const groqEnabled = () => inventory().some(s => s.provider === 'groq')
 export const estTokens = poolEst
 
 /** Output caps per purpose (tokens): the caller's request is clipped to these. */
-const MAX_OUT: Record<Purpose, number> = { chat: 1200, director: 1200, light: 700, json: 6000 }
+const MAX_OUT: Record<Purpose, number> = { chat: 1200, director: 1200, light: 700, json: 6000, planner: 1400 }
 
 /** Default priority per purpose when nothing says otherwise. */
 function priorityFor(req: ChatRequest): Priority {
@@ -135,7 +135,7 @@ export async function chat(input: ChatRequest): Promise<ChatResult> {
       avoid: req.avoidSlots,
     }, async (slot, o) => {
       const use = o.trimmed ? trimmed : req
-      const res = slot.provider === 'groq' ? await groqChat(slot, use, onText, o.timeoutMs) : await geminiChat(slot, use, onText, o.timeoutMs)
+      const res = slot.provider === 'groq' ? await groqChat(slot, use, onText, o.timeoutMs) : slot.provider === 'openrouter' ? await groqChat(slot, { ...use, messages: stripPII(use.messages) }, onText, o.timeoutMs) : await geminiChat(slot, use, onText, o.timeoutMs)
       return { value: { ...res, slot: slot.id }, usage: res.usage }
     })
     if (r.trimmed && estTrim < est) void poolStore().count('saved_trim_tokens', est - estTrim)
@@ -193,8 +193,23 @@ function toOpenAI(messages: Msg[]) {
   })
 }
 
+/**
+ * Learner privacy for third-party free endpoints that log prompts (NVIDIA models on OpenRouter): drop emails, phone
+ * numbers, age band, interests and anything after "my name is"; the lesson content and anonymised state stay.
+ */
+export function stripPII(messages: Msg[]): Msg[] {
+  const clean = (t: string) => t
+    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email]')
+    .replace(/\+?\d[\d\s-]{8,}\d/g, '[number]')
+    .replace(/,?\s*age band [\w-]+/gi, '')
+    .replace(/;?\s*interests: [^.\n]*/gi, '')
+    .replace(/\b(my name is|i am called|i'm called)\s+[A-Z][\w'-]*(\s+[A-Z][\w'-]*)?/gi, '$1 [name]')
+  return messages.map(m => ({ ...m, content: clean(m.content) }))
+}
+
 async function groqChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) => void, firstMs = 30_000): Promise<ChatResult> {
   const model = slot.model
+  const or = slot.provider === 'openrouter'
   const stream = !!onText && !req.builtin
   const body: Record<string, unknown> = {
     model,
@@ -217,15 +232,15 @@ async function groqChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) =>
   // Fast failover: a live turn that has not started within firstMs moves to the next slot; once tokens flow it may run on.
   const timer = firstByteTimer(stream ? firstMs : Math.max(firstMs, 20_000), req.builtin ? 60_000 : 90_000)
   try {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const res = await fetch(or ? 'https://openrouter.ai/api/v1/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${slot.apiKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${slot.apiKey}`, ...(or ? { 'HTTP-Referer': 'https://ideanimo.vercel.app', 'X-Title': 'Ideanimo' } : {}) },
     body: JSON.stringify(body),
     signal: timer.signal,
   })
   if (!res.ok) {
     const ra = res.headers.get('retry-after')
-    throw new Error(`Groq ${res.status}: ${(await res.text()).slice(0, 400)}${ra ? ` (try again in ${ra}s)` : ''}`)
+    throw new Error(`${or ? 'OpenRouter' : 'Groq'} ${res.status}: ${(await res.text()).slice(0, 400)}${ra ? ` (try again in ${ra}s)` : ''}`)
   }
   if (!stream) {
     const j = await res.json() as { choices?: { message?: { content?: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; executed_tools?: ChatResult['executed'] } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } }
@@ -233,7 +248,7 @@ async function groqChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) =>
     const text = m?.content ?? ''
     if (onText && text) onText(text)
     return {
-      text, model, provider: 'groq', executed: m?.executed_tools,
+      text, model, provider: or ? 'openrouter' : 'groq', executed: m?.executed_tools,
       toolCalls: (m?.tool_calls ?? []).map(c => ({ id: c.id, name: c.function.name, args: safeArgs(c.function.arguments) })),
       usage: { input: j.usage?.prompt_tokens ?? 0, output: j.usage?.completion_tokens ?? 0, cached: j.usage?.prompt_tokens_details?.cached_tokens ?? 0 },
     }
@@ -271,7 +286,7 @@ async function groqChat(slot: SlotDef, req: ChatRequest, onText?: (d: string) =>
     }
   }
   return {
-    text, model, provider: 'groq', usage,
+    text, model, provider: or ? 'openrouter' : 'groq', usage,
     toolCalls: [...calls.values()].filter(c => c.name).map((c, k) => ({ id: c.id || `call_${k}`, name: c.name, args: safeArgs(c.args) })),
   }
   } finally { timer.done() }

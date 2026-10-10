@@ -23,8 +23,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 export type Priority = 'live' | 'ask' | 'background'
-export type Provider = 'groq' | 'gemini'
-export type PoolPurpose = 'chat' | 'director' | 'light' | 'json' | 'lesson' | 'vision' | 'builtin'
+export type Provider = 'groq' | 'gemini' | 'openrouter'
+/** planner: the Live Tutor's decide-and-plan step (the strongest tool-capable model with room). */
+export type PoolPurpose = 'chat' | 'director' | 'light' | 'json' | 'lesson' | 'vision' | 'builtin' | 'planner'
 
 export interface Limits { rpm: number; rpd: number; tpm: number; tpd: number }
 export interface SlotDef {
@@ -111,8 +112,29 @@ export function inventory(env: Record<string, string | undefined> = process.env)
       slots.push({ id: `gem${k.n}:${model}`, provider: 'gemini', key: k.n, keyEnv: k.env, apiKey: k.value, model, limits: geminiLimits(model), resetTz: 'America/Los_Angeles' })
     }
   }
+  // OpenRouter :free models: a small OVERFLOW lane (per-account daily cap, shared by every key), never the main lane.
+  for (const k of discoverKeys('OPENROUTER_API_KEY', env)) {
+    for (const model of openRouterModels(env)) {
+      slots.push({ id: `or${k.n}:${model}`, provider: 'openrouter', key: k.n, keyEnv: k.env, apiKey: k.value, model, limits: { rpm: num(env.OPENROUTER_RPM, 16), rpd: num(env.OPENROUTER_RPD, 45), tpm: 1_000_000, tpd: 1e9 }, resetTz: 'UTC' })
+    }
+  }
   if (env === process.env) inventoryCache = slots
   return slots
+}
+
+/** OpenRouter free models (override with OPENROUTER_MODELS, comma-separated). */
+export function openRouterModels(env: Record<string, string | undefined> = process.env): string[] {
+  const v = (env.OPENROUTER_MODELS ?? '').split(',').map(x => x.trim()).filter(Boolean)
+  return v.length ? v : ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free']
+}
+/**
+ * OpenRouter models verified to call tools. Nemotron 3 Super's model page lists tools/tool_choice (checked 2026-10-10);
+ * Ultra and Gemma 4 are listed without verified tool calling, so they serve text-only roles until a probe adds them
+ * here (OPENROUTER_TOOL_MODELS, comma-separated).
+ */
+export function openRouterToolModels(env: Record<string, string | undefined> = process.env): string[] {
+  const v = (env.OPENROUTER_TOOL_MODELS ?? '').split(',').map(x => x.trim()).filter(Boolean)
+  return v.length ? v : ['nvidia/nemotron-3-super-120b-a12b:free']
 }
 /** For tests: forget the cached inventory (after changing env). */
 export function resetInventory() { inventoryCache = null }
@@ -125,7 +147,19 @@ export function quality(purpose: PoolPurpose, s: Pick<SlotDef, 'provider' | 'mod
   const lite = /lite/.test(m)
   const gemFlash = s.provider === 'gemini' && !lite
   const gm = groqModels()
+  if (s.provider === 'openrouter') {
+    const tools = openRouterToolModels().includes(m)
+    const ultra = /ultra/.test(m)
+    switch (purpose) {
+      case 'chat': case 'director': case 'planner': return tools ? (ultra ? 0.7 : 0.55) : 0
+      case 'json': return ultra ? 0.6 : 0.5
+      case 'light': return 0.4
+      default: return 0
+    }
+  }
   switch (purpose) {
+    case 'planner': // the Live Tutor's decide + plan step: strongest tool-capable model first
+      return gemFlash ? (/3\.8/.test(m) ? 1 : 0.95) : m === gm.big ? 0.9 : m === gm.qwen ? 0.85 : lite ? 0.6 : 0.5
     case 'chat': // tool-calling tutor turns
       return m === gm.qwen ? 1 : m === gm.big ? 0.95 : m === gm.small ? 0.6 : gemFlash ? 0.8 : 0.65
     case 'director':
@@ -143,10 +177,10 @@ export function quality(purpose: PoolPurpose, s: Pick<SlotDef, 'provider' | 'mod
   }
 }
 /** The quality a purpose prefers before the pool falls back to lighter models. */
-const PREFERRED: Record<PoolPurpose, number> = { chat: 0.8, director: 0.8, light: 0, json: 0.8, lesson: 0, vision: 0, builtin: 0 }
+const PREFERRED: Record<PoolPurpose, number> = { chat: 0.8, director: 0.8, light: 0, json: 0.8, lesson: 0, vision: 0, builtin: 0, planner: 0.8 }
 
 /** Typical response latency per model family (ms), used until real measurements exist. */
-function priorLatency(s: SlotDef) { return s.provider === 'groq' ? (/20b/.test(s.model) ? 1500 : 3000) : /lite/.test(s.model) ? 4000 : 9000 }
+function priorLatency(s: SlotDef) { return s.provider === 'openrouter' ? 6000 : s.provider === 'groq' ? (/20b/.test(s.model) ? 1500 : 3000) : /lite/.test(s.model) ? 4000 : 9000 }
 
 /* ───────────── Shared state ───────────── */
 
@@ -495,7 +529,23 @@ export function classify(err: unknown): { kind: ReportKind; cooldownMs?: number;
   return { kind: 'error' }
 }
 
-const LIVE_TIMEOUT = { groq: 14_000, gemini: 22_000 }
+const LIVE_TIMEOUT = { groq: 14_000, gemini: 22_000, openrouter: 25_000 }
+
+/** Per-learner budget buckets. */
+export type Bucket = 'live' | 'ask' | 'draft' | 'bg'
+export const BUCKET_SHARE: Record<Bucket, number> = { live: 1, ask: 0.7, draft: 1, bg: 0.5 }
+export function budgetBucket(priority: Priority, label: string | undefined, purpose: PoolPurpose): Bucket {
+  if (priority === 'background') return 'bg'
+  if (purpose === 'lesson' || /^lesson-/.test(label ?? '')) return 'draft'
+  if (priority === 'live') return 'live'
+  return 'ask'
+}
+/** The fair-share key for a learner's bucket on a slot (Groq counts tokens per day separately). */
+export function userKey(s: Pick<SlotDef, 'provider'>, learner: string | null, bucket: Bucket): string | null {
+  if (!learner) return null
+  const k = bucket === 'ask' ? learner : `${learner}:${bucket}`
+  return s.provider === 'groq' ? `g:${k}` : k
+}
 
 /**
  * Run one model call on the best slot for the request, failing over across slots. Learner traffic walks the
@@ -534,10 +584,14 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
       // A learner's own lesson being written while they watch (plan + opening + next beats, ~10K tokens each) must not
       // starve on the same per-minute share as their chat: lesson content gets 3x (measured: fresh lessons paused on
       // "fair share" right after the opening beat, so the learner saw one beat and then "Lesson complete").
-      const half = (priority === 'background' ? 0.5 : 1) * (o.purpose === 'lesson' && priority !== 'background' ? 3 : 1)
-      const userCap = !learner ? {} : s.provider === 'groq'
-        ? { user: `g:${learner}`, userTpm: POOL.userTpm() * half, userTpd: POOL.userTpd() * half }
-        : { user: learner, userTpm: POOL.userTpm() * half }
+      // Separate budgets per learner: live tutoring, Ask and lesson drafting each have their own bucket, so a learner's
+      // own drafting can never starve their live tutor (it did on 2026-10-10).
+      const bucket = budgetBucket(priority, ctx.label, o.purpose)
+      const half = BUCKET_SHARE[bucket] * (o.purpose === 'lesson' && priority !== 'background' ? 3 : 1)
+      const ukey = userKey(s, learner, bucket)
+      const userCap = !ukey ? {} : s.provider === 'groq'
+        ? { user: ukey, userTpm: POOL.userTpm() * half, userTpd: POOL.userTpd() * half }
+        : { user: ukey, userTpm: POOL.userTpm() * half }
       const ok = await store.take({ slot: s.id, tokens: est, limits: s.limits, day, dayCap: dayCapFor(priority, s), ...userCap })
       if (!ok) {
         tried.add(s.id)
@@ -557,7 +611,7 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
       try {
         const r = await attempt(s, { timeoutMs, trimmed: rung.trimmed })
         const used = r.usage ? r.usage.input + r.usage.output - (s.provider === 'groq' ? r.usage.cached ?? 0 : 0) : est
-        void store.adjust(s.id, used - est, day, learner ? (s.provider === 'groq' ? `g:${learner}` : learner) : null)
+        void store.adjust(s.id, used - est, day, userKey(s, learner, budgetBucket(priority, ctx.label, o.purpose)))
         bump(s.id, x => { x.m_tok += used - est; x.d_tok += used - est; x.consecutive_fail = 0; x.breaker_until = null })
         void store.report(s.id, 'ok', { latencyMs: now() - t0, input: r.usage?.input, output: r.usage?.output, cached: r.usage?.cached })
         if (r.usage?.cached) void store.count('saved_cached_tokens', r.usage.cached)
@@ -573,7 +627,7 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
         // The request never ran (or failed): give the estimate back.
         // The provider did not serve it (quota, bad key, missing model): give the request and tokens back.
         const unserved = cl.kind === 'quota' || cl.kind === 'missing' || cl.kind === 'overload'
-        const pending: Promise<unknown>[] = [store.adjust(s.id, -est, day, learner ? (s.provider === 'groq' ? `g:${learner}` : learner) : null, unserved ? -1 : 0)]
+        const pending: Promise<unknown>[] = [store.adjust(s.id, -est, day, userKey(s, learner, budgetBucket(priority, ctx.label, o.purpose)), unserved ? -1 : 0)]
         bump(s.id, x => { x.m_tok = Math.max(0, x.m_tok - est); x.d_tok = Math.max(0, x.d_tok - est); if (unserved) { x.m_req = Math.max(0, x.m_req - 1); x.d_req = Math.max(0, x.d_req - 1) } })
         // An invalid / revoked key fails every model on it: cool the whole key down at once.
         const sameKey = cl.keyWide ? slotsOfKey(s) : cl.modelWide ? inventory().filter(x => x.model === s.model && x.provider === s.provider) : [s]
