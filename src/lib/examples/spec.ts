@@ -147,3 +147,19 @@ export function fmtNum(v: number, sig = 3): string {
   for (let k = 1; k <= 4; k++) { const t = Number(v.toFixed(k)); if (Math.abs(t - v) < 1e-9 * Math.max(1, a)) return String(t) }
   return s
 }
+
+/**
+ * A chemical equation in a claim is set upright ("2H_2 + O_2 \rightarrow 2H_2O" → \mathrm{…}); in maths italics the
+ * element symbols read as variables. Anything that is not a pure formula = formula line is left as it is.
+ */
+export function chemTex(claim: string): string {
+  const t = claim.trim()
+  if (!t || /\\mathrm|\\text|\\ce/.test(t)) return claim
+  const arrow = /\\(?:long)?rightarrow|\\rightleftharpoons|\\to\b|->|⟶|→/
+  if (!arrow.test(t)) return claim
+  const sides = t.split(new RegExp(arrow.source, 'g'))
+  if (sides.length < 2) return claim
+  const term = /^\d*(?:\\?[([]|\\?[)\]](?:_\{?\d+\}?|\d+)?|[A-Z][a-z]?(?:_\{?\d+\}?|\d+)?|\^\{?\d*[+-]\}?|\\cdot|\s)+(?:\((?:s|l|g|aq)\))?$/
+  const ok = sides.every(side => side.split(/\s\+\s|\s*\+\s*(?=\d*[A-Z(])/).every(x => term.test(x.replace(/[{}]/g, m => m).trim())))
+  return ok ? `\\mathrm{${t}}` : claim
+}

@@ -241,16 +241,61 @@ export function makeVariants(spec: ExampleSpec, n = 3, seed = 11, nice?: boolean
 
 /** Statement with numbers (and units) filled in. */
 const UNIT_WORDS: Record<string, RegExp> = { '°': /^[\s‑-]*(°|deg|degree)/i, 'Ω': /^[\s‑-]*(Ω|ohm|kΩ)/i, 'V': /^[\s‑-]*(V\b|volt)/i, 'A': /^[\s‑-]*(A\b|amp|mA)/i }
+/** True when the text right after a placeholder already says the given's unit ("{{v}} m/s", "{{n}} seeds"). */
+function unitSaidAfter(rest: string, u: string): boolean {
+  if (!u) return true
+  const r = rest.trimStart()
+  if (r.startsWith(u) || (UNIT_WORDS[u]?.test(rest) ?? false) || /^\s*(m\/s|m|s|kg|N|g|J|W|cm|mol|%)\b/.test(rest)) return true
+  // a word unit ("seeds", "plants") said in singular or plural
+  const w = u.toLowerCase().replace(/s$/, '')
+  return /^[a-z]{3,}$/i.test(u) && r.toLowerCase().replace(/^[\s‑-]+/, '').startsWith(w)
+}
+const STOP = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'its', 'are', 'was', 'per', 'into', 'onto', 'number', 'value', 'amount'])
+const stem = (w: string) => w.toLowerCase().replace(/(ies)$/, 'y').replace(/(es|s)$/, '')
+const contentWords = (t: string) => (t.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? []).filter(w => !STOP.has(w)).map(stem)
+
+/**
+ * Every {{given}} substitution in learner-facing text goes through here, so a given's name, value and unit are said
+ * once (any subject). `named` (a prediction question) writes a given as "label (value unit)" unless the words around
+ * it already say the label ("the total number of seeds {{N}}" → "the total number of seeds (400 seeds)", never
+ * "seeds total seeds (400 seeds)") or the unit follows ("{{N}} seeds" → "400 seeds"). Inside $…$ only the number.
+ */
+export function givenText(spec: ExampleSpec, text: string, scope: Record<string, number>, o: { named?: boolean } = {}): string {
+  return text.replace(/\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g, (m, k: string, off: number, all: string) => {
+    const g = spec.givens.find(x => x.name === k)
+    // not a given: the statement never shows it (it could be the answer); a prediction keeps the old plain number
+    if (!g) return o.named && k in scope && Number.isFinite(scope[k]) ? fmtNum(scope[k]) : m
+    const v = fmtNum(Number.isFinite(scope[k]) ? scope[k] : g.value)
+    const u = g.unit ?? ''
+    const before = all.slice(0, off)
+    const rest = all.slice(off + m.length)
+    if (((before.match(/(?<!\\)\$/g) ?? []).length % 2) === 1) return v
+    const nearList = contentWords(before.slice(-70)).slice(-8)
+    const last2 = new Set(nearList.slice(-2))
+    // a word unit the sentence just said ("the number of seeds {{N}}") is not said again
+    const wordUnitJustSaid = /^[a-z]{3,}$/i.test(u) && last2.has(stem(u))
+    const said = unitSaidAfter(rest, u) || wordUnitJustSaid
+    const withUnit = v + (said || !u ? '' : u === '°' ? '°' : ` ${u}`)
+    if (!o.named || (unitSaidAfter(rest, u) && u)) return withUnit
+    const label = g.label && !/^(resistor|battery)/i.test(g.label) ? g.label.trim() : k
+    const lw = contentWords(label)
+    const near = new Set(nearList)
+    const after = new Set(contentWords(rest.slice(0, 50)).slice(0, 4))
+    const unitW = new Set(contentWords(u))
+    const tailSays = before.trimEnd().toLowerCase().endsWith(label.toLowerCase())
+    // the words before already name it: just the value in brackets
+    // ... or the word just before is part of the label ("the mass {{m}}" with label "mass of the block")
+    const bracket = (x: string) => `(${x}${!said || !u || u === '°' ? '' : ` ${u}`})`
+    if (tailSays || (lw.length && lw.every(w => near.has(w) || unitW.has(w)) && lw.some(w => near.has(w))) || lw.some(w => last2.has(w))) return bracket(withUnit)
+    // the words after name it ("{{N}} total seeds") or the label is only the unit ("seeds"): just the value
+    if (lw.length && lw.every(w => after.has(w) || unitW.has(w))) return withUnit
+    return `${label} (${withUnit})`
+  })
+}
+
 /** Statement with the givens (only) filled in, each followed by its unit when the text does not already say it. */
 export function statementText(spec: ExampleSpec, scope: Record<string, number>) {
-  const units = new Map(spec.givens.map(g => [g.name, g.unit ?? '']))
-  return spec.statement.replace(/\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g, (m, k: string, off: number, all: string) => {
-    if (!units.has(k) || !(k in scope)) return m
-    const u = units.get(k)!
-    const rest = all.slice(off + m.length)
-    const said = !u || rest.trimStart().startsWith(u) || (UNIT_WORDS[u]?.test(rest) ?? false) || /^\s*(m\/s|m|s|kg|N|g|J|W|cm|mol|%)/.test(rest)
-    return fmtNum(scope[k]) + (said ? '' : u === '°' ? '°' : ` ${u}`)
-  })
+  return givenText(spec, spec.statement, scope)
 }
 
 /** Full verification for the generator: shape → text hygiene → evaluation → plugin checks → variants exist. */

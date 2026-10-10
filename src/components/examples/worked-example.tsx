@@ -13,8 +13,8 @@ import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
 import { genie } from '@/components/genie/presence'
 import type { ExampleSpec } from '@/lib/examples/spec'
-import { fill, fmtNum } from '@/lib/examples/spec'
-import { answerOptions, evaluateSpec, statementText, texForms, varyRange } from '@/lib/examples/engine'
+import { chemTex, fill, fmtNum } from '@/lib/examples/spec'
+import { answerOptions, evaluateSpec, givenText, statementText, texForms, varyRange } from '@/lib/examples/engine'
 import { pluginFor } from '@/lib/examples/registry'
 
 const frame = 'overflow-hidden rounded-[14px] border border-line bg-surface shadow-[var(--shadow-card)]'
@@ -103,7 +103,7 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
                     <span className={cx('mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[12px] font-semibold', active ? 'bg-accent text-white' : 'bg-sunken text-ink-2')}>{i + 1}</span>
                     <div className="min-w-0 flex-1">
                       {st.title && <p className="text-[14px] font-medium text-ink">{st.title}</p>}
-                      {st.claim && <div className="mt-1 overflow-x-auto text-[15px] text-ink"><RichText text={`$${st.claim}$`} display /></div>}
+                      {st.claim && <div className="mt-1 overflow-x-auto text-[15px] text-ink"><RichText text={`$${chemTex(st.claim)}$`} display /></div>}
                       {forms && v !== null && (
                         <div className="overflow-x-auto text-[15px] text-ink"><RichText text={`$= ${forms.substituted} = \\mathbf{${fmtNum(v)}}${st.calc?.unit ? `\\,\\mathrm{${texUnit(st.calc.unit)}}` : ''}$`} display /></div>
                       )}
@@ -168,9 +168,9 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
   )
 }
 
-/** In a prediction question a {{given}} reads as its name and value ("R2 (3 Ω)"), never a bare number. */
+/** In a prediction question a {{given}} reads as its name and value once (engine.givenText). */
 function namedFill(spec: ExampleSpec, text: string, scope: Record<string, number>) {
-  return text.replace(/\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g, (m, k: string) => { const g = spec.givens.find(x => x.name === k); return g ? `${g.label && !/^(resistor|battery)/i.test(g.label) ? g.label : k} (${fmtNum(scope[k] ?? g.value)}${g.unit ? ` ${g.unit}` : ''})` : fill(m, scope) })
+  return givenText(spec, text, scope, { named: true })
 }
 function safeForms(expr: string, scope: Record<string, number>) { try { return texForms(expr, scope) } catch { return null } }
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
