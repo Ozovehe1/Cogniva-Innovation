@@ -284,7 +284,7 @@ export function IntakeFlow({
 
           {(phase === 'ready' || phase === 'building' || phase === 'finishing') && (
             <motion.section key="building" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-1 flex-col pt-6">
-              <TutorLine>{phase === 'finishing' ? 'Picking where you start and writing your first lesson.' : fresh ? 'Laying out the ideas from the very first one up to your goal.' : 'Mapping the skills between where you are and your goal.'}</TutorLine>
+              <TutorLine>{phase === 'finishing' ? 'Writing your first lesson.' : fresh ? 'Laying out your path.' : 'Mapping your path.'}</TutorLine>
               <Title>{phase === 'finishing' ? 'Your path is taking shape' : 'Your map is taking shape'}</Title>
               <MapSkeleton reduce={!!reduce} />
               {/* The real stages of the build (each tied to a server step), not a timer or a percentage. */}
@@ -294,7 +294,7 @@ export function IntakeFlow({
                     { label: fresh ? 'Laying out the ideas up to your goal' : 'Mapping the skills to your goal', state: phase === 'finishing' ? 'done' : 'now' },
                     { label: fresh ? 'Choosing your first idea and writing its lesson' : 'Picking where you start and writing your first lesson', state: phase === 'finishing' ? 'now' : 'next' },
                   ]} />
-                  <p className="mt-3 text-[13px] leading-relaxed text-muted">Usually well under a minute. It moves on by itself.</p>
+                  <p className="mt-3 text-[13px] text-muted">Under a minute.</p>
                 </div>
               )}
               {error && (
@@ -375,17 +375,17 @@ function GoalScreen({ firstName, answers, busy, isNewGoal, onSubmit }: { firstNa
   const submit = () => { if (ok && !busy) onSubmit({ goal: { v: text.trim().slice(0, 600) } }) }
   return (
     <>
-      <TutorLine>{isNewGoal ? 'Something new? Great. Tell me what, and I’ll map a path for it.' : <>Hi {firstName}, I’m your tutor. Four quick steps, then we start learning. You can skip anything after this one.</>}</TutorLine>
-      <Title sub="In your own words. A few words is plenty.">What do you want to learn?</Title>
+      <TutorLine>{isNewGoal ? 'Something new? Great.' : <>Hi {firstName}! Four quick steps, then we learn.</>}</TutorLine>
+      <Title sub="A few words is plenty.">What do you want to learn?</Title>
       <textarea ref={ref} value={text} maxLength={600} rows={2} autoFocus aria-label="What you want to learn"
         placeholder="e.g. Solve quadratic equations without getting stuck" onChange={e => setText(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
         className="mt-6 block w-full resize-none rounded-[14px] border border-line bg-surface px-4 py-3.5 font-display text-[20px] leading-snug text-ink shadow-[var(--shadow-card)] placeholder:text-faint focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/10" />
-      <p className="mt-5 text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Or start from one of these</p>
+      <p className="mt-5 text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Or pick one</p>
       <div className="mt-2.5 flex flex-wrap gap-2">
         {STARTERS.map(s => <Chip key={s} on={text === s} onClick={() => { setText(s); ref.current?.focus() }} className="px-3.5 text-[14px]">{s}</Chip>)}
       </div>
-      <ActionBar note={<span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" strokeWidth={2} />Private to you. About a minute to set up.</span>}>
+      <ActionBar note={<span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" strokeWidth={2} />Private to you.</span>}>
         <button type="button" disabled={!ok || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}><Pending busy={busy} label="Saving">Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
       </ActionBar>
     </>
@@ -402,7 +402,7 @@ function AboutScreen({ answers, busy, onSubmit }: { answers: Answers; busy: bool
   const options = stage ? LEVELS.filter(l => STAGES.find(s => s.id === stage)!.match(l.value)) : []
   return (
     <>
-      <TutorLine>{goal ? <>“{firstWords(goal)}”. Good choice. Two taps so I pitch it at the right level.</> : 'Two taps so I pitch things at the right level.'}</TutorLine>
+      <TutorLine>{goal ? <>“{firstWords(goal)}”. Good choice. Two taps to set your level.</> : 'Two taps to set your level.'}</TutorLine>
       <Title>A little about you</Title>
       <fieldset className="mt-7">
         <legend className="text-[13px] font-medium text-ink-2">Your age</legend>
@@ -414,7 +414,7 @@ function AboutScreen({ answers, busy, onSubmit }: { answers: Answers; busy: bool
         </div>
       </fieldset>
       <fieldset className="mt-7">
-        <legend className="text-[13px] font-medium text-ink-2">Your class or year <span className="font-normal text-muted">(or the last one you finished)</span></legend>
+        <legend className="text-[13px] font-medium text-ink-2">Your class or year <span className="font-normal text-muted">(or last finished)</span></legend>
         <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {STAGES.map(s => (
             <button key={s.id} type="button" aria-pressed={stage === s.id} onClick={() => { setStage(s.id); if (level && !s.match(level)) setLevel(null) }}
@@ -431,7 +431,7 @@ function AboutScreen({ answers, busy, onSubmit }: { answers: Answers; busy: bool
           )}
         </AnimatePresence>
       </fieldset>
-      <ActionBar note="Only used to pitch your lessons. Never shown to anyone.">
+      <ActionBar note="Never shown to anyone.">
         <button type="button" disabled={!age || !level || busy} onClick={() => onSubmit({ age: { v: age }, level: { v: level } })} className={buttonClass('primary', 'lg', 'w-full')}><Pending busy={busy} label="Saving">Continue<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
       </ActionBar>
     </>
@@ -447,10 +447,10 @@ function ConsentScreen({ busy, onSubmit }: { busy: boolean; onSubmit: (email: st
   return (
     <>
       <TutorLine>Because you’re under 18, I need a parent or guardian’s okay before I save your answers.</TutorLine>
-      <Title sub="Nigeria’s Data Protection Act (2023, s.31) asks for this. Please show this screen to them.">A grown-up’s okay</Title>
+      <Title sub="Required by Nigeria’s Data Protection Act (2023, s.31). Show them this screen.">A grown-up’s okay</Title>
       <div className="mt-6 rounded-[14px] border border-line bg-surface p-5 shadow-[var(--shadow-card)]">
         <ul className="space-y-2.5 text-[15px] leading-relaxed text-ink-2">
-          {['We use the answers only to choose and pace lessons.', 'Check-ins about mood are private and deleted after two weeks.', 'Answers are never shown to other people.'].map(t => (
+          {['Answers are used only to pace lessons.', 'Mood check-ins are deleted after two weeks.', 'Answers are never shown to anyone.'].map(t => (
             <li key={t} className="flex gap-2.5"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2.25} />{t}</li>
           ))}
         </ul>
@@ -487,7 +487,7 @@ function GoalPickScreen({ answers, sugg, busy, onRetry, onSubmit }: { answers: A
   }
   return (
     <>
-      <TutorLine>{data?.reflection || 'Let’s make the goal specific, so the path ends exactly where you want.'}</TutorLine>
+      <TutorLine>{data?.reflection || 'Let’s make it specific.'}</TutorLine>
       <Title>Which is closest?</Title>
       <div className="mt-5 grid gap-2" role="radiogroup" aria-label="Goal">
         {loading && [0, 1, 2].map(i => (
@@ -521,7 +521,7 @@ function GoalPickScreen({ answers, sugg, busy, onRetry, onSubmit }: { answers: A
               className={cx('min-h-12 rounded-[12px] border px-2 text-[14px] leading-tight transition-colors', fam === v ? 'border-accent bg-accent-soft font-medium text-accent ring-1 ring-accent' : 'border-line bg-surface text-ink-2 hover:border-line-strong')}>{l}</button>
           ))}
         </div>
-        {fam === 'never' && <p className="mt-2 text-[13px] text-muted">Then there’s no check: we start from the very first idea.</p>}
+        {fam === 'never' && <p className="mt-2 text-[13px] text-muted">No check, then. We start from the first idea.</p>}
       </fieldset>
       <ActionBar>
         <button type="button" disabled={!pick || busy} onClick={submit} className={buttonClass('primary', 'lg', 'w-full')}><Pending busy={busy} label="Starting your map">Build my path<ArrowRight className="h-4 w-4" strokeWidth={2} /></Pending></button>
@@ -547,7 +547,7 @@ function PurposeScreen({ answers, guess, mapState, fresh, busy, onSubmit }: {
         {ready ? <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2.5} /> : <InkMark className="text-accent" width={16} />}
         {ready ? (fresh ? 'Your path is ready' : 'Your check is ready') : fresh ? 'Laying out your path' : 'Mapping the skills to your goal'}
       </div>
-      <Title sub="Optional, but it shapes the examples and the pace.">While I map it out: what’s it for?</Title>
+      <Title sub="Optional. It shapes your examples.">While I map it: what’s it for?</Title>
       <div className="mt-5 flex flex-wrap gap-2" role="radiogroup" aria-label="What it’s for">
         {PURPOSES.map(p => (
           <Chip key={p.value} role="radio" aria-checked={purpose === p.value} on={purpose === p.value} onClick={() => setPurpose(x => (x === p.value ? null : p.value))} title={p.hint}>
@@ -609,7 +609,7 @@ function DiagQuestion({ view, busy, error, reduce, onAnswer, onSkipRest }: { vie
   return (
     <motion.section initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? { opacity: 0 } : { opacity: 0, x: -24 }} transition={{ duration: reduce ? 0.01 : 0.26, ease }} className="flex flex-1 flex-col">
       {first ? (
-        <TutorLine className="mt-1">A quick check so we start in the right place. Not a test: no score, no timer, and “I don’t know” helps me too.</TutorLine>
+        <TutorLine className="mt-1">A quick check to find your start. No score, no timer. “I don’t know” helps too.</TutorLine>
       ) : (
         <div className="mt-1 flex h-8 items-center justify-between text-[13px] text-muted">
           <span className="min-w-0 truncate pr-3"><RichText text={it.topic} /></span>
@@ -661,9 +661,9 @@ function ResultScreen({ diag, firstLessonId, finishing, signals, reduce, onRetak
   const items: { t: string; s: 'known' | 'start' | 'next' }[] = [...known.map(t => ({ t, s: 'known' as const })), ...next.slice(0, 3).map((t, i) => ({ t, s: i === 0 ? 'start' as const : 'next' as const }))]
   const headline = diag.fresh && !known.length ? 'A fresh start, from the first idea.'
     : known.length ? `You already know ${known.length} ${known.length === 1 ? 'skill' : 'skills'} on the way.` : 'We’ll build it from the foundations.'
-  const encouragement = signals?.underconfident ? 'You got more right than you expected, including some you weren’t sure about. You know more than you think.'
-    : diag.fresh && !known.length ? 'You said this is new to you, so there was no check. One idea at a time, each one building on the last.'
-    : 'This is a starting point, not a label. It updates as you learn.'
+  const encouragement = signals?.underconfident ? 'You know more than you think.'
+    : diag.fresh && !known.length ? 'One idea at a time.'
+    : 'A starting point, not a label.'
   return (
     <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} className="flex flex-1 flex-col">
       <p className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[0.08em] text-accent"><Sparkles className="h-3.5 w-3.5" strokeWidth={2} />Your map is ready</p>

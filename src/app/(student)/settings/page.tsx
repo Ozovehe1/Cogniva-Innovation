@@ -28,14 +28,14 @@ export default async function SettingsPage() {
 
   return (
     <div className="max-w-3xl">
-      <PageHeader eyebrow="Settings" title="Your account" description="Manage your goals, sign out, or delete your account." />
+      <PageHeader eyebrow="Settings" title="Your account" />
 
       <section className="mb-10">
         <SectionTitle action={paths.length ? <span className="tnum text-[13px] text-muted">{paths.length} {paths.length === 1 ? 'goal' : 'goals'}</span> : undefined}>Your goals</SectionTitle>
         {!paths.length ? (
           <EmptyState icon={<Target className="h-5 w-5" strokeWidth={1.75} />} title="No goals yet"
             action={<Link href="/learn" className={buttonClass('primary', 'md')}>Go to Learn<ArrowRight className="h-4 w-4" strokeWidth={2} /></Link>}>
-            Add a goal with “Learn something new” on the Learn page.
+            Add one from Learn.
           </EmptyState>
         ) : (
           <ul className="space-y-4">
@@ -75,8 +75,7 @@ export default async function SettingsPage() {
             })}
           </ul>
         )}
-        {paths.length > 0 && <p className="mt-3 text-[13px] text-muted">To add a goal, use <Link href="/learn" className="font-medium text-accent hover:underline underline-offset-4">Learn something new</Link> on the Learn page.</p>}
-      </section>
+              </section>
 
       <section className="mb-10">
         <SectionTitle>Account</SectionTitle>
@@ -96,7 +95,7 @@ export default async function SettingsPage() {
       <section className="mb-10">
         <SectionTitle action={chatCount ? <span className="tnum text-[13px] text-muted">{chatCount} {chatCount === 1 ? 'chat' : 'chats'}</span> : undefined}>Your chats</SectionTitle>
         <Card>
-          <p className="text-[15px] leading-relaxed text-ink-2">Your chats with GeniusMap are saved until you delete them, and only you can see them. Delete one from <Link href="/ask" className="font-medium text-accent hover:underline underline-offset-4">Chats in Ask</Link>, or all of them here.</p>
+          <p className="text-[15px] leading-relaxed text-ink-2">Private to you. Delete one in <Link href="/ask" className="font-medium text-accent hover:underline underline-offset-4">Ask</Link>, or all here.</p>
           {chatCount ? <div className="mt-4"><ChatsDeleteAll count={chatCount} /></div> : <p className="mt-3 text-[14px] text-muted">No saved chats.</p>}
         </Card>
       </section>
@@ -104,7 +103,7 @@ export default async function SettingsPage() {
       <section>
         <SectionTitle>Delete account</SectionTitle>
         <div className="rounded-[14px] border border-danger-line bg-surface p-5">
-          <p className="text-[15px] leading-relaxed text-ink-2">Permanently delete your account and everything in it: goals, lessons, progress, checks and animations. This can’t be undone.</p>
+          <p className="text-[15px] leading-relaxed text-ink-2">Deletes everything: goals, lessons and progress. This can’t be undone.</p>
           <div className="mt-4"><AccountDelete email={email || profile.full_name} /></div>
         </div>
       </section>

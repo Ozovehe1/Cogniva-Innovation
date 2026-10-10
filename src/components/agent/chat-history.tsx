@@ -88,14 +88,14 @@ export function ChatHistory({ initial }: { initial: ChatListItem[] }) {
                 <Link href="/ask" onClick={() => { setOpen(false); window.dispatchEvent(new Event(NEW_CHAT_EVENT)) }} className={buttonClass('primary', 'md', 'w-full justify-center')}><Plus className="h-4 w-4" strokeWidth={2} />New chat</Link>
               </div>
               <ul className="flex-1 overflow-y-auto overscroll-contain px-2 pb-[calc(16px+env(safe-area-inset-bottom))]" aria-busy={loading}>
-                {chats.length === 0 && !loading && <li className="px-3 py-8 text-center text-[14px] text-muted">No chats yet. Ask a question and it is saved here until you delete it.</li>}
+                {chats.length === 0 && !loading && <li className="px-3 py-8 text-center text-[14px] text-muted">No chats yet.</li>}
                 {chats.length === 0 && loading && <li className="px-3 py-8 text-center text-[14px] text-muted">Loading your chats…</li>}
                 {chats.map(c => (
                   <ChatRow key={c.id} chat={c} now={now} active={c.id === current} menuOpen={menu === c.id}
                     onMenu={v => setMenu(v ? c.id : null)} onOpen={() => setOpen(false)} onDelete={() => { setMenu(null); setConfirm(c) }} />
                 ))}
               </ul>
-              <p className="border-t border-line px-4 py-2.5 text-[12px] leading-snug text-muted">Chats stay until you delete them. Only you can see them.</p>
+              <p className="border-t border-line px-4 py-2.5 text-[12px] leading-snug text-muted">Private to you.</p>
             </motion.aside>
           </div>
         )}

@@ -29,12 +29,11 @@ export default async function LearnPage() {
         eyebrow="Learn"
         title="Lessons"
         actions={completed ? <Link href="/start?new=1" className={buttonClass('secondary', 'md')}><Plus className="h-4 w-4" strokeWidth={2} />Learn something new</Link> : undefined}
-        description="Lessons written for you by your AI tutor, at your level and pace, taught on a live whiteboard with a natural voice. Each topic ends with a short mastery check that unlocks the next."
       />
       {!view?.path || view.path.status !== 'ready' ? (
-        <EmptyState icon={<BookOpen className="h-5 w-5" strokeWidth={1.75} />} title={completed ? 'No goals right now' : 'Your lessons start with a short conversation'}
+        <EmptyState icon={<BookOpen className="h-5 w-5" strokeWidth={1.75} />} title={completed ? 'No goals right now' : 'Tell your tutor what to learn'}
           action={<Link href={completed && !view?.diagnosing ? '/start?new=1' : '/start'} className={buttonClass('primary', 'md')}>{completed ? (view?.diagnosing ? 'Continue the check' : 'Learn something new') : 'Get started'}</Link>}>
-          {completed ? 'Tell your AI tutor what you want to learn next and it will build you a new path.' : 'Tell your AI tutor what you want to learn, then take a short adaptive check. Your first lesson is written from that.'}
+          {completed ? 'It builds a new path for you.' : 'A short check, then your first lesson.'}
         </EmptyState>
       ) : (
         <div className="space-y-10">
@@ -93,7 +92,7 @@ export default async function LearnPage() {
           <div className="mb-3">
             <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">Not on a goal · {stray.length}</p>
             <h2 className="mt-1 font-display text-[22px] leading-snug text-ink">Other lessons</h2>
-            <p className="mt-1 text-sm leading-relaxed text-muted">Lessons your tutor wrote that aren’t part of a goal now, such as a first lesson drafted during a check you didn’t finish.</p>
+            <p className="mt-1 text-sm text-muted">Not part of a goal right now.</p>
           </div>
           <ul className="space-y-3">
             {stray.map(l => (

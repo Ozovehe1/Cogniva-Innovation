@@ -186,14 +186,14 @@ export default async function Dashboard() {
             <SectionTitle>What you know now</SectionTitle>
             <Card>
               {knownNow.length ? <ul className="space-y-2 text-[15px] text-ink">{knownNow.map(k => <li key={k} className="flex gap-2"><Check className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={title(k)} /></li>)}</ul>
-                : <p className="text-[15px] leading-relaxed text-muted">Nothing ticked off yet. Each topic you master lands here.</p>}
+                : <p className="text-[15px] leading-relaxed text-muted">Topics you master land here.</p>}
             </Card>
           </section>
           <section>
             <SectionTitle>What’s next</SectionTitle>
             <Card>
               {upNext.length ? <ul className="space-y-2 text-[15px] text-ink">{upNext.map(k => <li key={k} className="flex gap-2"><ArrowRight className="mt-1 h-4 w-4 flex-shrink-0 text-accent" strokeWidth={2} /><RichText text={k} /></li>)}</ul>
-                : <p className="text-[15px] text-muted">Everything open is mastered. Add a new goal when you’re ready.</p>}
+                : <p className="text-[15px] text-muted">All mastered. Ready for a new goal?</p>}
             </Card>
           </section>
         </aside>

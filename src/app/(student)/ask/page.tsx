@@ -4,7 +4,6 @@ import { getSessionProfile } from '@/lib/auth'
 import { AgentChat, type ChatMessage } from '@/components/agent/chat'
 import { ChatHistory } from '@/components/agent/chat-history'
 import { listChats } from '@/lib/agent/chat-store'
-import { Eyebrow } from '@/components/ui'
 import type { Block } from '@/lib/agent/types'
 
 export const dynamic = 'force-dynamic'
@@ -31,11 +30,8 @@ export default async function AskPage({ searchParams }: { searchParams: Promise<
   const prompt = !sessionId && typeof q === 'string' && q.trim() ? q.trim().slice(0, 300) : null
   return (
     <div className="mx-auto max-w-[820px]">
-      <div className="mb-2 flex items-end justify-between gap-3">
-        <div>
-          <Eyebrow>Ask GeniusMap</Eyebrow>
-          <h1 className="mt-1 font-display text-[28px] leading-tight text-ink md:text-[34px]">Your tutor, any time</h1>
-        </div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h1 className="font-display text-[28px] leading-tight text-ink md:text-[34px]">Ask</h1>
         <div className="flex flex-shrink-0 items-center gap-3">
           <ChatHistory initial={sessions} />
         </div>
