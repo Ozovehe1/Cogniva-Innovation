@@ -13,7 +13,8 @@ import { chat } from './llm'
 import { CHAT_SYSTEM, chatOffer, stripMoveLine } from './run'
 import { ensureIds, type BoardDoc } from './board-scene'
 import { tutorState, cellOf, lessonBoardAt, type LearnerFacts, type LastEvent, type TutorStateInput } from './tutor-state'
-import { inferMove, moveLineFilter, normMove, parseMoveLine, pointAtOps, type Move } from './moves'
+import { compileDo, inferMove, moveLineFilter, normMove, parseMoveLine, pointAtOps, sayDoStream, stripDoLines, type Move } from './moves'
+import { sceneOf } from './board-scene'
 import type { Step } from '../lesson-schema'
 import type { CaseResult } from './eval'
 
@@ -143,6 +144,21 @@ export function staticMoveCases(): CaseResult[] {
   add('offer-move-first', o1[0] === 'teaching_move' && o1.includes('interactive') && !o1.includes('point_at'), o1.join(','))
   add('offer-board-verbs', o2.includes('point_at') && o2.includes('board_edit') && o2.includes('board_inspect'), o2.join(','))
   add('offer-restricted-no-write', !o3.some(n => ['make_practice_set', 'set_today_plan', 'web_search', 'write_memory'].includes(n)), o3.join(','))
+  // Phase 2 start: say/do lines stream; DO lines compile to board ops on what is on screen, never reach the learner.
+  let said = ''
+  const dos: string[] = []
+  let mv2 = ''
+  const sd = sayDoStream(d => { said += d }, m => { mv2 = m.move }, l => dos.push(l))
+  for (const ch of ['MOVE: point_at — the sign\nLook at ', 'this line.\nDO: {"point":"m2",', '"how":"circle"}\nDividing keeps the minus.\nDo you see', ' it?']) sd.push(ch)
+  sd.end()
+  add('say-do-stream', mv2 === 'point_at' && dos.length === 1 && said === 'Look at this line.\nDividing keeps the minus.\nDo you see it?', JSON.stringify({ mv2, dos, said }))
+  const scn = sceneOf(BOARD_LINEAR)
+  const c1 = compileDo('DO: {"point":"m2","how":"underline"}', scn)
+  const c2 = compileDo('DO: {"write":"keep the sign","near":"m2"}', scn)
+  const c3 = compileDo('DO: {"math":"x = -5","at":"E3"}', scn)
+  const c4 = compileDo('DO: {"point":"ghost"}', scn)
+  add('do-compile', c1?.ops[0].op === 'annotate' && c2?.ops[0].op === 'add' && typeof c2.ops[0].x === 'number' && c3?.ops[0].tex === 'x = -5' && c4 === null, JSON.stringify([c1?.label, c2?.label, c3?.label, c4]))
+  add('do-stripped', stripDoLines('a\nDO: {"point":"m2"}\nb') === 'a\nb')
   add('infer-move', inferMove(['board_edit']) === 'modify_existing' && inferMove(['find_illustration']) === 'show_new_visual' && inferMove([], 'Can you try the first step?') === 'ask_learner' && inferMove([], 'Right.') === 'explain')
   return out
 }

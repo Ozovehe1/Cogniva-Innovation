@@ -530,7 +530,8 @@ const VISUAL: ToolSpec[] = [
       if (!r.steps.length && JSON.stringify(r.groups) === JSON.stringify(doc.groups)) return { error: `Nothing could be applied: ${r.errors.slice(0, 6).join('; ')}. Call board_inspect for the real ids and fix the ops.` }
       const from = doc.steps.length
       const next: BoardDoc = { ...doc, steps: [...doc.steps, ...(r.steps as Step[])], groups: r.groups }
-      const out = await commitBoard(ctx, next, from, s(a.title, 60) || boardTitle(doc))
+      // Inline DO lines and point_at (small marks drawn while the tutor talks) skip the vision review so they land at once.
+      const out = await commitBoard(ctx, next, from, s(a.title, 60) || boardTitle(doc), a.quick === true ? { vision: false } : {})
       return { ...out, applied: r.steps.length, skipped: r.errors.length ? r.errors.slice(0, 6) : undefined }
     },
   },

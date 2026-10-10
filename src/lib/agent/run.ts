@@ -12,7 +12,8 @@ import { readVisual, visualText } from '@/lib/visual-policy'
 import { chat, AllModelsBusyError, type Msg, type ToolDef } from './llm'
 import { selectTools, toolsFor, type AgentCtx, type ToolSpec } from './tools'
 import { chatFigureFor } from '@/lib/lesson-stages'
-import { POINT_AT_TOOL, TEACHING_MOVE_TOOL, inferMove, moveLine, moveLineFilter, normMove, parseMoveLine, pointAtOps, type MoveDecision } from './moves'
+import { POINT_AT_TOOL, TEACHING_MOVE_TOOL, compileDo, inferMove, moveLine, normMove, parseMoveLine, pointAtOps, sayDoStream, stripDoLines, type MoveDecision } from './moves'
+import { sceneOf } from './board-scene'
 
 export const MAX_STEPS = 6
 export const MAX_WRITES = 3
@@ -44,6 +45,11 @@ How good tutors judge (examples, not rules):
 - "Is that right?" or "thanks": explain or wait. No visual.
 Visualise when a picture or motion teaches better than words: structure (organs, cells, devices, circuits), processes in stages, fields and flows, motion under forces, functions and rates, exact geometry. Prefer acting on what is already on screen over making something new. At most one new visual a turn unless a clip is coming (then one thing to look at now). After a wrong answer, make the exact discrepancy visible. As mastery grows, give less scaffolding.
 
+Acting while you talk: when BOARD IN VIEW lists elements, you can act on them inline instead of a tool call: put one action on its own line, right before the sentence about it, and it is drawn as your words arrive (the learner never sees the line):
+DO: {"point":"m2","how":"circle","note":"sign!"}   (how: circle, underline, arrow, tick, cross, highlight)
+DO: {"write":"÷2 keeps the minus","near":"m2"}   or   DO: {"math":"x = -5","at":"E3"}   (a cell from BOARD IN VIEW, ideally a free one)
+DO: {"rewrite":"m3","tex":"x = -5"}   DO: {"erase":["k1"]}
+Only ids that BOARD IN VIEW lists; at most a few per answer. Use point_at or board_edit as tools for anything bigger.
 Tools you act with: find_illustration (a real, credited textbook picture of an object or organism; then point at its parts in words), interactive (a live figure: sliders, points that follow them, a function with a gliding point, a vector field {dx, dy}), simulate (an object moving under forces, with sliders), animate_concept (a narrated clip of a process or motion, 1-3 minutes away: pair it with something on screen now, and only when they asked for an animation or the motion IS the idea), plot (a static graph), math_diagram (exact sets, geometry, trees, vectors), draw_on_board (a new board scene: working, derivations, quick sketches; it replaces what is on the board), board_edit / point_at / board_clear_region (change the board in place by id), run_python (heavy numerics, data).
 When they ask for an animation, a clip or a video, call animate_concept; only if it errors (e.g. the daily limit) show it another way and say the clip is not available right now. When they name a visual (the board, a diagram, a graph, something to drag), make that.
 Narration and text follow the visual (refer to what it shows, in its order), and your words still make sense if it does not load.
@@ -124,7 +130,33 @@ export async function runAgent(input: {
   let move: MoveDecision | null = null
   const setMove = (m: MoveDecision) => { if (!move) { move = m; ctx.trace.push(moveLine(m)) } }
   const chatMode = ctx.mode === 'chat'
-  const filter = chatMode && input.onText ? moveLineFilter(input.onText, setMove) : null
+  // Phase 2 start: DO lines in the tutor's words act on the board as they arrive (compiled to board_edit ops),
+  // one after another, while the text keeps streaming.
+  let doChain: Promise<unknown> = Promise.resolve()
+  let doCount = 0
+  const onDo = (line: string) => {
+    if (!ctx.hasBoard || !ctx.board || doCount >= 6) { ctx.trace.push(`do dropped: ${line.slice(0, 80)}`); return }
+    doCount++
+    doChain = doChain.then(async () => {
+      const c = compileDo(line, sceneOf(ctx.board!))
+      if (!c) { ctx.trace.push(`do invalid: ${line.slice(0, 80)}`); return }
+      const spec = byName.get('board_edit')
+      if (!spec) return
+      const t = Date.now()
+      input.onTool?.('board_edit', 'Pointing at the board', 'start')
+      try {
+        const r = await withTimeout(spec.run({ title: '', ops: c.ops, quick: true }, ctx), budget(20_000)) as Record<string, unknown> | null
+        const bad = !r || 'error' in r
+        input.onTool?.('board_edit', 'Pointing at the board', bad ? 'error' : 'done')
+        ctx.trace.push(`do ${c.label}: ${bad ? `error ${String(r?.error ?? '').slice(0, 80)}` : 'ok'} ${Date.now() - t} ms`)
+        if (!bad) used.push('do')
+      } catch (err) {
+        input.onTool?.('board_edit', 'Pointing at the board', 'error')
+        ctx.trace.push(`do ${c.label}: error ${err instanceof Error ? err.message.slice(0, 80) : err}`)
+      }
+    })
+  }
+  const filter = chatMode && input.onText ? sayDoStream(input.onText, setMove, onDo) : null
   const emitText = (d: string) => (filter ? filter.push(d) : input.onText?.(d))
   const vt = visualText(lastUser, ctx.visualTopic)
   const richShown = () => (ctx.blocks ?? []).some(b => RICH_NOW.has(b.kind) || (b.kind === 'clip' && (b as { status?: string }).status === 'done') || (b.kind === 'board' && (b as { steps?: { type?: string; shape?: { kind?: string } }[] }).steps?.some(st => st.type === 'draw' && st.shape?.kind === 'figure')))
@@ -164,13 +196,14 @@ export async function runAgent(input: {
   let clipNoted = false
   const finish = async (steps: number): Promise<RunResult> => {
     filter?.end()
+    await doChain
     // The visual the tutor chose could not be made: show the reader's fallback rather than nothing (tool failure only).
     if (chatMode && visualFailed && !shownAny()) {
       ctx.trace.push('visual failed: fallback')
       const say = await fallbackVisual()
       if (say) { const d = `${text && !/\s$/.test(text) ? '\n\n' : ''}${say}`; text += d; input.onText?.(d) }
     }
-    if (chatMode && !move) setMove({ move: inferMove(used.filter(n => !LOCAL_TOOLS.has(n) || n === 'point_at'), text), reason: 'not declared; read from what it did', via: 'inferred' })
+    if (chatMode && !move) setMove({ move: inferMove(used.map(n => (n === 'do' ? 'point_at' : n)).filter(n => !LOCAL_TOOLS.has(n) || n === 'point_at'), text), reason: 'not declared; read from what it did', via: 'inferred' })
     return { text, model, steps, toolCalls: used, move }
   }
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -200,7 +233,7 @@ export async function runAgent(input: {
     model = res.model
     const stripped = chatMode ? stripMoveLine(res.text) : { text: res.text, move: null }
     if (stripped.move) setMove(stripped.move)
-    text += stripped.text
+    text += chatMode ? stripDoLines(stripped.text) : stripped.text
     if (!res.toolCalls.length) return finish(step + 1)
     const calls = res.toolCalls.slice(0, MAX_CALLS_PER_STEP)
     messages.push({ role: 'assistant', content: res.text, toolCalls: calls })
@@ -222,7 +255,7 @@ export async function runAgent(input: {
       else {
         // The student id is never taken from arguments, whatever the model sends.
         const raw = Object.fromEntries(Object.entries(call.args).filter(([k]) => !/^(student_?id|user_?id|profile_?id)$/i.test(k)))
-        const args = isPoint ? { title: '', ops: pointAtOps(raw) } : raw
+        const args = isPoint ? { title: '', ops: pointAtOps(raw), quick: true } : raw
         input.onTool?.(call.name, isPoint ? 'Pointing at the board' : spec.label, 'start')
         try {
           if (spec.tier === 'write' || spec.tier === 'confirm') ctx.writes++

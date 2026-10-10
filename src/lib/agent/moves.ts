@@ -126,3 +126,114 @@ export function inferMove(tools: string[], text = ''): Move {
 export function moveLine(d: MoveDecision): string {
   return `move: ${d.move}${d.target ? ` @${d.target}` : ''} (${d.via}) — ${d.reason.slice(0, 160)}`
 }
+
+/* ───────────── Phase 2 start: say/do lines streamed inline ───────────── */
+
+/**
+ * While the tutor talks it may act on the board inline, one action per line, without a tool round trip:
+ *   DO: {"point":"m2","how":"circle","note":"sign!"}
+ *   DO: {"write":"÷2 keeps the minus","near":"m2"}   DO: {"math":"x = -5","at":"E3"}
+ *   DO: {"rewrite":"m3","tex":"x = -5"}             DO: {"erase":["k1"]}
+ * Each line is compiled to board_edit ops the moment it arrives (anchors are grid cells or element ids, never raw
+ * coordinates) and drawn while the words keep streaming. Lines never reach the learner.
+ */
+export const DO_LINE = /^\s*DO\s*:\s*(\{.*\})\s*$/i
+
+export interface AnchorScene { width: number; height: number; elements: { id: string; bbox: [number, number, number, number] }[] }
+
+function cellXY(cell: string, w: number, h: number): [number, number] | null {
+  const m = /^([A-F])([1-6])$/i.exec(cell.trim())
+  if (!m) return null
+  const c = 'ABCDEF'.indexOf(m[1].toUpperCase())
+  const r = Number(m[2]) - 1
+  return [Math.round((c / 6) * w + 8), Math.round((r / 6) * h + 12)]
+}
+
+/** Compile one DO line to board_edit ops (null: not a DO line or nothing usable). */
+export function compileDo(line: string, scene: AnchorScene): { ops: Record<string, unknown>[]; label: string } | null {
+  const m = DO_LINE.exec(line)
+  if (!m) return null
+  let a: Record<string, unknown>
+  try { a = JSON.parse(m[1]) as Record<string, unknown> } catch { return null }
+  const ids = new Set(scene.elements.map(e => e.id))
+  const say = typeof a.say === 'string' ? a.say.slice(0, 200) : undefined
+  if (typeof a.point === 'string' || typeof a.target === 'string') {
+    const target = String(a.point ?? a.target)
+    if (!ids.has(target)) return null
+    return { ops: pointAtOps({ target, how: a.how ?? 'circle', note: a.note, say, also: Array.isArray(a.also) ? a.also.filter(x => ids.has(String(x))) : undefined }), label: `point ${target}` }
+  }
+  if (typeof a.rewrite === 'string' && ids.has(a.rewrite) && (typeof a.tex === 'string' || typeof a.text === 'string')) {
+    return { ops: [{ op: 'transform', id: a.rewrite, ...(typeof a.tex === 'string' ? { tex: a.tex.slice(0, 300) } : { text: String(a.text).slice(0, 200) }), ...(say ? { say } : {}) }], label: `rewrite ${a.rewrite}` }
+  }
+  if (Array.isArray(a.erase)) {
+    const e = a.erase.map(String).filter(x => ids.has(x))
+    return e.length ? { ops: [{ op: 'erase', ids: e }], label: `erase ${e.join(',')}` } : null
+  }
+  const body = typeof a.write === 'string' ? { text: a.write.slice(0, 120) } : typeof a.math === 'string' ? { tex: a.math.slice(0, 200) } : null
+  if (!body) return null
+  let xy: [number, number] | null = null
+  if (typeof a.near === 'string') {
+    const el = scene.elements.find(x => x.id === a.near)
+    if (el) {
+      const [x, y, w, h] = el.bbox
+      // To the right of it when there is room, else just below.
+      xy = x + w + 24 + 160 < scene.width ? [x + w + 24, y + Math.max(0, h / 2 - 14)] : [x, Math.min(scene.height - 40, y + h + 14)]
+    }
+  }
+  if (!xy && typeof a.at === 'string') xy = cellXY(a.at, scene.width, scene.height)
+  if (!xy) return null
+  return { ops: [{ op: 'add', ...body, x: Math.round(xy[0]), y: Math.round(xy[1]), color: typeof a.color === 'string' ? a.color : 'clay', size: 'sm', ...(say ? { say } : {}) }], label: `${body.text ? 'write' : 'math'} ${typeof a.near === 'string' ? `near ${a.near}` : `at ${a.at}`}` }
+}
+
+/** Remove DO lines from a finished text. */
+export function stripDoLines(t: string): string {
+  return t.split('\n').filter(l => !DO_LINE.test(l)).join('\n').replace(/\n{3,}/g, '\n\n')
+}
+
+/**
+ * The learner-facing stream: MOVE line at the start of a step and DO lines anywhere are taken out and handed over;
+ * everything else streams as it arrives. Text is held only while a line could still turn out to be one of them.
+ */
+export function sayDoStream(out: (d: string) => void, onMove: (m: MoveDecision) => void, onDo: (line: string) => void) {
+  let buf = ''
+  let atLineStart = true
+  let firstLine = true
+  const looksLikeAction = (s: string) => {
+    const u = s.trimStart().toUpperCase()
+    if (!u) return true
+    if ('DO:'.startsWith(u) || /^DO\s*:/.test(u)) return true
+    return firstLine && (/^\[?\s*MOVE/.test(u) || 'MOVE'.startsWith(u) || '[MOVE'.startsWith(u))
+  }
+  const handleLine = (line: string, nl: boolean) => {
+    if (DO_LINE.test(line)) { onDo(line); return }
+    if (firstLine) { const m = parseMoveLine(line); if (m) { onMove(m); return } }
+    out(line + (nl ? '\n' : ''))
+  }
+  return {
+    push(d: string) {
+      let s = d
+      while (s.length) {
+        if (!atLineStart) {
+          const nl = s.indexOf('\n')
+          if (nl < 0) { out(s); return }
+          out(s.slice(0, nl + 1)); s = s.slice(nl + 1); atLineStart = true; firstLine = false
+          continue
+        }
+        buf += s; s = ''
+        const nl = buf.indexOf('\n')
+        if (nl >= 0) {
+          const line = buf.slice(0, nl); const rest = buf.slice(nl + 1)
+          buf = ''
+          handleLine(line, true)
+          firstLine = firstLine && !line.trim() ? firstLine : false
+          s = rest
+          continue
+        }
+        if (!looksLikeAction(buf) || buf.length > 600) { out(buf); buf = ''; atLineStart = false; firstLine = false }
+      }
+    },
+    /** A new model step: its first line may be a MOVE line again. */
+    step() { if (buf) { handleLine(buf, false); buf = '' } atLineStart = true; firstLine = true },
+    end() { if (buf) { handleLine(buf, false); buf = '' } },
+  }
+}
