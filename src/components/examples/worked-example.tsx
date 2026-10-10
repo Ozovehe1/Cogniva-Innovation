@@ -13,7 +13,7 @@ import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
 import { genie } from '@/components/genie/presence'
 import type { ExampleSpec } from '@/lib/examples/spec'
-import { chemTex, chemText, fill, fmtNum, varNotation } from '@/lib/examples/spec'
+import { chemTex, chemText, fill, fmtNum, texSubs, varNotation } from '@/lib/examples/spec'
 import { answerOptions, evaluateSpec, givenText, statementText, texForms, varyRange } from '@/lib/examples/engine'
 import { pluginFor } from '@/lib/examples/registry'
 
@@ -103,7 +103,7 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
                     <span className={cx('mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[12px] font-semibold', active ? 'bg-accent text-white' : 'bg-sunken text-ink-2')}>{i + 1}</span>
                     <div className="min-w-0 flex-1">
                       {st.title && <p className="text-[14px] font-medium text-ink">{st.title}</p>}
-                      {st.claim && <div className="mt-1 overflow-x-auto text-[15px] text-ink"><RichText text={`$${chemTex(st.claim)}$`} display /></div>}
+                      {st.claim && <div className="mt-1 overflow-x-auto text-[15px] text-ink"><RichText text={`$${(() => { const t = chemTex(st.claim); return t === st.claim ? texSubs(t, spec.diagram?.type === 'reaction') : t })()}$`} display /></div>}
                       {forms && v !== null && (
                         <div className="overflow-x-auto text-[15px] text-ink"><RichText text={`$= ${forms.substituted} = \\mathbf{${fmtNum(v)}}${st.calc?.unit ? `\\,\\mathrm{${texUnit(st.calc.unit)}}` : ''}$`} display /></div>
                       )}

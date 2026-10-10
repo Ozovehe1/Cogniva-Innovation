@@ -189,3 +189,19 @@ export function varNotation(s: string, chem = false): string {
     return `$${a}_{\\mathrm{${sub}}}$`
   }).replace(/(?<![\w$\\])([a-z]{4,})_([a-z]{2,})(?![\w])/g, '$1 $2'))).join('')
 }
+
+/**
+ * Model-written TeX with unbraced multi-character subscripts ("n_H2O", "coef_CH4") would typeset as n_H then "2O";
+ * those subscripts get braces and upright type (n_{\mathrm{H_2O}}), a word-length base goes upright (\mathrm{coef}).
+ * Already-braced subscripts and commands are left alone.
+ */
+export function texSubs(tex: string, chem = false): string {
+  if (/\\mathrm|\\text/.test(tex)) return tex
+  return tex.replace(/(?<![\\A-Za-z])([A-Za-z]{1,6})_([A-Za-z0-9]{2,12})(?![A-Za-z0-9])/g, (m: string, a: string, b: string) => {
+    if (/^\d+$/.test(b)) return `${a.length > 1 ? `\\mathrm{${a}}` : a}_{${b}}`
+    let s = b
+    if (chem && /\d/.test(s) && /^[a-z0-9]+$/.test(s)) s = s.toUpperCase()
+    const sub = /\d/.test(s) && /[A-Z]/.test(s) ? s.replace(/([A-Za-z)])(\d+)/g, '$1_{$2}') : s
+    return `${a.length > 1 ? `\\mathrm{${a}}` : a}_{\\mathrm{${sub}}}`
+  })
+}
