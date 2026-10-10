@@ -247,8 +247,11 @@ function unitSaidAfter(rest: string, u: string): boolean {
   const r = rest.trimStart()
   if (r.startsWith(u) || (UNIT_WORDS[u]?.test(rest) ?? false) || /^\s*(m\/s|m|s|kg|N|g|J|W|cm|mol|%)\b/.test(rest)) return true
   // a word unit ("seeds", "plants") said in singular or plural
-  const w = u.toLowerCase().replace(/s$/, '')
-  return /^[a-z]{3,}$/i.test(u) && r.toLowerCase().replace(/^[\s‑-]+/, '').startsWith(w)
+  // a word unit ("seeds", "plants") said in singular or plural within the next three words ("{{N}} total seeds")
+  if (!/^[a-z]{3,}$/i.test(u)) return false
+  const w = stem(u)
+  const clause = r.toLowerCase().split(/[.,;:!?()]/)[0]
+  return (clause.match(/[a-z]+/g) ?? []).slice(0, 3).some(x => stem(x) === w)
 }
 const STOP = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'its', 'are', 'was', 'per', 'into', 'onto', 'number', 'value', 'amount'])
 const stem = (w: string) => w.toLowerCase().replace(/(ies)$/, 'y').replace(/(es|s)$/, '')
