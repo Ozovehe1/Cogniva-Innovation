@@ -10,6 +10,7 @@
  * optional beats are written only when the lesson is behind schedule, and extra
  * practice beats are added before the closing beat until the target is reached.
  */
+import { exampleBeatSteps, exampleDomain } from './examples/lesson'
 import { generateStructuredJson } from './gemini'
 import { LAYOUT_RULES, SHOW_DONT_TELL, TUTOR_VOICE, WORDS_PER_MINUTE, generateSteps, type GenMeta, type LessonLite } from './lesson-ai'
 import { beatVisualLine, readVisual } from './visual-policy'
@@ -233,6 +234,12 @@ function planList(plan: BeatPlan[], index: number) {
 /** Writes one beat with its own small call. Returns validated steps (may throw GeminiQuotaError). */
 export async function draftBeat(ctx: BeatContext): Promise<Step[]> {
   const beat = ctx.plan[ctx.index]
+  // Example / your-turn beats with a real solver behind them (circuits, projectiles, slopes, calculus, reactions,
+  // genetics) come from a verified worked example: exact diagram, numbers from code (src/lib/examples).
+  if ((beat.kind === 'example' || beat.kind === 'your_turn') && !ctx.opening && exampleDomain(`${ctx.lesson.title}. ${beat.title}. ${beat.points.join('; ')}`)) {
+    const ex = await exampleBeatSteps({ lessonTitle: ctx.lesson.title, beatTitle: beat.title, points: beat.points, kind: beat.kind, deadline: Math.min(ctx.deadline ?? Infinity, Date.now() + 45_000), trace: ctx.meta?.trace }).catch(() => null)
+    if (ex) return ex
+  }
   const { words, min, max } = beatBudget(beat.seconds, beat.kind)
   const { ids, axes, vars } = boardIdsAfter(ctx.board)
   const onBoard = ctx.board.length ? summarizeBoard(ctx.board, ids) : 'nothing (fresh board)'

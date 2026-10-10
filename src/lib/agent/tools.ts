@@ -45,6 +45,7 @@ import { searchMemory, writeMemory, type MemoryKind } from './memory'
 import { dueReviews } from './learner-model'
 import { asData } from './guard'
 import { findAction, idemKey, logAction, remediationTarget, todayWAT } from './actions'
+import { workedExampleTool } from '../examples/tool'
 
 /**
  * The learner-facing line under a clip: the brief's first sentence (its learning objective), never the internal shot list,
@@ -853,7 +854,7 @@ const VISUAL: ToolSpec[] = [
   },
 ]
 
-export const ALL_TOOLS: ToolSpec[] = [...READ, ...WRITE, ...DIRECTOR, ...VISUAL]
+export const ALL_TOOLS: ToolSpec[] = [...READ, ...WRITE, ...DIRECTOR, ...VISUAL, workedExampleTool]
 
 export function toolsFor(ctx: Pick<AgentCtx, 'mode' | 'restricted'>): ToolSpec[] {
   return ALL_TOOLS.filter(t => t.modes.includes(ctx.mode) && !(ctx.restricted && (t.tier === 'write' || t.tier === 'confirm' || t.def.name === 'web_search' || t.def.name === 'fetch_page')))
@@ -924,6 +925,9 @@ const CORE = ['compute', 'draw_on_board', 'search_my_learning', 'get_path_progre
 const VISUAL_DEFAULT = ['find_illustration', 'illustrate', 'animate_concept']
 // Free illustration library: textbook subjects route to find_illustration as well (offered alongside illustrate).
 ROUTES.push([/\b(diagram|label(l)?ed|illustrat|picture of|structure of|cells?|organ|anatomy|parts of|heart|lungs?|kidney|liver|brain|eye|ear|skeleton|skull|tooth|teeth|flower|leaf|root|stem|seed|insect|apparatus|microscope|circuit|atom|molecule|planet|solar system|moon|volcano|earthquake|lever|pulley|dna|chromosome|neuron|virus|bacteri\w*|photosynthe\w*|digestive|respirat\w*|water cycle|food (chain|web)|ecosystem)\b/i, ['find_illustration']])
+
+// Worked examples (src/lib/examples): a problem to solve, an example, or numbers to work out, in any subject.
+ROUTES.push([/\b(examples?|problems?|practi[cs]e|exercise|solve|work(ed)? (it )?out|calculate|find the|how (much|many|far|long|high|fast)|circuit|resistors?|projectile|thrown|incline|slope|punnett|cross|genotype|balanc\w*|stoichiometr\w*|moles?|grams? of|derivative|differentiat\w*|maxim\w*|minim\w*|optimi[sz]\w*)\b/i, ['worked_example']])
 
 /** The learner asked for an animation / clip / video (animate_concept, not a slider simulation). */
 export const ANIMATION_ASK = /\b(animat\w*|clip|video|movie)\b/i

@@ -15,7 +15,10 @@ export type Block =
   | { kind: 'clip'; id: string; jobId: string; status: 'rendering' | 'done' | 'failed'; url?: string | null; caption?: string }
   | { kind: 'image'; id: string; png: string; caption?: string }
   | { kind: 'code'; id: string; code: string; stdout: string; error?: string | null; engine: string }
-  | { kind: 'practice'; id: string; actionId: string; title: string; items: { q: string; options: string[]; figure?: import('../assessment/spec').PublicFigure }[] }
+  /** numeric: a typed answer (number + unit) instead of options. */
+  | { kind: 'practice'; id: string; actionId: string; title: string; items: { q: string; options: string[]; figure?: import('../assessment/spec').PublicFigure; numeric?: { unit?: string } }[] }
+  /** A verified worked example (src/lib/examples): the client re-solves it live; practice answers stay on the server. */
+  | { kind: 'worked_example'; id: string; spec: import('../examples/spec').ExampleSpec; practice?: { actionId: string; items: { q: string; svg?: string; unit?: string }[] } }
   | { kind: 'confirm'; id: string; actionId: string; title: string; detail: string; status: 'proposed' | 'done' | 'declined' | 'undone' }
   | { kind: 'sources'; id: string; items: { title: string; url: string; source: string }[] }
   | { kind: 'lesson'; id: string; lessonId: string; title: string; note: string }

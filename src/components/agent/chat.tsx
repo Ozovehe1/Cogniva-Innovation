@@ -23,7 +23,7 @@ export interface ChatMessage { role: 'user' | 'assistant'; content: string; bloc
 const REPORTABLE: Partial<Record<Block['kind'], { what: string; surface: 'ask' | 'diagram' | 'illustration' | 'animation' | 'stage' | 'practice' }>> = {
   board: { what: 'this whiteboard', surface: 'ask' }, svg: { what: 'this picture', surface: 'illustration' }, sim: { what: 'this simulation', surface: 'stage' },
   interactive: { what: 'this figure', surface: 'stage' }, clip: { what: 'this animation', surface: 'animation' }, image: { what: 'this figure', surface: 'diagram' },
-  code: { what: 'this calculation', surface: 'ask' }, practice: { what: 'these questions', surface: 'practice' },
+  code: { what: 'this calculation', surface: 'ask' }, practice: { what: 'these questions', surface: 'practice' }, worked_example: { what: 'this worked example', surface: 'diagram' },
 }
 const retryFor = (what: string, category?: string | null) => `The ${what.replace(/^(this|these) /, '')} you showed me earlier had a mistake${category ? ` (${category.replace('_', ' ')})` : ''}. Please redo it correctly and check the maths.`
 

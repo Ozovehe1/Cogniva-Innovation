@@ -20,6 +20,9 @@ import { PaperSketch, Pending, StageList, WhileYouWait, useElapsed } from '@/com
 
 // JSXGraph (~1 MB) loads only when an interactive figure is on screen.
 const InteractiveFigure = dynamic(() => import('./interactive'), { ssr: false, loading: () => <FigureSkeletonLite /> })
+// Worked examples carry the maths engine (mathjs) to re-solve live: loaded only when one is on screen.
+const WorkedExample = dynamic(() => import('../examples/worked-example'), { ssr: false, loading: () => <FigureSkeletonLite /> })
+const NumericAnswer = dynamic(() => import('../examples/worked-example').then(m => m.NumericAnswer), { ssr: false })
 /** Same shape as the figure that is coming (no spinner). */
 function FigureSkeletonLite() {
   return <div className="relative mt-3 aspect-[3/2] w-full overflow-hidden rounded-[10px] border border-line bg-[#FBFAF7]" aria-hidden="true"><div className="absolute inset-x-4 top-1/2 h-px bg-line-strong/70" /><div className="absolute inset-y-4 left-1/2 w-px bg-line-strong/70" /><div className="skeleton absolute inset-0 rounded-none opacity-60" /></div>
@@ -45,6 +48,7 @@ export function AgentBlock({ block }: { block: Block }) {
     case 'image': return <figure className={cx(frame, 'bg-white p-2')}>{/* eslint-disable-next-line @next/next/no-img-element */}<img src={`data:image/png;base64,${block.png}`} alt={block.caption ?? 'Figure from Python'} className="mx-auto h-auto max-w-full" />{block.caption && <figcaption className="px-2 pb-1 pt-2 text-[13px] text-muted">{block.caption}</figcaption>}</figure>
     case 'code': return <CodeBlock block={block} />
     case 'practice': return <PracticeBlock block={block} />
+    case 'worked_example': return <WorkedExample spec={block.spec} practice={block.practice} />
     case 'confirm': return <ConfirmBlock block={block} />
     case 'sources': return <SourcesBlock items={block.items} />
     case 'lesson': return (
@@ -432,7 +436,7 @@ function PracticeBlock({ block }: { block: Extract<Block, { kind: 'practice' }> 
             <li key={i}>
               <p className="text-[15px] leading-relaxed text-ink"><span className="tnum mr-1.5 text-faint">{i + 1}.</span><RichText text={it.q} /></p>
               <ItemFigure figure={it.figure} className="mt-2" />
-              <div className="mt-2 grid gap-1.5">
+              {it.numeric ? <NumericAnswer actionId={block.actionId} index={i} unit={it.numeric.unit} /> : <div className="mt-2 grid gap-1.5">
                 {it.options.map((o, k) => {
                   const picked = st?.picked.includes(k)
                   const right = st?.done && (st.answer === k || (st.correct && picked))
@@ -446,7 +450,7 @@ function PracticeBlock({ block }: { block: Extract<Block, { kind: 'practice' }> 
                     </button>
                   )
                 })}
-              </div>
+              </div>}
               {st && !st.done && st.hint && <p className="mt-2 rounded-[10px] border border-amber-line bg-amber-soft px-3 py-2 text-[13.5px] leading-relaxed text-ink"><span className="font-medium">Hint: </span><RichText text={st.hint} /> Try again.</p>}
               {st?.done && st.explain && <p className={cx('mt-2 text-[13.5px] leading-relaxed', st.correct ? 'text-accent' : 'text-ink-2')}>{st.correct ? 'Right. ' : 'Here’s the key step: '}<RichText text={st.explain} /></p>}
             </li>
