@@ -56,7 +56,8 @@ export function describeVisual(b: Block): { what: string; title: string; beats: 
     }
     case 'scene': {
       const title = lower1(clean(b.spec.title, 90))
-      const beats = (b.spec.beats ?? []).map(x => clean(x.caption || x.say, 110)).filter(Boolean).slice(0, 4)
+      // The caption is the pill's short form; a spoken line of sentence length (or the full line a long caption was cut from) reads better.
+      const beats = (b.spec.beats ?? []).map(x => clean(x.say && x.say.length <= 110 ? x.say : x.caption || x.say, 110)).filter(Boolean).slice(0, 4)
       const cs = (b.spec.controls ?? []).map(c => ctl((c as { label?: string }).label || c.param.replace(/_/g, ' '))).filter(Boolean).slice(0, 2)
       const hint = cs.length ? pick(title || 'scene', [`When it finishes, try the ${list(cs)} slider${cs.length > 1 ? 's' : ''} yourself — what do you expect to change?`, `Once it settles, slide the ${list(cs)} up and down and see what happens.`])
         : b.spec.drag ? 'When it finishes, it\'s your turn — drag it and see what changes.'

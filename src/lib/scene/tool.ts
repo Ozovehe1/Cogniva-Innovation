@@ -63,7 +63,15 @@ export const sceneTool: ToolSpec = {
     if (Array.isArray(raw.beats)) raw.beats = (raw.beats as Record<string, unknown>[]).map(b => {
       if (!b || typeof b !== 'object') return b
       const o = { ...b }
-      if (typeof o.caption === 'string' && o.caption.length > 44) { const c = o.caption.slice(0, 45); const k = c.lastIndexOf(' '); o.caption = (k > 20 ? c.slice(0, k) : c.slice(0, 44)).replace(/[\s,;:–-]+$/, '') }
+      if (typeof o.caption === 'string' && o.caption.length > 44) {
+        // The full line is kept as the beat's spoken line (narration reads it); the pill gets a cut at a word
+        // boundary that never ends on a dangling little word ("reverses the", "forces in opposite").
+        if (typeof o.say !== 'string' || !o.say.trim()) o.say = o.caption.slice(0, 400)
+        const c = o.caption.slice(0, 45); const k = c.lastIndexOf(' ')
+        let t = (k > 20 ? c.slice(0, k) : c.slice(0, 44)).replace(/[\s,;:–-]+$/, '')
+        for (let i = 0; i < 3 && /\s(the|a|an|in|of|to|and|or|with|for|on|at|by|from|into|its|their|opposite|each|every)$/i.test(t); i++) t = t.replace(/\s+\S+$/, '').replace(/[\s,;:–-]+$/, '')
+        o.caption = t
+      }
       const d = Number(o.dur)
       o.dur = Number.isFinite(d) ? Math.min(8, Math.max(0.3, d)) : 2.5
       return o
