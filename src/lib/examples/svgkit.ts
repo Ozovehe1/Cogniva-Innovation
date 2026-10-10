@@ -27,8 +27,21 @@ export function arrow(x1: number, y1: number, x2: number, y2: number, color = AC
   return `<line x1="${f1(x1)}" y1="${f1(y1)}" x2="${f1(hx)}" y2="${f1(hy)}" style="stroke:${color};stroke-width:${width}"/><path d="M${f1(x2)},${f1(y2)} L${f1(p1[0])},${f1(p1[1])} L${f1(p2[0])},${f1(p2[1])} z" fill="${color}"/>`
 }
 
+/** One-letter component subscripts (u_y, v_y, u_x, a_x) drawn as real subscripts: a lowered smaller tspan, then the
+ *  rest of the label back on the baseline. Other text is unchanged. */
+const SUB_RE = /\b([A-Za-z])_([a-z0-9])\b/g
+function subMarkup(e: string) {
+  const parts = e.split(SUB_RE)
+  if (parts.length === 1) return e
+  let out = parts[0]
+  for (let i = 1; i < parts.length; i += 3) {
+    out += `${parts[i]}<tspan dy="0.3em" font-size="0.72em">${parts[i + 1]}</tspan><tspan dy="-0.3em">${parts[i + 2] || '\u200B'}</tspan>`
+  }
+  return out
+}
+
 export function text(x: number, y: number, s: string, cls = 'lbl', extra = '') {
-  return `<text x="${f1(x)}" y="${f1(y)}" class="${cls}" ${extra}>${esc(s)}</text>`
+  return `<text x="${f1(x)}" y="${f1(y)}" class="${cls}" ${extra}>${subMarkup(esc(s))}</text>`
 }
 
 /** Unicode subscript for labels in SVG (R23 -> R₂₃, R_eq -> R_eq kept readable). */
@@ -45,7 +58,7 @@ const SIZE: Record<string, { fs: number; k: number }> = { lbl: { fs: 17, k: 0.6 
 /** Estimated box of a text label (baseline y, anchor start | middle | end). */
 export function textBox(x: number, y: number, s: string, cls = 'lbl', anchor: 'start' | 'middle' | 'end' = 'middle'): Box {
   const { fs, k } = SIZE[cls] ?? SIZE.lbl
-  const w = [...s].length * fs * k + 8
+  const w = [...s.replace(SUB_RE, '$1$2')].length * fs * k + 8
   const left = anchor === 'start' ? x - 2 : anchor === 'end' ? x - w + 2 : x - w / 2
   return { x: left, y: y - fs * 0.8 - 2, w, h: fs + 4 }
 }

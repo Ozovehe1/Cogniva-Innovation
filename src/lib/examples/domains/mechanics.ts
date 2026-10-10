@@ -102,7 +102,7 @@ export const projectilePlugin: Plugin = {
       // above the vertical arrow first (left of it is usually off the frame), then beside it
       L.label(s0, 'acc', ([{ x: x0 + 4, y: tipY - 12, anchor: 'start' }, { x: x0, y: tipY - 12, anchor: 'middle' }] as LabelCand[]).concat([0.55, 0.75, 0.35, 0.95].flatMap((f): LabelCand[] => [{ x: x0 - 8, y: y0 - L0 * Math.sin(r) * f + 5, anchor: 'end' }, { x: x0 + 8, y: y0 - L0 * Math.sin(r) * f + 5, anchor: 'start' }])))
     }
-    if (comps) L.label(ans ? `uₓ = ${fmtNum(p.ux)}` : 'uₓ', 'acc', [{ x: x0 + L0 * Math.cos(r) / 2 + 4, y: y0 + 20 }, { x: tipX + 8, y: y0 + 5, anchor: 'start' }, { x: x0 + L0 * Math.cos(r) / 2 + 4, y: y0 + 36 }, { x: tipX + 8, y: y0 + 22, anchor: 'start' }])
+    if (comps) L.label(ans ? `u_x = ${fmtNum(p.ux)}` : 'u_x', 'acc', [{ x: x0 + L0 * Math.cos(r) / 2 + 4, y: y0 + 20 }, { x: tipX + 8, y: y0 + 5, anchor: 'start' }, { x: x0 + L0 * Math.cos(r) / 2 + 4, y: y0 + 36 }, { x: tipX + 8, y: y0 + 22, anchor: 'start' }])
     if (p.h0 > 0) L.label(`${fmtNum(p.h0)} m`, 'lbl-s', [{ x: PAD + 2, y: Y(p.h0 / 2) + 5, anchor: 'start' }, { x: X(0) + 6, y: Y(p.h0 / 2) + 5, anchor: 'start' }, { x: PAD - 6, y: Y(p.h0) - 6, anchor: 'start' }])
     if (apex) {
       const { ax, ay } = apex
