@@ -5,6 +5,7 @@
  *   - manim_render.py  -> app "geniusmap-manim" (Manim clip renders)
  *   - tts.py           -> app "geniusmap-tts"   (Kokoro narration voice)
  *   - py_sandbox.py    -> app "geniusmap-py"    (agent run_python sandbox)
+ *   - tool_bench.py    -> app "geniusmap-toolbench" (heavy Linux tools: SymPy/Octave/ngspice/RDKit/FiPy/Manim/LaTeX/Blender...)
  *
  * Runs only when:
  *   - VERCEL_ENV === 'production'
@@ -40,6 +41,8 @@ const APPS = [
   { file: 'modal_app/tts.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-tts[a-z0-9-]*\.modal\.run/i, env: 'MODAL_TTS_URL' },
   // Python sandbox for the agent's run_python tool (no network, 1 CPU, 1 GiB, 20 s per run).
   { file: 'modal_app/py_sandbox.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-py[a-z0-9-]*\.modal\.run/i, env: 'MODAL_PY_URL' },
+  // Tool bench (CPU only, 3 images, <= 8 containers). Needs TOOLBENCH_TOKEN in the build env (-> Modal secret geniusmap-toolbench).
+  { file: 'modal_app/tool_bench.py', deps: ['modal_app/toolbench_tools.py'], urlRe: /https:\/\/[a-z0-9-]+--geniusmap-toolbench[a-z0-9-]*\.modal\.run/i, env: 'TOOLBENCH_URL', secret: 'TOOLBENCH_TOKEN' },
   // OmniSVG text-to-SVG trial (GPU, scale to zero; not used by the app). Endpoint is token-protected.
   { file: 'modal_app/omnisvg_eval.py', urlRe: /https:\/\/[a-z0-9-]+--geniusmap-omnisvg-eval[a-z0-9-]*\.modal\.run/i, env: 'MODAL_OMNISVG_URL' },
 ]
@@ -102,6 +105,13 @@ function main() {
 
   // Deploy. A first deploy builds the image on Modal and can take several minutes.
   for (const app of APPS.filter(a => c.files.includes(a.file))) {
+    if (app.secret === 'TOOLBENCH_TOKEN') {
+      const tb = (process.env.TOOLBENCH_TOKEN ?? '').trim()
+      if (!tb) { warn(`TOOLBENCH_TOKEN not set; skipping ${app.file}.`); continue }
+      const s2 = run(py, ['-m', 'modal', 'secret', 'create', 'geniusmap-toolbench', `TOOLBENCH_TOKEN=${tb}`, '--force'], { env, quiet: true, timeoutMs: 120_000 })
+      if (!s2.ok) { warn('modal secret create geniusmap-toolbench failed:\n' + s2.out.split(tb).join('***').slice(-1500)); continue }
+      log('secret geniusmap-toolbench updated (TOOLBENCH_TOKEN)')
+    }
     log(`modal deploy ${app.file}`)
     const dep = run(py, ['-m', 'modal', 'deploy', app.file], { env, timeoutMs: 25 * 60_000 })
     if (!dep.ok) { warn(`modal deploy ${app.file} failed${dep.error ? ` (${dep.error.message})` : ''}.`); continue }
