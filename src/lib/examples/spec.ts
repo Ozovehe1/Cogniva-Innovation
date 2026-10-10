@@ -179,10 +179,12 @@ export function chemText(s: string): string {
  * subscript, typeset upright ($M_{\mathrm{H_2O}}$); a long name reads as words ("mass_water" → "mass water").
  * Maths already inside $...$ is left alone.
  */
-export function varNotation(s: string): string {
+export function varNotation(s: string, chem = false): string {
   return s.split(/(\$\$[\s\S]*?\$\$|\$[^$]*\$)/g).map((seg, i) => (i % 2 ? seg : seg.replace(/(?<![\w$\\{])([A-Za-z]{1,3})_\{?([A-Za-z0-9()]{1,12})\}?(?![\w])/g, (m: string, a: string, b: string) => {
     if (/^[a-z]{4,}$/.test(b) && a.length > 2) return `${a} ${b}`
     if (/^([a-z]|\d+)$/.test(b)) return `$${a}_{${b}}$`
+    // In a reaction, a lower-case formula in a name is still a formula (n_h2o → n with subscript H₂O).
+    if (chem && /\d/.test(b) && /^[a-z0-9()]+$/.test(b)) b = b.toUpperCase()
     const sub = b.replace(/([A-Za-z)])(\d+)/g, '$1_{$2}')
     return `$${a}_{\\mathrm{${sub}}}$`
   }).replace(/(?<![\w$\\])([a-z]{4,})_([a-z]{2,})(?![\w])/g, '$1 $2'))).join('')
