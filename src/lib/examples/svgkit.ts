@@ -41,11 +41,11 @@ export function sub(id: string) {
 /* ───────── label placement with a collision check ───────── */
 
 type Box = { x: number; y: number; w: number; h: number }
-const SIZE: Record<string, { fs: number; k: number }> = { lbl: { fs: 17, k: 0.58 }, 'lbl-s': { fs: 14, k: 0.56 }, acc: { fs: 16, k: 0.62 } }
+const SIZE: Record<string, { fs: number; k: number }> = { lbl: { fs: 17, k: 0.6 }, 'lbl-s': { fs: 14, k: 0.58 }, acc: { fs: 16, k: 0.64 } }
 /** Estimated box of a text label (baseline y, anchor start | middle | end). */
 export function textBox(x: number, y: number, s: string, cls = 'lbl', anchor: 'start' | 'middle' | 'end' = 'middle'): Box {
   const { fs, k } = SIZE[cls] ?? SIZE.lbl
-  const w = [...s].length * fs * k + 4
+  const w = [...s].length * fs * k + 8
   const left = anchor === 'start' ? x - 2 : anchor === 'end' ? x - w + 2 : x - w / 2
   return { x: left, y: y - fs * 0.8 - 2, w, h: fs + 4 }
 }
@@ -100,11 +100,13 @@ export class LabelLayout {
     for (const c of cands) {
       const b = textBox(c.x, c.y, s, cls, c.anchor ?? 'middle')
       const raw = this.cost(b)
-      const cost = raw === 0 ? 0 : raw + Math.hypot(c.x - c0.x, c.y - c0.y) * 0.25
+      // nearer the preferred spot is better: brushing a soft mark (the dashed path) beats wandering far off
+      const cost = raw + Math.hypot(c.x - c0.x, c.y - c0.y) * 0.25
       if (!best || cost < best.cost) best = { c, b, cost }
-      if (raw === 0) break
+      if (cost === 0) break
     }
     if (!best) return
+    best.cost = this.cost(best.b)
     // nothing clear among the preferred spots: widen the search around the first one (closer is better)
     if (best.cost > 0 && cands.length) {
       const c0 = cands[0]
