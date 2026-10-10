@@ -173,3 +173,17 @@ export function chemText(s: string): string {
   const SUB = '₀₁₂₃₄₅₆₇₈₉'
   return s.replace(/(?<![\w$\\])((?:[A-Z][a-z]?\d*|\([A-Za-z0-9]+\)\d*){1,8})(?![\w])/g, (m: string) => (/[A-Za-z)]\d/.test(m) && /[A-Z]/.test(m) ? m.replace(/([A-Za-z)])(\d+)/g, (_, a: string, d: string) => a + [...d].map(c => SUB[Number(c)]).join('')) : m))
 }
+
+/**
+ * Variable names written into prose ("divide by M_H2O", "n_CH4 moles") become notation: a short symbol with a
+ * subscript, typeset upright ($M_{\mathrm{H_2O}}$); a long name reads as words ("mass_water" → "mass water").
+ * Maths already inside $...$ is left alone.
+ */
+export function varNotation(s: string): string {
+  return s.split(/(\$\$[\s\S]*?\$\$|\$[^$]*\$)/g).map((seg, i) => (i % 2 ? seg : seg.replace(/(?<![\w$\\{])([A-Za-z]{1,3})_\{?([A-Za-z0-9()]{1,12})\}?(?![\w])/g, (m: string, a: string, b: string) => {
+    if (/^[a-z]{4,}$/.test(b) && a.length > 2) return `${a} ${b}`
+    if (/^([a-z]|\d+)$/.test(b)) return `$${a}_{${b}}$`
+    const sub = b.replace(/([A-Za-z)])(\d+)/g, '$1_{$2}')
+    return `$${a}_{\\mathrm{${sub}}}$`
+  }).replace(/(?<![\w$\\])([a-z]{4,})_([a-z]{2,})(?![\w])/g, '$1 $2'))).join('')
+}

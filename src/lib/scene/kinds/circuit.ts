@@ -141,7 +141,7 @@ export const circuit: KindRuntime<S> = {
   },
   readouts: (s, P) => [
     { label: 'Voltage', value: `${num(P, 'voltage').toFixed(1)} V`, color: NL.text },
-    { label: 'Resistance', value: `${num(P, 'resistance').toFixed(1)} + ${RB} Ω`, color: NL.text },
+    { label: 'Total resistance', value: `${(num(P, 'resistance') + RB).toFixed(1)} Ω`, color: NL.text },
     { label: 'Current I = V/R', value: `${current(P).toFixed(2)} A`, color: NL.gold },
   ],
 }

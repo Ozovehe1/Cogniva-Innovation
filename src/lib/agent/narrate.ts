@@ -34,13 +34,13 @@ const lower1 = (s: string) => {
   if (!s) return s
   const ws = s.split(' ')
   const long = ws.filter(w => /^[A-Za-z]{4,}$/.test(w))
-  if (long.length >= 2 && long.filter(w => /^[A-Z][a-z]/.test(w)).length / long.length >= 0.6) return ws.map(w => (/^[A-Z][a-z]+$/.test(w) ? w.toLowerCase() : w)).join(' ')
+  if (long.length >= 2 && long.filter(w => /^[A-Z][a-z]/.test(w)).length / long.length >= 0.6) return ws.map(w => w.split('-').map(x => (/^[A-Z][a-z]+$/.test(x) ? x.toLowerCase() : x)).join('-')).join(' ')
   return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s
 }
 const list = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
 
-/** What a visual shows, from its own content: a title and up to 4 short beats in order. */
-export function describeVisual(b: Block): { what: string; beats: string[]; hint?: string } | null {
+/** What a visual shows, from its own content: a lower-case title, up to 4 short beats in order, and an invitation. */
+export function describeVisual(b: Block): { what: string; title: string; beats: string[]; hint?: string } | null {
   switch (b.kind) {
     case 'worked_example': {
       const s = b.spec
@@ -51,55 +51,110 @@ export function describeVisual(b: Block): { what: string; beats: string[]; hint?
         problem = statementText(s, ev.scope)
         for (const st of s.steps.slice(0, 4)) beats.push(clean(st.title || fill(st.reason, ev.scope), 90))
       } catch { problem = '' }
-      return { what: `a worked example on ${lower1(clean(s.topic, 80)) || 'this'}${problem ? `: ${clean(problem, 220)}` : ''}`, beats: beats.filter(Boolean), hint: 'Make your prediction first, then open the steps one at a time.' }
+      const title = lower1(clean(s.topic, 80))
+      return { what: `a worked example on ${title || 'this'}${problem ? `: ${clean(problem, 220)}` : ''}`, title, beats: beats.filter(Boolean), hint: pick(title || 'we', ['Before you open the steps, make a quick prediction — what do you expect the answer to be?', 'Make your prediction first, then open the steps one at a time and see if you were right.']) }
     }
     case 'scene': {
-      const beats = (b.spec.beats ?? []).map(x => clean(x.say || x.caption, 110)).filter(Boolean).slice(0, 4)
-      return { what: `a live scene of ${lower1(clean(b.spec.title, 90)) || 'the idea'}`, beats, hint: (b.spec.controls?.length ? `When it finishes, move the ${list(b.spec.controls.map(c => clean(c.label || c.param, 30)).slice(0, 2))} slider and watch what changes.` : b.spec.drag ? 'When it finishes, drag it yourself and watch what changes.' : undefined) }
+      const title = lower1(clean(b.spec.title, 90))
+      const beats = (b.spec.beats ?? []).map(x => clean(x.caption || x.say, 110)).filter(Boolean).slice(0, 4)
+      const cs = (b.spec.controls ?? []).map(c => ctl((c as { label?: string }).label || c.param.replace(/_/g, ' '))).filter(Boolean).slice(0, 2)
+      const hint = cs.length ? pick(title || 'scene', [`When it finishes, try the ${list(cs)} slider${cs.length > 1 ? 's' : ''} yourself — what do you expect to change?`, `Once it settles, slide the ${list(cs)} up and down and see what happens.`])
+        : b.spec.drag ? 'When it finishes, it\'s your turn — drag it and see what changes.'
+        : 'Which part would you like to see again?'
+      return { what: `a live scene of ${title || 'the idea'}`, title, beats, hint }
     }
     case 'interactive': {
-      const sl = (b.spec.sliders ?? []).map(x => clean((x as { label?: string; name?: string }).label || (x as { name?: string }).name, 24)).filter(Boolean).slice(0, 2)
-      return { what: `a live figure of ${lower1(clean(b.spec.title, 90)) || 'the idea'}`, beats: [clean(b.spec.explain || (b.spec.title ? '' : b.alt), 200)].filter(Boolean), hint: sl.length ? `Move the ${list(sl)} slider${sl.length > 1 ? 's' : ''} and watch how the figure changes.` : undefined }
+      const title = lower1(clean(b.spec.title, 90))
+      const sl = (b.spec.sliders ?? []).map(x => ctl((x as { label?: string; name?: string }).label || (x as { name?: string }).name || '')).filter(Boolean).slice(0, 2)
+      return { what: `a live figure of ${title || 'the idea'}`, title, beats: [clean(b.spec.explain || (b.spec.title ? '' : b.alt), 200)].filter(Boolean), hint: sl.length ? `Try moving the ${list(sl)} slider${sl.length > 1 ? 's' : ''} — what happens to the figure?` : undefined }
     }
     case 'sim': {
-      const ps = (b.spec.params ?? []).map(p => clean(p.label, 24)).filter(Boolean).slice(0, 2)
-      return { what: `a simulation of ${lower1(clean(b.spec.title, 90)) || 'the motion'}`, beats: [clean(b.spec.explain, 200)].filter(Boolean), hint: ps.length ? `Change the ${list(ps)} and press play to see the effect.` : undefined }
+      const title = lower1(clean(b.spec.title, 90))
+      const ps = (b.spec.params ?? []).map(p => ctl(p.label)).filter(Boolean).slice(0, 2)
+      return { what: `a simulation of ${title || 'the motion'}`, title, beats: [clean(b.spec.explain, 200)].filter(Boolean), hint: ps.length ? `Change the ${list(ps)}, press play, and see what happens.` : undefined }
     }
-    case 'svg': return { what: `a picture of ${lower1(clean(b.alt.replace(/^(a |an |the )?(picture|diagram|illustration|image) of /i, ''), 140)) || 'it'}`, beats: [], hint: 'Look at each labelled part as you read.' }
-    case 'image': return { what: b.caption ? `a picture: ${clean(b.caption, 160)}` : 'a picture of it', beats: [] }
-    case 'clip': return b.status === 'failed' ? null : { what: `${b.status === 'done' ? 'a short animation' : 'a short animation (it is still rendering and appears here in a minute or two)'}${b.caption ? ` of ${lower1(clean(b.caption, 120))}` : ''}`, beats: [] }
+    case 'svg': { const title = lower1(clean(b.alt.replace(/^(a |an |the )?(picture|diagram|illustration|image) of /i, ''), 140)); return { what: `a picture of ${title || 'it'}`, title, beats: [], hint: 'Go through each labelled part — which one would you like to talk about?' } }
+    case 'image': return { what: b.caption ? `a picture: ${clean(b.caption, 160)}` : 'a picture of it', title: lower1(clean(b.caption, 160)), beats: [] }
+    case 'clip': { const title = lower1(clean(b.caption, 120)); return b.status === 'failed' ? null : { what: `${b.status === 'done' ? 'a short animation' : 'a short animation (it is still rendering and appears here in a minute or two)'}${title ? ` of ${title}` : ''}`, title, beats: [] } }
     case 'board': {
       const says = (b.steps ?? []).map(st => clean((st as { say?: string }).say, 140)).filter(Boolean)
-      return { what: `the board${b.title ? ` showing ${lower1(clean(b.title, 90))}` : ''}`, beats: says.slice(0, 3) }
+      const title = lower1(clean(b.title, 90))
+      return { what: `the board${title ? ` showing ${title}` : ''}`, title, beats: says.slice(0, 3) }
     }
     default: return null
   }
 }
 
-/** The declared move reason, said to the learner ("they keep mixing up…" → "you keep mixing up…"). */
-function reasonLine(move?: MoveDecision | null): string {
-  const r = clean(move?.reason, 180)
-  if (!r || r.length < 12 || /not declared|read from what it did/i.test(r)) return ''
-  const you = r
-    .replace(/\b(the )?learner's\b|\btheir\b/gi, 'your').replace(/\b(the )?learner\b|\bthey\b/gi, 'you').replace(/\bthem\b/gi, 'you')
-    .replace(/\byou (is|was|has|wants|asks|needs|keeps|seems|confuses|thinks|doesn't|does)\b/gi, (_, v: string) => `you ${({ is: 'are', was: 'were', has: 'have', wants: 'want', asks: 'ask', needs: 'need', keeps: 'keep', seems: 'seem', confuses: 'confuse', thinks: 'think', "doesn't": "don't", does: 'do' } as Record<string, string>)[v.toLowerCase()] ?? v}`)
-  return sentence(`I chose this because ${lower1(you)}`)
+/* ───────── deterministic narration (no model) ───────── */
+
+const words = (s: string) => (s.match(/\S+/g) ?? []).length
+/** A stable pick from a few phrasings so the same visual always reads the same, and different visuals vary. */
+const pick = <T,>(seed: string, xs: T[]): T => { let h = 0; for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return xs[h % xs.length] }
+/** A caption fragment as a spoken clause: lower-case start, no end stop, "X: Y" → "X — Y", no leading "So/And". */
+const NO_THE = /^(a|an|the|this|that|these|those|it|its|they|their|we|you|your|each|every|no|one|two|three|more|less|most|all|some|both|now|then|here|there|when|if|as|so)$/i
+const clause = (s: string) => {
+  let c = lower1(clean(s, 120)).replace(/[.!?]+$/, '').replace(/^(so|and|then|now|next|finally)[,]?\s+/i, '').replace(/\s*:\s+/g, ' — ').trim()
+  // Caption shorthand drops articles ("commutator flips current"); spoken, it gets one back ("the commutator flips…").
+  const [w1, w2] = c.split(' ')
+  if (w1 && w2 && /^[a-z]+$/.test(w1) && !NO_THE.test(w1) && !/(ing|ly|ed)$/.test(w1) && (/^[a-z]+s$/.test(w2) && !/ss$/.test(w2) || w1 === 'same')) c = `the ${c}`
+  return c
+}
+/** Slider labels as plain words ("Cell voltage V" → "cell voltage", "Current I" → "current"). */
+const ctl = (s: string) => lower1(clean(s, 30)).replace(/\s+[A-Za-zθωλμ]$/, '').trim()
+
+/** Beats as 1-2 flowing sentences with plain connectors. */
+function flow(beats: string[]): string {
+  const b = beats.map(clause).filter(Boolean)
+  if (!b.length) return ''
+  if (b.length === 1) return sentence(b[0])
+  if (b.length === 2) return `${sentence(`First, ${b[0]}`)} ${sentence(`Then ${b[1]}`)}`
+  if (b.length === 3) return `${sentence(`First, ${b[0]}`)} ${sentence(`Then ${b[1]}, and finally ${b[2]}`)}`
+  return `${sentence(`First, ${b[0]}, then ${b[1]}`)} ${sentence(`Next, ${b[2]}, and finally ${b[3]}`)}`
 }
 
-/** Plain narration from the visuals' own content (no model). Always at least two sentences. */
-export function narrationFromVisual(blocks: Block[], move?: MoveDecision | null): string {
-  const ds = blocks.filter(isVisual).map(describeVisual).filter((d): d is NonNullable<ReturnType<typeof describeVisual>> => !!d).slice(0, 2)
-  if (!ds.length) return ''
-  const parts: string[] = []
-  parts.push(sentence(`Here is ${ds[0].what}`))
-  if (ds[0].beats.length) parts.push(ds[0].beats.length === 1 ? sentence(ds[0].beats[0]) : sentence(`It goes in order: ${list(ds[0].beats.map(lower1).map(x => x.replace(/[.!?]+$/, '')))}`))
-  if (ds[1]) parts.push(sentence(`Below it is ${ds[1].what}`))
-  const why = reasonLine(move)
-  if (why) parts.push(why)
-  parts.push(ds[0].hint ?? 'Look at it step by step, and ask me about any part that is not clear.')
-  if (parts.length < 2) parts.push('Ask me about any part that is not clear.')
-  return parts.filter(Boolean).join(' ').slice(0, 900)
+/** How a visual is introduced, spoken ("Watch how an electric motor keeps turning."). */
+function opener(b: Block, d: NonNullable<ReturnType<typeof describeVisual>>): string {
+  const t = d.title
+  const howish = /^(how|why|what|where|when|which)\b/.test(t)
+  switch (b.kind) {
+    case 'scene': return howish ? sentence(`Watch ${t}`) : sentence(pick(t, [`Let's watch ${t || 'this'} play out`, `Watch this live scene of ${t || 'the idea'}`]))
+    case 'worked_example': return sentence(`Let's work through one together${t ? ` on ${t}` : ''}`)
+    case 'interactive': return howish ? sentence(`This live figure shows ${t}`) : sentence(`Here's a live figure of ${t || 'the idea'} to play with`)
+    case 'sim': return sentence(`This simulation shows ${t || 'the motion'}`)
+    case 'svg': return sentence(`Take a look at this picture of ${t || 'it'}`)
+    case 'image': return sentence(t ? `Take a look at this picture — ${t}` : 'Take a look at this picture')
+    case 'clip': return sentence(`${b.status === 'done' ? 'Here\'s a short animation' : 'A short animation is on its way (it takes a minute or two)'}${t ? ` of ${t}` : ''}`)
+    case 'board': return sentence(`Follow along on the board${t ? ` as we look at ${t}` : ''}`)
+    default: return ''
+  }
 }
+
+/**
+ * Plain narration from the visuals' own content (no model): an opener, the visual's beats as 1-2 flowing sentences,
+ * and one invitation to interact or a check question. About 40-70 words. Never states why the tutor chose it.
+ * `_move` is accepted for older callers and ignored on purpose (a declared reason reads as internal reasoning).
+ */
+export function narrationFromVisual(blocks: Block[], _move?: MoveDecision | null): string {
+  void _move
+  const vs = blocks.filter(isVisual).map(b => ({ b, d: describeVisual(b) })).filter((x): x is { b: Block; d: NonNullable<ReturnType<typeof describeVisual>> } => !!x.d).slice(0, 2)
+  if (!vs.length) return ''
+  const [{ b, d }] = vs
+  const open = opener(b, d)
+  const close = d.hint ?? pick(d.title || b.kind, ['Have a look, then tell me which part you would like to go over.', 'Take your time with it, and ask me about any part that feels unclear.'])
+  const second = vs[1] ? sentence(`Just below, there's ${vs[1].d.what}`) : ''
+  let beats = d.beats.slice(0, 4)
+  const body = () => (b.kind === 'worked_example' && beats.length > 1 ? sentence(`We'll go step by step: ${list(beats.map(clause))}`) : flow(beats))
+  const build = () => [open, body(), second, close].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+  let out = build()
+  // Keep it short: drop middle beats, then the second-visual line, until it is about 70 words.
+  while (words(out) > 70 && beats.length > 2) { beats = [beats[0], ...beats.slice(2)]; out = build() }
+  if (words(out) > 70 && second) out = [open, body(), close].filter(Boolean).join(' ')
+  while (words(out) > 75 && beats.length > 1) { beats = beats.slice(0, -1); out = [open, body(), close].filter(Boolean).join(' ') }
+  return out.slice(0, 600)
+}
+
+/** A model narration that leaks internal reasoning or reads like a system message. */
+export const stiffNarration = (t: string) => /\b(you requested|you asked for a|I chose this|I chose (a|the|to)|the tutor|teaching move|here is (a|the) (live )?(scene|visual|figure|worked example)|it goes in order)\b/i.test(t)
 
 /**
  * Narration for a turn that showed visuals with (almost) no words: one short call on another free model, else the
@@ -116,15 +171,15 @@ export async function narrateVisual(o: {
   if (!o.skipModel && left > 6_000) {
     try {
       if (o.forceModelFail) throw new Error('test: narration model forced to fail')
-      const desc = vis.map(describeVisual).filter(Boolean).map(d => `- ${d!.what}${d!.beats.length ? ` (in order: ${d!.beats.join(' / ')})` : ''}`).join('\n')
+      const desc = vis.map(describeVisual).filter(Boolean).map(d => `- ${d!.what}${d!.hint ? ` [learner can: ${d!.hint}]` : ''}${d!.beats.length ? ` (in order: ${d!.beats.join(' / ')})` : ''}`).join('\n')
       const messages: Msg[] = [
-        { role: 'system', content: 'You are GeniusMap, a warm tutor for a teenager in Nigeria. The visual below is already on the learner\'s screen. Write 2-3 short plain sentences that walk them through it in its order and say what to notice or do. Describe only what is listed. No greeting, no JSON, no lists, maths in $...$.' },
-        { role: 'user', content: `Learner asked: <data>${clean(o.question, 400)}</data>\nOn screen now:\n${desc}${o.move?.reason ? `\nWhy the tutor chose it: ${clean(o.move.reason, 200)}` : ''}${o.already.trim() ? `\nAlready said: ${clean(o.already, 300)}` : ''}` },
+        { role: 'system', content: 'You are GeniusMap, a warm tutor sitting beside a teenager in Nigeria. The visual below is already on their screen. Talk them through it the way you would out loud: 2-4 short, flowing sentences in its order, saying what to notice, then end with one natural invitation to try something on it or one quick check question. Write titles in plain lower case inside the sentence. Never say why you chose it, never say "you requested", "here is a visual" or "it goes in order". Describe only what is listed. No greeting, no JSON, no lists, at most 70 words, maths in $...$.' },
+        { role: 'user', content: `Learner asked: <data>${clean(o.question, 400)}</data>\nOn screen now:\n${desc}${o.already.trim() ? `\nAlready said: ${clean(o.already, 300)}` : ''}` },
       ]
       const r = await chat({ purpose: 'light', messages, maxTokens: 220, temperature: 0.4, trace: o.trace, deadline: Math.min(o.deadline ?? Infinity, Date.now() + 12_000), avoidSlots: o.avoidSlots })
       const t = r.text.split('\n').filter(l => !/^\s*(MOVE|DO)\s*:/i.test(l)).join(' ').replace(/```[\s\S]*?```/g, '').trim()
-      if (proseWords(t) >= 10 && !/[{}]/.test(t)) { o.trace.push(`narration: model ${r.model}`); return { text: t.slice(0, 900), via: 'model' } }
-      o.trace.push('narration: model reply too thin, using the visual')
+      if (proseWords(t) >= 10 && !/[{}]/.test(t) && !stiffNarration(t)) { o.trace.push(`narration: model ${r.model}`); return { text: t.slice(0, 900), via: 'model' } }
+      o.trace.push('narration: model reply too thin or stiff, using the visual')
     } catch (err) {
       o.trace.push(`narration: model failed (${err instanceof Error ? err.message.slice(0, 80) : String(err)}), using the visual`)
     }
@@ -156,9 +211,10 @@ export function narrateSteps<T extends { type: string }>(steps: T[], why: 'expla
   const what = stage ? `this live figure${stage.spec?.title ? ` of ${lower1(clean(stage.spec.title, 80))}` : ''}`
     : clip ? `this short animation${clip.caption ? ` of ${lower1(clean(clip.caption, 80))}` : ''}`
     : words.length ? `the board: ${list(words.map(w => `"${w}"`))}` : 'the new drawing on the board'
-  const lead = why === 'wrong_answer' ? 'Let us look at that one again together.' : why === 'worked_example' ? 'Here is a worked example.' : 'Let me show it another way.'
-  const body = stage?.spec?.explain ? sentence(clean(stage.spec.explain, 200)) : stage?.caption ? sentence(stage.caption) : 'Follow it step by step and notice what changes.'
-  const line = `${lead} ${sentence(`Look at ${what}`)} ${body}`.replace(/\s+/g, ' ').trim().slice(0, 390)
+  const lead = why === 'wrong_answer' ? 'Let\'s look at that one again together.' : why === 'worked_example' ? 'Let\'s work through one together.' : 'Let\'s try it another way.'
+  const body = stage?.spec?.explain ? sentence(clause(stage.spec.explain)) : stage?.caption ? sentence(clause(stage.caption)) : ''
+  const close = stage ? 'Have a go with it — what do you notice?' : 'Follow it step by step, and notice what changes.'
+  const line = `${lead} ${sentence(`Watch ${what}`)} ${body} ${close}`.replace(/\s+/g, ' ').trim().slice(0, 390)
   target.say = target.say ? `${line} ${target.say}`.slice(0, 400) : line
   return 1
 }

@@ -59,6 +59,8 @@ export interface Fx {
   /** Seconds since the scene started (clock, not timeline). */
   t: number
   reduced: boolean
+  /** Where this frame's labels sit (placed before the kind draws), so text a kind writes itself can keep clear. */
+  labels?: Rect[]
 }
 
 export interface Readout { label: string; value: string; color?: string }
@@ -161,7 +163,7 @@ export class Timeline {
 export const estTextW = (text: string, size: number) => text.length * size * 0.56
 export interface PlacedLabel { text: string; target: string; x: number; y: number; w: number; h: number; ax: number; ay: number; ok: boolean }
 
-const overlap = (a: Rect, b: Rect, m = 3) => a.x < b.x + b.w + m && b.x < a.x + a.w + m && a.y < b.y + b.h + m && b.y < a.y + a.h + m
+export const overlap = (a: Rect, b: Rect, m = 3) => a.x < b.x + b.w + m && b.x < a.x + a.w + m && a.y < b.y + b.h + m && b.y < a.y + a.h + m
 
 export function placeLabels(labels: { target: string; text: string }[], anchors: Record<string, Anchor>, v: View, keep: Rect[] = []): PlacedLabel[] {
   const out: PlacedLabel[] = []
@@ -194,6 +196,11 @@ export function placeLabels(labels: { target: string; text: string }[], anchors:
     if (best) { taken.push(best); out.push(best) } else out.push({ text: l.text, target: l.target, x: 0, y: 0, w, h, ax: a.x, ay: a.y, ok: false })
   }
   return out
+}
+
+/** The first candidate box that clears every box in `avoid` (else the first candidate): for text a kind draws itself. */
+export function freeSpot(cands: Rect[], avoid: Rect[] = [], m = 2): Rect {
+  return cands.find(r => !avoid.some(a => overlap(r, a, m))) ?? cands[0]
 }
 
 /* ───────────── Drawing helpers (the primitive vocabulary's base) ───────────── */
@@ -357,7 +364,7 @@ export class Scene<S = unknown> {
   }
   pointerUp() { this.dragging = false }
   caption(): string {
-    if (this.owned) return this.spec.drag || this.spec.controls.length ? (this.kind.yourTurn && this.spec.drag ? this.kind.yourTurn : this.spec.drag ? 'Your turn: drag it and watch' : 'Your turn: move the slider') : this.spec.title.slice(0, 44)
+    if (this.owned) return this.spec.drag || this.spec.controls.length ? (this.kind.yourTurn && this.spec.drag ? this.kind.yourTurn : this.spec.drag ? 'Your turn: drag it and watch' : 'Your turn: move the slider') : this.spec.title
     const i = this.tl.beatAt(this.t)
     return i >= 0 ? this.spec.beats[i].caption : this.spec.title
   }
@@ -367,12 +374,14 @@ export class Scene<S = unknown> {
   }
   draw(c: CanvasRenderingContext2D) {
     const v = this.v, P = this.params, fx = this.fx()
+    // Labels are placed first (deterministically, same code as the validator's layout check), so the kind's own text
+    // (force letters, values) can route round them through fx.labels.
+    const anchors = this.kind.anchors(this.s, P, v)
+    this.labelsPlaced = placeLabels(this.spec.labels, anchors, v, this.kind.keepouts?.(this.s, P, v))
+    fx.labels = this.labelsPlaced.filter(l => l.ok && fx.reveal(l.target) >= 0.05)
     c.save()
     c.beginPath(); c.rect(0, 0, v.W, v.SH); c.clip()
     this.kind.draw(c, this.s, P, v, fx)
-    // Labels (placed deterministically, same code as the validator's layout check).
-    const anchors = this.kind.anchors(this.s, P, v)
-    this.labelsPlaced = placeLabels(this.spec.labels, anchors, v, this.kind.keepouts?.(this.s, P, v))
     for (const l of this.labelsPlaced) {
       if (!l.ok) continue
       const a = Math.min(fx.reveal(l.target), 1)
@@ -396,17 +405,35 @@ export class Scene<S = unknown> {
   }
 }
 
-function drawCaption(c: CanvasRenderingContext2D, v: View, text: string, accent: boolean) {
-  let size = 13
+/**
+ * The caption pill in the top band: one line (shrinking 13 → 11.5 px) when it fits, else two lines at 11.5 px in a
+ * taller pill that still sits inside the 46 px band (no layout change, nothing cut mid-word unless line 2 overflows).
+ */
+export function captionLines(c: CanvasRenderingContext2D, maxW: number, text: string): { size: number; lines: string[] } {
+  for (let size = 13; size >= 11.5; size -= 0.5) { font(c, size, 600); if (c.measureText(text).width <= maxW) return { size, lines: [text] } }
+  const size = 11.5
   font(c, size, 600)
-  while (c.measureText(text).width > v.W - 44 && size > 11) { size -= 0.5; font(c, size, 600) }
-  const w = Math.min(v.W - 20, c.measureText(text).width + 26)
+  const ws = text.split(' ')
+  let l1 = ''
+  let i = 0
+  for (; i < ws.length; i++) { const t = l1 ? `${l1} ${ws[i]}` : ws[i]; if (c.measureText(t).width > maxW && l1) break; l1 = t }
+  let l2 = ws.slice(i).join(' ')
+  if (c.measureText(l2).width > maxW) { while (l2.length > 2 && c.measureText(`${l2}…`).width > maxW) l2 = l2.slice(0, -1); l2 = `${l2.replace(/[\s,;:–-]+$/, '')}…` }
+  return { size, lines: l2 ? [l1, l2] : [l1] }
+}
+
+function drawCaption(c: CanvasRenderingContext2D, v: View, text: string, accent: boolean) {
+  const maxW = v.W - 46
+  const { size, lines } = captionLines(c, maxW, text)
+  font(c, size, 600)
+  const tw = Math.max(...lines.map(l => c.measureText(l).width))
+  const w = Math.min(v.W - 20, tw + 26)
+  const two = lines.length > 1
+  const h = two ? 34 : 28, y = two ? 6 : 10
   c.fillStyle = 'rgba(14,19,34,0.80)'; c.strokeStyle = accent ? 'rgba(255,209,102,0.55)' : 'rgba(255,255,255,0.13)'; c.lineWidth = 1
-  c.beginPath(); c.roundRect(10, 10, w, 28, 14); c.fill(); c.stroke()
+  c.beginPath(); c.roundRect(10, y, w, h, two ? 12 : 14); c.fill(); c.stroke()
   c.fillStyle = accent ? NL.gold : NL.text; c.textAlign = 'left'; c.textBaseline = 'middle'
-  let t = text
-  while (c.measureText(t).width > w - 26 && t.length > 4) t = `${t.slice(0, -2)}…`
-  c.fillText(t, 23, 24.5)
+  if (two) { c.fillText(lines[0], 23, y + 10.5); c.fillText(lines[1], 23, y + 24) } else c.fillText(lines[0], 23, 24.5)
 }
 
 export function defaultsFor(info: KindInfo, p: Params): Params {

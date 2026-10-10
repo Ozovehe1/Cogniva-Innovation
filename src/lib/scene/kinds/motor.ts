@@ -4,7 +4,7 @@
  * up, the other down); torque τ = 2·F·a·|cos θ| because the commutator reverses the coil's current every half turn
  * (and briefly breaks contact at the gap); J dω/dt = τ − bω − friction. Drawn in a 3D oblique projection, back to front.
  */
-import { arrow, font, halo, num, rng, stageBackground, type KindRuntime, type Params, type View } from '../engine'
+import { arrow, font, freeSpot, halo, num, rng, stageBackground, type KindRuntime, type Params, type View } from '../engine'
 import { cellBattery, type Particle } from '../primitives'
 import { NL } from '../tokens'
 import type { KindInfo } from '../types'
@@ -221,7 +221,12 @@ export const motor: KindRuntime<S> = {
         const [x0, y0] = P3(v, side.x, side.y, 0.15)
         const len = Math.min(1.3, Math.abs(F) * 0.85) * v.u
         arrow(c, x0, y0, x0, y0 - Math.sign(F) * len, { color: NL.gold, w: 3 + 1.5 * fE, glow: 10 + 14 * fE, alpha: fr2 })
-        if (fE > 0.02 || fr2 > 0.9) { c.save(); c.globalAlpha = fr2; c.fillStyle = NL.gold; font(c, 13, 800); c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText('F', x0 + 8, y0 - Math.sign(F) * len * 0.7); c.restore() }
+        if (fE > 0.02 || fr2 > 0.9) {
+          // "F" beside the shaft (right, left, then past the tip), on the first side clear of every label.
+          const ym = y0 - Math.sign(F) * len * 0.7, yt = y0 - Math.sign(F) * (len + 12)
+          const spot = freeSpot([{ x: x0 + 6, y: ym - 8, w: 11, h: 16 }, { x: x0 - 17, y: ym - 8, w: 11, h: 16 }, { x: x0 - 5, y: yt - 8, w: 11, h: 16 }, { x: x0 + 6, y: y0 - 8, w: 11, h: 16 }], fx.labels)
+          c.save(); c.globalAlpha = fr2; c.fillStyle = NL.gold; font(c, 13, 800); c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText('F', spot.x + 1, spot.y + 8); c.restore()
+        }
       }
     }
     // Spin cue: a curved arrow round the axle's far end shows which way it turns.
