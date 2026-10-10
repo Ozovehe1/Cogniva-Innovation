@@ -69,7 +69,7 @@ export const sceneTool: ToolSpec = {
         if (typeof o.say !== 'string' || !o.say.trim()) o.say = o.caption.slice(0, 400)
         const c = o.caption.slice(0, 45); const k = c.lastIndexOf(' ')
         let t = (k > 20 ? c.slice(0, k) : c.slice(0, 44)).replace(/[\s,;:–-]+$/, '')
-        for (let i = 0; i < 3 && /\s(the|a|an|in|of|to|and|or|with|for|on|at|by|from|into|its|their|opposite|each|every)$/i.test(t); i++) t = t.replace(/\s+\S+$/, '').replace(/[\s,;:–-]+$/, '')
+        for (let i = 0; i < 3 && /\s(the|a|an|in|of|to|and|or|with|for|on|at|by|from|into|its|their|opposite|each|every|one|this|that|is|are|as|so)$/i.test(t); i++) t = t.replace(/\s+\S+$/, '').replace(/[\s,;:–-]+$/, '')
         o.caption = t
       }
       const d = Number(o.dur)
