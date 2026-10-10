@@ -105,7 +105,7 @@ export async function dispatchRender(admin: SupabaseClient, job: Pick<ManimJob, 
 
 /**
  * The general visual composer (modal_app/gm_compose.py): the render service plans the concept, writes a scene in the
- * GeniusMap scene grammar, validates it (every LaTeX snippet compiled, every expression evaluated), renders it, runs the
+ * Ideanimo scene grammar, validates it (every LaTeX snippet compiled, every expression evaluated), renders it, runs the
  * frame gate and repairs once, all at render time on Modal, ahead of playback. On success the callback stores the
  * composed scene as the job's code; on failure the callback falls back to free-form Manim code (the escape hatch).
  */

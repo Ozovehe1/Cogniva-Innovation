@@ -4,7 +4,7 @@ import { validateScript, type Step } from '@/lib/lesson-schema'
 
 // Signed-in fixture lesson for the teaching space: board write-on and motion, an exact diagram on the lesson board,
 // then the stage (a live figure takes the lesson area, plays its demonstration, hands back to the board).
-export const metadata = { title: 'Stage demo · GeniusMap', robots: { index: false } }
+export const metadata = { title: 'Stage demo · Ideanimo', robots: { index: false } }
 export const dynamic = 'force-dynamic'
 
 const RAW = [

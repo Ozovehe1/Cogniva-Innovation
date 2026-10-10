@@ -10,7 +10,7 @@ import { GoalEdit } from '@/components/goal-edit'
 import { Card, EmptyState, PageHeader, ProgressBar, SectionTitle, buttonClass } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Settings · GeniusMap', robots: { index: false } }
+export const metadata = { title: 'Settings · Ideanimo', robots: { index: false } }
 
 export default async function SettingsPage() {
   const { supabase, profile } = await getSessionProfile()

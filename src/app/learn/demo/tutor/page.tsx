@@ -2,7 +2,7 @@ import { Suspense } from 'react'
 import { TutorLab } from './tutor-lab'
 
 // Gallery of the tutor character's states and the illustration cards (fixed fixtures), for phone screenshots.
-export const metadata = { title: 'Tutor lab · GeniusMap', robots: { index: false } }
+export const metadata = { title: 'Tutor lab · Ideanimo', robots: { index: false } }
 export const dynamic = 'force-dynamic'
 
 export default function TutorLabPage() {

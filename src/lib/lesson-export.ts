@@ -287,7 +287,7 @@ export function lessonHtml(l: ExportLesson): string {
   const saved = new Date().toISOString().slice(0, 10)
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${esc(toPlainText(l.title))} · GeniusMap</title>
+<title>${esc(toPlainText(l.title))} · Ideanimo</title>
 <style>
 :root{--ink:#14141A;--ink2:#3D3D47;--muted:#66666F;--faint:#8E8C86;--line:#E5E1D8;--canvas:#F7F5F0;--accent:#1F4D3A;--soft:#E7EFEA;--accent-line:#C5D7CC}
 *{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
@@ -314,11 +314,11 @@ math{font-size:1.05em}
 <body><main>
 <div class="eyebrow">${esc(l.subject || 'Lesson')}</div>
 <h1>${richHtml(l.title)}</h1>
-<p class="meta">Offline copy from GeniusMap · saved ${saved} · ${boardNo} board${boardNo === 1 ? '' : 's'}${chapters.length > 1 ? ` · ${chapters.length} sections` : ''}</p>
+<p class="meta">Offline copy from Ideanimo · saved ${saved} · ${boardNo} board${boardNo === 1 ? '' : 's'}${chapters.length > 1 ? ` · ${chapters.length} sections` : ''}</p>
 ${objectives}
 ${toc}
 ${sections}
-<footer>Clips stream from GeniusMap's storage and need a connection; everything else works offline. Print this page to save it as a PDF.${l.url ? ` Watch the full lesson: <a href="${esc(l.url)}">${esc(l.url)}</a>` : ''}</footer>
+<footer>Clips stream from Ideanimo's storage and need a connection; everything else works offline. Print this page to save it as a PDF.${l.url ? ` Watch the full lesson: <a href="${esc(l.url)}">${esc(l.url)}</a>` : ''}</footer>
 </main></body></html>`
 }
 

@@ -21,7 +21,7 @@ export function LogoMark({ className }: { className?: string }) {
         className,
       )}
     >
-      G
+      I
     </span>
   )
 }
@@ -31,7 +31,7 @@ export function Logo({ href = '/', className, inverted = false }: { href?: strin
     <Link href={href} className={cx('inline-flex items-center gap-2.5 rounded-md', className)}>
       <LogoMark className={inverted ? 'bg-white text-accent' : undefined} />
       <span className={cx('font-display text-[19px] font-medium tracking-tight', inverted ? 'text-white' : 'text-ink')}>
-        GeniusMap
+        Ideanimo
       </span>
     </Link>
   )

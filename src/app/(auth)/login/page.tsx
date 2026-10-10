@@ -32,7 +32,7 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ re
           : /invalid login credentials/i.test(authError.message)
             ? 'That email and password don’t match an account. Check for a typo, or create an account below.'
             : /network|fetch/i.test(authError.message)
-              ? 'We couldn’t reach GeniusMap. Check your connection and try again.'
+              ? 'We couldn’t reach Ideanimo. Check your connection and try again.'
               : authError.message
       )
       setPending(false)
@@ -99,7 +99,7 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ re
       </form>
 
       <p className="mt-8 border-t border-line pt-6 text-center text-sm text-muted">
-        New to GeniusMap?{' '}
+        New to Ideanimo?{' '}
         <Link href="/signup" className="font-medium text-accent underline-offset-4 hover:underline">Create an account</Link>
       </p>
     </div>

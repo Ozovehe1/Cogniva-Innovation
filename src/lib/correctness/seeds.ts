@@ -1,5 +1,5 @@
 /**
- * Seed regression cases: one per mistake GeniusMap has actually made. Each holds the faulty artefact (as it was shown, or
+ * Seed regression cases: one per mistake Ideanimo has actually made. Each holds the faulty artefact (as it was shown, or
  * reconstructed) and, where it helps, the corrected one; the assertion is the specific correctness property.
  * Pure data + deterministic checks, so they run in the eval route, in a script or in a unit test alike.
  * To add one, see docs/correctness.md.

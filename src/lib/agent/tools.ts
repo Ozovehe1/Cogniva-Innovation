@@ -787,7 +787,7 @@ const VISUAL: ToolSpec[] = [
       const j = job as ManimJob
       after(async () => {
         try {
-          const composed = await dispatchFreeform(ctx.admin, { id: j.id, attempts: 0, prompt }, lessonId ? 'Asked by the learner inside a lesson, to see this idea move.' : 'Ask GeniusMap chat explanation.')
+          const composed = await dispatchFreeform(ctx.admin, { id: j.id, attempts: 0, prompt }, lessonId ? 'Asked by the learner inside a lesson, to see this idea move.' : 'Ask Ideanimo chat explanation.')
           if (composed.ok) return
           const code = await generateManimCode(prompt)
           await ctx.admin.from('manim_jobs').update({ code }).eq('id', j.id)

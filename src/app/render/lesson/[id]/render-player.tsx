@@ -108,7 +108,7 @@ export function RenderPlayer({ lessonId, title, subject, steps: allSteps, chapte
             <>
               {subject && <p className="text-[14px] font-medium uppercase tracking-[0.12em] text-muted">{subject}</p>}
               <h1 className="mt-3 max-w-[900px] font-display text-[52px] leading-[1.08] text-ink"><RichText text={title} /></h1>
-              <p className="mt-6 text-[15px] text-faint">GeniusMap</p>
+              <p className="mt-6 text-[15px] text-faint">Ideanimo</p>
             </>
           )}
         </div>

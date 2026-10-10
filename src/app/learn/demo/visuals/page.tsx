@@ -1,7 +1,7 @@
 import { VisualsLab } from './visuals-lab'
 
 // Signed-in gallery of the agent's visual types (fixed fixtures), used for phone screenshots and manual checks.
-export const metadata = { title: 'Visuals lab · GeniusMap', robots: { index: false } }
+export const metadata = { title: 'Visuals lab · Ideanimo', robots: { index: false } }
 export const dynamic = 'force-dynamic'
 
 export default async function VisualsPage() {

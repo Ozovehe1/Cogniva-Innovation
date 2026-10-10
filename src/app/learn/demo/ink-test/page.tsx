@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import { InkTestPlayer } from './ink-test-player'
 
 // Test harness (not in production): every element type, played for scripts/test-ink-under-pen.py.
-export const metadata = { title: 'Ink test · GeniusMap', robots: { index: false } }
+export const metadata = { title: 'Ink test · Ideanimo', robots: { index: false } }
 
 export default function InkTestPage() {
   if (process.env.VERCEL_ENV === 'production') notFound()

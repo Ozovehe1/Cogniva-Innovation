@@ -19,7 +19,7 @@ import path from 'node:path'
 
 const CACHE = process.argv[2] || '/tmp/illus-cache'
 const OUT = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'src/lib/illustrations/library.json')
-const UA = 'GeniusMapIllustrationIndexer/1.0 (education app; contact abdulcosman01@gmail.com)'
+const UA = 'IdeanimoIllustrationIndexer/1.0 (education app; contact abdulcosman01@gmail.com)'
 fs.mkdirSync(CACHE, { recursive: true })
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))

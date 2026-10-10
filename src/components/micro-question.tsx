@@ -47,7 +47,7 @@ export function MicroQuestion({ className }: { className?: string }) {
         <motion.section key="q" aria-label="A quick question" initial={reduce ? { opacity: 0 } : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: [0.2, 0, 0, 1] }}
           className={cx('mt-4 rounded-[14px] border border-line bg-surface p-5 shadow-[var(--shadow-card)]', className)}>
           <div className="flex items-start gap-3">
-            <span aria-hidden className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent font-display text-[15px] text-white">G</span>
+            <span aria-hidden className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent font-display text-[15px] text-white">I</span>
             <div className="min-w-0 flex-1">
               <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">One quick question</p>
               <h2 className="mt-1 font-display text-[21px] leading-snug text-ink">{q.ask}</h2>

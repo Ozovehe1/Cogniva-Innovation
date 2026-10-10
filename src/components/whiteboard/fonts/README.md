@@ -7,4 +7,4 @@
   (mirrored in svenhb/GRBL-Plotter, data/fonts/svg). Converted to JSON (strokes split per pen
   lift, coordinates rounded) for the board; no glyph shapes were changed.
 - `public/whiteboard/hand.webp`, `hand-shadow.webp`: the hand holding the marker, a pre-rendered
-  photographic sprite generated for GeniusMap (no third-party model), with its soft shadow.
+  photographic sprite generated for Ideanimo (no third-party model), with its soft shadow.

@@ -1,5 +1,5 @@
 /**
- * The regression eval group: seed cases for mistakes GeniusMap has made (seeds.ts) plus anonymised cases promoted from
+ * The regression eval group: seed cases for mistakes Ideanimo has made (seeds.ts) plus anonymised cases promoted from
  * confirmed learner reports (table regression_cases). Each case asserts one correctness property.
  * Run: POST /api/agent/eval?group=regression&student=<test profile> (Bearer AGENT_SECRET), or scripts/agent-eval.mjs.
  * `only=seed` runs just the seeds; `only=db` just the promoted reports.

@@ -7,7 +7,7 @@ import type { ReportRow } from '@/lib/correctness/reports'
 import { TriageActions, ArtefactView } from './triage'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Mistake reports · GeniusMap admin', robots: { index: false } }
+export const metadata = { title: 'Mistake reports · Ideanimo admin', robots: { index: false } }
 
 const SURFACE: Record<string, string> = { lesson_step: 'Lesson', stage: 'Live figure', diagram: 'Diagram', illustration: 'Picture', animation: 'Animation', ask: 'Ask', check: 'Check', practice: 'Practice', mastery: 'Mastery check' }
 const CATEGORY: Record<string, string> = { wrong_maths: 'Wrong maths', wrong_picture: 'Wrong picture', confusing: 'Confusing', typo: 'Typo', other: 'Other' }

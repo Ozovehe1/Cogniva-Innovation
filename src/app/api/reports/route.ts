@@ -9,7 +9,7 @@ const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f-]
 const str = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : '')
 
 /**
- * POST /api/reports — a learner reports a mistake in something GeniusMap showed them.
+ * POST /api/reports — a learner reports a mistake in something Ideanimo showed them.
  * { surface, category?, note?, artefact, lessonId?, stepIndex?, sessionId?, blockId?, blockKind?, text?, query?, clipJobId? }
  * The exact artefact is taken from the database where it lives (the chat message's block, the lesson's step) and
  * otherwise from the client. The artefact is flagged for this learner at once (chat blocks are marked flagged; lesson

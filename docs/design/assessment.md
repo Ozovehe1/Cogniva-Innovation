@@ -1,6 +1,6 @@
 # Assessment: fair, standard, aligned items (with figures only where needed)
 
-Every question GeniusMap puts to a learner — the onboarding diagnostic, in-lesson checks (choice, short, explore), the
+Every question Ideanimo puts to a learner — the onboarding diagnostic, in-lesson checks (choice, short, explore), the
 mastery check, prerequisite re-checks and practice sets in Ask — is written by a model and then **passes the item
 validator** (`src/lib/assessment/`) before a learner sees it. This document is the standard the validator enforces,
 the research behind it, the audit that motivated it, and how to extend it.

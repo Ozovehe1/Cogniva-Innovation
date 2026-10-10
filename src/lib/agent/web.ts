@@ -11,7 +11,7 @@
 import { asData, blockedUrl, injectionHeuristic, unsafeQuery, unsafeText } from './guard'
 import { chat, groqEnabled } from './llm'
 
-const UA = 'GeniusMap/1.0 (https://cogniva-innovation.vercel.app; education)'
+const UA = 'Ideanimo/1.0 (https://ideanimo.vercel.app; education)'
 export interface WebResult { title: string; url: string; snippet: string; source: 'wikipedia' | 'arxiv' | 'web' }
 
 const stripHtml = (s: string) => s.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ')
@@ -62,7 +62,7 @@ export interface SearchOutcome { blocked?: string; results: WebResult[]; used: s
 export async function webSearch(q: string, opts: { academic?: boolean; current?: boolean } = {}): Promise<SearchOutcome> {
   const query = q.replace(/\s+/g, ' ').trim().slice(0, 200)
   const bad = unsafeQuery(query)
-  if (bad) return { blocked: `This search isn't available on GeniusMap (blocked term: "${bad}").`, results: [], used: [] }
+  if (bad) return { blocked: `This search isn't available on Ideanimo (blocked term: "${bad}").`, results: [], used: [] }
   const used: string[] = []
   const jobs: Promise<WebResult[]>[] = []
   if (!opts.current) { jobs.push(wikipediaSearch(query).catch(() => [])); used.push('wikipedia') }
@@ -87,7 +87,7 @@ export async function fetchPage(url: string, allowedFromSearch: Set<string>): Pr
   if (u.protocol !== 'https:') return { ok: false, url, error: 'only https pages can be opened' }
   const host = u.hostname.toLowerCase()
   if (/^\d+\.\d+\.\d+\.\d+$|^\[|localhost|\.local$|\.internal$/.test(host)) return { ok: false, url, error: 'that address is not allowed' }
-  if (blockedUrl(url)) return { ok: false, url, error: 'that site is blocked on GeniusMap' }
+  if (blockedUrl(url)) return { ok: false, url, error: 'that site is blocked on Ideanimo' }
   if (!ALLOW_HOSTS.some(r => r.test(host)) && !allowedFromSearch.has(u.toString()) && !allowedFromSearch.has(url)) return { ok: false, url, error: 'only pages from Wikipedia, arXiv or this chat\'s search results can be opened' }
   // Wikipedia: the clean REST summary + plain-text sections instead of HTML.
   try {
@@ -104,7 +104,7 @@ export async function fetchPage(url: string, allowedFromSearch: Set<string>): Pr
     const title = stripHtml(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? '').slice(0, 200)
     const main = /<main[\s\S]*?<\/main>/i.exec(html)?.[0] ?? /<article[\s\S]*?<\/article>/i.exec(html)?.[0] ?? /<body[\s\S]*?<\/body>/i.exec(html)?.[0] ?? html
     const text = stripHtml(main.replace(/<(nav|footer|header|aside|table)[\s\S]*?<\/\1>/gi, ' ').replace(/<sup[\s\S]*?<\/sup>/gi, ''))
-    if (unsafeText(`${title} ${text.slice(0, 4000)}`)) return { ok: false, url, error: 'that page is not suitable for GeniusMap' }
+    if (unsafeText(`${title} ${text.slice(0, 4000)}`)) return { ok: false, url, error: 'that page is not suitable for Ideanimo' }
     return { ok: true, url: res.url, title, text: asData(res.url, text.slice(0, 6000), 6000) }
   } catch (err) {
     return { ok: false, url, error: err instanceof Error ? err.message.slice(0, 160) : 'could not open the page' }

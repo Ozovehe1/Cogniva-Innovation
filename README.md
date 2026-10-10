@@ -1,11 +1,18 @@
-# GeniusMap
+# Ideanimo
 
 An AI tutor that starts from what you know and shows every idea. A learner says what they want to learn, takes a short
 adaptive check (or skips it when they are brand new), gets a personal path, and is taught each topic in AI-written
 whiteboard lessons: a pen that writes line by line, exact diagrams, credited textbook pictures, live figures to drag,
-short Manim animations and a natural voice. "Ask GeniusMap" answers any question on the same kind of board.
+short Manim animations and a natural voice. "Ask Ideanimo" answers any question on the same kind of board.
 
-Live: https://cogniva-innovation.vercel.app · How it works: [/about](https://cogniva-innovation.vercel.app/about)
+Live: https://ideanimo.vercel.app (the old https://cogniva-innovation.vercel.app still serves the same app) · How it works: [/about](https://ideanimo.vercel.app/about)
+
+> **Name:** the product was called GeniusMap until October 2026 and is now Ideanimo. Infrastructure identifiers keep
+> the old name on purpose so nothing breaks: Modal apps (`geniusmap-manim`, `geniusmap-tts`, `geniusmap-py`,
+> `geniusmap-omnisvg-eval`), their `*.modal.run` URLs and the `geniusmap-render` Modal secret, the npm package name,
+> browser events (`geniusmap:before-signout`, `geniusmap:zoom`), the `modal_app/` sources, already-applied Supabase
+> migrations, the Vercel project / repo name (`cogniva-innovation`), and `APP_URL` for Modal callbacks
+> (`scripts/deploy-modal.mjs` defaults to `https://cogniva-innovation.vercel.app`, which serves the same deployment).
 
 ## Stack
 

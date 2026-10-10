@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { SOURCE_NAME, creditLine, type Credit, type LibraryItem } from './types'
 
-const UA = 'GeniusMap/1.0 (education app; https://cogniva-innovation.vercel.app; abdulcosman01@gmail.com)'
+const UA = 'Ideanimo/1.0 (education app; https://ideanimo.vercel.app; abdulcosman01@gmail.com)'
 const BUCKET = 'illustrations'
 const MAX_SRC = 2_500_000
 const MAX_OUT = 400_000

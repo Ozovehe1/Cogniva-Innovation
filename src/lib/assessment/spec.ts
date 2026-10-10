@@ -1,5 +1,5 @@
 /**
- * The GeniusMap item spec (docs/design/assessment.md §5): one shape for every question a learner answers outside
+ * The Ideanimo item spec (docs/design/assessment.md §5): one shape for every question a learner answers outside
  * the whiteboard (diagnostic, mastery check, practice set, prerequisite re-check). Lesson checks keep their
  * CheckStep shape (lesson-schema.ts) and are validated with the same rules (validate.ts `checkStepItem`).
  *

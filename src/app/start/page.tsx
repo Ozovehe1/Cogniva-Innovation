@@ -7,7 +7,7 @@ import { IntakeFlow } from '@/components/intake-flow'
 
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Get started · GeniusMap', robots: { index: false } }
+export const metadata = { title: 'Get started · Ideanimo', robots: { index: false } }
 
 export default async function StartPage({ searchParams }: { searchParams: Promise<{ edit?: string; new?: string }> }) {
   const sp = await searchParams

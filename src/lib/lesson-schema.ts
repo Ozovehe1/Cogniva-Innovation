@@ -472,7 +472,7 @@ function validateShape(s: unknown, errs: string[], at: string, vars: Set<string>
       reqNum(s, 'w', errs, at, 20, BOARD_W + 50); reqNum(s, 'h', errs, at, 20, BOARD_H + 50)
       if (s.src !== undefined) {
         // Library illustrations are referenced by URL (they are too large to inline); only our own public bucket.
-        if (!isStr(s.src) || !ILLUSTRATION_SRC.test(s.src)) errs.push(`${at}.src must be a GeniusMap illustration URL`)
+        if (!isStr(s.src) || !ILLUSTRATION_SRC.test(s.src)) errs.push(`${at}.src must be a Ideanimo illustration URL`)
         if (s.svg !== undefined && s.svg !== '' && (!isStr(s.svg) || !/^<svg[\s>]/.test(s.svg) || s.svg.length > 60_000)) errs.push(`${at}.svg must be an <svg> document under 60 KB`)
       } else if (!isStr(s.svg) || !/^<svg[\s>]/.test(s.svg) || s.svg.length > 60_000) errs.push(`${at}.svg must be an <svg> document under 60 KB`)
       optStr(s, 'alt', errs, at, 300)

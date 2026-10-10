@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 
 /**
- * Admin (GeniusMap staff) access: the signed-in user's email must be in ADMIN_EMAILS (comma-separated Vercel env).
+ * Admin (Ideanimo staff) access: the signed-in user's email must be in ADMIN_EMAILS (comma-separated Vercel env).
  * Admin pages show anonymised-in-spirit triage data; they never act on a learner's account. Server only.
  */
 const DEFAULT_ADMINS = ['abdulcosman01@gmail.com']

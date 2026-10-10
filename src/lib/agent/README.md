@@ -1,4 +1,4 @@
-# src/lib/agent — Ask GeniusMap and the Learning Director
+# src/lib/agent — Ask Ideanimo and the Learning Director
 
 - `run.ts` — the agent loop (max 6 steps, 3 writes), `CHAT_SYSTEM` and `DIRECTOR_SYSTEM` prompts, forced first tool
   call when the learner explicitly asks for a visual.

@@ -6,7 +6,7 @@ import { poolHealth, type PoolHealth } from '@/lib/agent/pool'
 import { Refresher } from './refresher'
 
 export const dynamic = 'force-dynamic'
-export const metadata: Metadata = { title: 'Model pool · GeniusMap', robots: { index: false } }
+export const metadata: Metadata = { title: 'Model pool · Ideanimo', robots: { index: false } }
 
 type Slot = PoolHealth['slots'][number]
 

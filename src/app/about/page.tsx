@@ -5,10 +5,10 @@ import { SiteFooter, SiteHeader } from '@/components/site-chrome'
 import { SiteScene } from '@/components/site-scene'
 
 export const metadata = {
-  title: 'About · GeniusMap',
+  title: 'About · Ideanimo',
   description: 'An AI tutor that starts from what you know, shows every idea, and checks its own maths.',
   openGraph: {
-    title: 'About GeniusMap',
+    title: 'About Ideanimo',
     description: 'An AI tutor that starts from what you know and shows every idea.',
   },
 }

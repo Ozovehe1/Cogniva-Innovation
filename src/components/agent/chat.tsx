@@ -96,7 +96,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
       const kick = () => { clearTimeout(idle); idle = setTimeout(() => { stalled = true; ctl.abort() }, 40_000) }
       kick()
       const res = await fetch('/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, sessionId, lessonId, live: getLessonLive(lessonId) }), signal: ctl.signal })
-      if (!res.ok || !res.body) { const j = await res.json().catch(() => ({})); patch(a => ({ ...a, error: j.error ?? 'Could not reach GeniusMap.' })); return }
+      if (!res.ok || !res.body) { const j = await res.json().catch(() => ({})); patch(a => ({ ...a, error: j.error ?? 'Could not reach Ideanimo.' })); return }
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
@@ -206,7 +206,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
             <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} rows={1} maxLength={2000}
               onFocus={() => setTyping(true)} onBlur={() => setTyping(false)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); void send(input) } }}
-              placeholder={lessonId ? 'Ask about this lesson…' : 'Ask GeniusMap…'} aria-label="Message"
+              placeholder={lessonId ? 'Ask about this lesson…' : 'Ask Ideanimo…'} aria-label="Message"
               className="max-h-36 min-h-11 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug text-ink placeholder:text-faint focus:outline-none focus-visible:outline-none" />
             {/* While the tutor answers, Send stays where it is at full colour with the ink mark (the same size, no jump),
                 and is disabled so a second tap cannot send twice; what is happening is said in the turn itself. */}

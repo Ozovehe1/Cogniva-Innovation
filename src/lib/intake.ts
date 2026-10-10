@@ -1,5 +1,5 @@
 /**
- * The GeniusMap intake (v2): four short screens before the adaptive check, then progressive profiling.
+ * The Ideanimo intake (v2): four short screens before the adaptive check, then progressive profiling.
  * Evidence base: docs/design/onboarding.md (survey length vs drop-off, time-to-value, stealth assessment,
  * single-item anxiety measures, implementation intentions, expertise reversal, interest personalisation, CAT).
  *

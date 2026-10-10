@@ -66,7 +66,7 @@ export function TodayCard({ data }: { data: TodayData }) {
         </details>
       )}
       <Link href="/ask" className="flex items-center justify-between gap-3 border-t border-line bg-[#FBFAF7] px-5 py-3.5 text-[14px] font-medium text-ink hover:bg-sunken md:px-6">
-        <span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-accent" />Ask GeniusMap anything</span><ArrowRight className="h-4 w-4 text-accent" />
+        <span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-accent" />Ask Ideanimo anything</span><ArrowRight className="h-4 w-4 text-accent" />
       </Link>
     </section>
   )

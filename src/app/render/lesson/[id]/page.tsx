@@ -7,7 +7,7 @@ import { verifyRenderToken } from '@/lib/lesson-video'
 import { RenderPlayer } from './render-player'
 
 export const dynamic = 'force-dynamic'
-export const metadata: Metadata = { title: 'GeniusMap lesson video', robots: { index: false, follow: false } }
+export const metadata: Metadata = { title: 'Ideanimo lesson video', robots: { index: false, follow: false } }
 
 /**
  * The lesson as a video frame, for the Modal recorder only (see lib/lesson-video): 1280x720, no controls, the lesson

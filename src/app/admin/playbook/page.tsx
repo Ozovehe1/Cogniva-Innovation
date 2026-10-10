@@ -8,7 +8,7 @@ import type { Bullet, Target } from '@/lib/playbook/types'
 import { BulletActions } from './actions'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Teaching playbook · GeniusMap admin', robots: { index: false } }
+export const metadata = { title: 'Teaching playbook · Ideanimo admin', robots: { index: false } }
 
 const STATUSES = ['live', 'candidate', 'rejected', 'retired'] as const
 const TARGET: Record<Target, string> = { lesson: 'Lesson writer', ask: 'Ask tutor', diagram: 'Diagrams', illustration: 'Illustrations', manim: 'Animations' }

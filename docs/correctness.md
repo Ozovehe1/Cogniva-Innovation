@@ -1,6 +1,6 @@
 # Correctness: guard, "Report a mistake", regression set
 
-GeniusMap must always teach correctly: text, maths, pictures, diagrams, live figures and animations. Three parts work
+Ideanimo must always teach correctly: text, maths, pictures, diagrams, live figures and animations. Three parts work
 together:
 
 1. **The guard** checks output before a learner sees it (deterministic first, a model second).

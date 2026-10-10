@@ -31,7 +31,7 @@ export function SiteFooter() {
           {demoAvailable && <Link href="/learn/demo" className="hover:text-ink">Sample lesson</Link>}
           <Link href="/credits" className="hover:text-ink">Credits</Link>
           <Link href="/login" className="hover:text-ink">Sign in</Link>
-          <span>© {new Date().getFullYear()} GeniusMap</span>
+          <span>© {new Date().getFullYear()} Ideanimo</span>
         </nav>
       </div>
     </footer>

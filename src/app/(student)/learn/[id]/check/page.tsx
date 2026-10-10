@@ -7,7 +7,7 @@ import { MasteryCheck } from '@/components/mastery-check'
 import { RichText } from '@/components/rich-text'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Mastery check · GeniusMap' }
+export const metadata = { title: 'Mastery check · Ideanimo' }
 
 export default async function CheckPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ recheck?: string }> }) {
   const { id } = await params

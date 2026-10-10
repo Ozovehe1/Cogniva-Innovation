@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generates scene.rml for "Genie", GeniusMap's tutor mascot (Rive Markup Language).
+Generates scene.rml for "Genie", Ideanimo's tutor mascot (Rive Markup Language).
 
     python3 rive/genie/gen.py            # writes rive/genie/scene.rml
     rive rive/genie --verify             # check;  --screenshot --data=mood=4 --advance=30  to look

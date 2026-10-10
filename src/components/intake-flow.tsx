@@ -237,8 +237,8 @@ export function IntakeFlow({
     <div className="flex min-h-dvh flex-col bg-canvas">
       <header className="pt-safe sticky top-0 z-30 bg-canvas/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-[640px] items-center justify-between px-5 sm:px-6">
-          <Link href="/" className="inline-flex items-center gap-2 font-display text-[18px] text-ink" aria-label="GeniusMap home">
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] bg-accent text-[15px] text-white">G</span>GeniusMap
+          <Link href="/" className="inline-flex items-center gap-2 font-display text-[18px] text-ink" aria-label="Ideanimo home">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] bg-accent text-[15px] text-white">I</span>Ideanimo
           </Link>
           <Link href="/dashboard" className="-mr-2 inline-flex h-11 items-center px-2 text-[13px] font-medium text-muted hover:text-ink">Save and exit</Link>
         </div>
@@ -331,7 +331,7 @@ export function IntakeFlow({
 function TutorLine({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <motion.div className={cx('flex items-start gap-3', className)} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35, delay: 0.08, ease }}>
-      <span aria-hidden className="mt-0.5 inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent font-display text-[15px] text-white shadow-[var(--shadow-card)]">G</span>
+      <span aria-hidden className="mt-0.5 inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent font-display text-[15px] text-white shadow-[var(--shadow-card)]">I</span>
       <p className="min-w-0 rounded-[14px] rounded-tl-[4px] bg-surface px-3.5 py-2.5 text-[15px] leading-relaxed text-ink-2 shadow-[var(--shadow-card)] ring-1 ring-line">{children}</p>
     </motion.div>
   )
@@ -456,7 +456,7 @@ function ConsentScreen({ busy, onSubmit }: { busy: boolean; onSubmit: (email: st
         </ul>
         <label className="mt-5 flex min-h-11 cursor-pointer items-start gap-3 text-[15px] leading-snug text-ink">
           <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} className="mt-0.5 h-5 w-5 flex-shrink-0 accent-[#1F4D3A]" />
-          My parent or guardian has read this and agrees to GeniusMap saving my answers to personalise my lessons.
+          My parent or guardian has read this and agrees to Ideanimo saving my answers to personalise my lessons.
         </label>
         <label htmlFor="guardian-email" className="mt-4 block text-[13px] font-medium text-ink-2">Parent or guardian’s email</label>
         <input id="guardian-email" type="email" inputMode="email" autoComplete="off" className={cx(inputClass, 'mt-1.5 h-12 text-[16px]')} value={email} onChange={e => setEmail(e.target.value)} placeholder="parent@example.com" />

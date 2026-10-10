@@ -1,6 +1,6 @@
 'use client'
 /**
- * Waiting, the GeniusMap way (docs/design/app-ui.md §Waiting states). One small vocabulary used everywhere a learner
+ * Waiting, the Ideanimo way (docs/design/app-ui.md §Waiting states). One small vocabulary used everywhere a learner
  * waits, so every wait reads as the same calm tutor at work instead of a generic spinner:
  *
  * - InkMark: a short pen stroke that writes itself, rests, lifts. Replaces every spinner (inside a pressed button,

@@ -1,7 +1,7 @@
 import { WaitingLab } from './waiting-lab'
 
 // Gallery of every waiting and button state with fixed fixtures (no network), for 390 px and desktop screenshots.
-export const metadata = { title: 'Waiting states · GeniusMap', robots: { index: false } }
+export const metadata = { title: 'Waiting states · Ideanimo', robots: { index: false } }
 
 export default function WaitingLabPage() {
   return (

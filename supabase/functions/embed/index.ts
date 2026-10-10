@@ -1,4 +1,4 @@
-// GeniusMap embeddings on Supabase's built-in gte-small model (384 dims, English, ~512 tokens): $0, no external API.
+// Ideanimo embeddings on Supabase's built-in gte-small model (384 dims, English, ~512 tokens): $0, no external API.
 // POST (header x-agent-secret = AGENT_SECRET)
 //   { texts: string[] }                 -> { embeddings: number[][] }        (query embedding for hybrid search)
 //   { mode: 'pending', limit?: number } -> { embedded: n }                   (pg_cron: rows of learner_memory with no embedding)

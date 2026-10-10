@@ -1,6 +1,6 @@
 # Teaching Playbook: learning without retraining
 
-GeniusMap's tutor gets better from real lessons without changing any model weights. Evidence from lessons is
+Ideanimo's tutor gets better from real lessons without changing any model weights. Evidence from lessons is
 distilled into short, itemised **teaching rules** ("bullets"). A rule goes live only after a batch check shows lessons
 written with it are no worse than lessons written without it. The writers then retrieve the rules that fit each prompt.
 

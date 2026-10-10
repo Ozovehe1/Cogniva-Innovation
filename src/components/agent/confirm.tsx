@@ -19,7 +19,7 @@ export function ConfirmBlock({ block, compact }: { block: { actionId: string; ti
       const r = await fetch(`/api/agent/actions/${block.actionId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op }) })
       const j = await r.json()
       if (!r.ok) setErr(j.error ?? 'Could not do that'); else setStatus(j.status)
-    } catch { setErr('Could not reach GeniusMap. Try again.') } finally { setBusy(null) }
+    } catch { setErr('Could not reach Ideanimo. Try again.') } finally { setBusy(null) }
   }
   return (
     <div className={cx(compact ? '' : frame, compact ? '' : 'border-amber-line bg-amber-soft p-4')}>

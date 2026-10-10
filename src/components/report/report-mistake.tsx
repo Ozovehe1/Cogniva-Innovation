@@ -1,10 +1,10 @@
 'use client'
 /**
- * "Report a mistake" — one tap from anything GeniusMap teaches (lesson board, live figure, picture, animation, Ask answer,
+ * "Report a mistake" — one tap from anything Ideanimo teaches (lesson board, live figure, picture, animation, Ask answer,
  * check). The sheet is calm and growth-framed (spotting an error is a skill, not a failure), every target is ≥44px,
  * category and note are optional, and the reply thanks the learner and offers a corrected version straight away.
  * Learning principles (docs/design/lesson-ui.md): reduced threat (no blame, nothing timed), autonomy (optional fields,
- * "Not now"), growth feedback ("this makes GeniusMap better for everyone"), Hick's law (five plain categories).
+ * "Not now"), growth feedback ("this makes Ideanimo better for everyone"), Hick's law (five plain categories).
  */
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
@@ -124,7 +124,7 @@ export function ReportSheet({ open, onClose, payload, onReported, onRetry, what,
             {state === 'sent' ? (
               <div className="pb-1 pt-2 text-center" role="status">
                 <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-accent"><Check className="h-6 w-6" strokeWidth={2.25} aria-hidden /></span>
-                <h2 id={`${ids}-t`} className="mt-4 font-display text-[24px] leading-tight text-ink">Thanks — this makes GeniusMap better for everyone</h2>
+                <h2 id={`${ids}-t`} className="mt-4 font-display text-[24px] leading-tight text-ink">Thanks — this makes Ideanimo better for everyone</h2>
                 <p className="mx-auto mt-2 max-w-[34ch] text-[15px] leading-relaxed text-ink-2">Spotting a mistake is real thinking. We’ve set {what} aside for you while a teammate checks it.</p>
                 <div className="mt-6 grid gap-2">
                   {onRetry && result && (
@@ -186,7 +186,7 @@ export function FlaggedNotice({ what, onRetry, onShow, retrying = false, classNa
   return (
     <div className={cx('rounded-[14px] border border-dashed border-line-strong bg-[#FBFAF7] px-4 py-3.5', className)} role="note">
       <p className="flex items-center gap-2 text-[14px] font-medium text-ink"><Flag className="h-4 w-4 text-accent" strokeWidth={2} aria-hidden />You flagged {what}</p>
-      <p className="mt-1 text-[13.5px] leading-relaxed text-ink-2">It’s set aside while we check it. Thanks for keeping GeniusMap honest.</p>
+      <p className="mt-1 text-[13.5px] leading-relaxed text-ink-2">It’s set aside while we check it. Thanks for keeping Ideanimo honest.</p>
       {(onRetry || onShow) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
           {onRetry && <button type="button" onClick={onRetry} disabled={retrying} className={cx(buttonClass('secondary', 'sm'), 'min-h-11')}><Pending busy={retrying} label="Asking for a corrected version"><RotateCcw className="h-3.5 w-3.5" aria-hidden />Show a corrected version</Pending></button>}

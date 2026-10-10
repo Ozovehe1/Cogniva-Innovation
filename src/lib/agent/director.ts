@@ -215,7 +215,7 @@ export async function rulePlan(admin: SupabaseClient, studentId: string, runId: 
       if (items.length >= 4) break
     }
   } else items.push({ kind: 'rest', title: 'Take it easy today', why: 'You said you’re low on energy. A short review is plenty.', minutes: 5 })
-  const note = opts.light ? 'A lighter day: a little review and some rest.' : items.length ? 'Reviews first while you’re fresh, then the next step.' : 'Nothing due today. Ask GeniusMap anything you’re curious about.'
+  const note = opts.light ? 'A lighter day: a little review and some rest.' : items.length ? 'Reviews first while you’re fresh, then the next step.' : 'Nothing due today. Ask Ideanimo anything you’re curious about.'
   if (opts.save !== false) await savePlan({ admin, studentId, runId }, items, note, opts.light ? 'checkin' : 'rule', !!opts.light)
   return { items, note }
 }

@@ -1,8 +1,8 @@
 # Architecture
 
-GeniusMap is an AI-only tutor. A learner says what they want to learn, takes a short adaptive check (or skips it when
+Ideanimo is an AI-only tutor. A learner says what they want to learn, takes a short adaptive check (or skips it when
 they are brand new), gets a personal path, and is taught each topic in AI-written whiteboard lessons with voice,
-pictures, live figures and short animations. An agent ("Ask GeniusMap" + the Learning Director) answers questions and
+pictures, live figures and short animations. An agent ("Ask Ideanimo" + the Learning Director) answers questions and
 plans between sessions. Everything runs on free tiers.
 
 ```

@@ -51,7 +51,7 @@ select_error: ${selectError?.message ?? 'none'}`}
     }
   }
 
-  // GeniusMap is AI-tutor only: every account (including former tutor accounts) gets the learner experience.
+  // Ideanimo is AI-tutor only: every account (including former tutor accounts) gets the learner experience.
   const navItems = [
     { href: '/dashboard', icon: 'home', label: 'Home' },
     { href: '/learn', icon: 'learn', label: 'Learn' },

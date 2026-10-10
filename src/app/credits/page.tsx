@@ -3,8 +3,8 @@ import { ExternalLink } from 'lucide-react'
 import { SiteFooter, SiteHeader } from '@/components/site-chrome'
 
 export const metadata = {
-  title: 'Credits & licences · GeniusMap',
-  description: 'The free illustration libraries and open-source software GeniusMap is built with, and how each picture is credited.',
+  title: 'Credits & licences · Ideanimo',
+  description: 'The free illustration libraries and open-source software Ideanimo is built with, and how each picture is credited.',
 }
 
 /* Library counts are from src/lib/illustrations/library.json (Oct 2026: servier 3,020, bio 2,773, commons 2,538). Every library picture is also credited where it is shown. */
@@ -72,7 +72,7 @@ export default function CreditsPage() {
           <p className="mt-4 text-[14px] leading-relaxed text-muted">Lessons and answers are written by AI models (Google Gemini and open models served by Groq).</p>
         </section>
 
-        <p className="mt-14 text-[15px]"><Link href="/about" className="font-medium text-accent underline-offset-4 hover:underline">← How GeniusMap works</Link></p>
+        <p className="mt-14 text-[15px]"><Link href="/about" className="font-medium text-accent underline-offset-4 hover:underline">← How Ideanimo works</Link></p>
       </main>
       <SiteFooter />
     </div>
