@@ -447,7 +447,7 @@ def t_octave(args, ctx, out: Out):
     code = need(args, "code", max_len=20000)
     if re.search(r"\b(system|unix|dos|shell_cmd|popen|urlread|webread|websave)\s*\(", code):
         raise ToolError("system/network calls are not allowed", {"tool": "python", "reason": "use the python tool"})
-    wrapped = "graphics_toolkit('gnuplot'); set(0,'defaultfigurevisible','off');\n" + code + \
+    wrapped = "warning('off','all'); graphics_toolkit('gnuplot'); set(0,'defaultfigurevisible','off');\n" + code + \
         "\nh=get(0,'children'); for i=1:numel(h); print(h(i), sprintf('oct_fig%d.png',i), '-dpng', '-r100'); end\n"
     with open("main.m", "w") as f:
         f.write(wrapped)
@@ -457,6 +457,7 @@ def t_octave(args, ctx, out: Out):
         out.add_file(f, "image/png")
     if rc != 0:
         raise ToolError("octave error: " + (se or so)[-1500:], {"tool": "python", "reason": "same computation with numpy/scipy"})
+    se = "\n".join(l for l in se.splitlines() if "preparing to exit" not in l).strip()
     return {"stdout": so[-8000:], "stderr": se[-2000:], "figures": len(figs)}, {}
 
 
@@ -478,8 +479,10 @@ def t_spice(args, ctx, out: Out):
         raise ToolError("analysis must be op | tran <step> <stop> | ac dec <n> <f1> <f2> | dc <src> <start> <stop> <step>")
     kind = analysis.split()[0].lower()
     probes = [p for p in (args.get("probes") or []) if re.fullmatch(r"[viVI]\([\w.#:]+(,[\w.#]+)?\)|[\w.#]+#branch", p)]
-    title = lines[0] if lines and not lines[0].strip().startswith(("R", "C", "L", "V", "I", "D", "Q", "M", "X", "*")) else "* netlist"
-    body = lines[1:] if title == lines[0] else lines
+    # SPICE always treats line 1 as the title: keep it if it is not an element line, else add one.
+    first = lines[0].split() if lines else []
+    is_elem = len(first) >= 3 and first[0][0].upper() in "RCLVIDQMXEFGHKJBSTWUZ" and not lines[0].lstrip().startswith("*")
+    title, body = (("* ideanimo netlist", lines) if is_elem or not lines else (lines[0], lines[1:]))
     ctl = [".control", "set noaskquit", "set filetype=ascii", f"{analysis}"]
     if kind == "op":
         ctl += ["print all > op.txt"]
@@ -590,7 +593,9 @@ def t_pde(args, ctx, out: Out):
     from fipy import CellVariable, DiffusionTerm, Grid1D, Grid2D, TransientTerm
     dims = int(args.get("dims", 1)); n = max(10, min(int(args.get("n", 60 if dims == 1 else 40)), 120 if dims == 1 else 60))
     D = float(args.get("D", 1.0)); L = float(args.get("L", 1.0)); dx = L / n
-    dt = float(args.get("dt", 0.9 * dx * dx / (2 * D * dims) * 5)); steps = max(1, min(int(args.get("steps", 100)), 400))
+    steps = max(1, min(int(args.get("steps", 100)), 400))
+    # default: simulate to t = 0.02 L^2 / D (heat visibly spreads but has not vanished); implicit solver, so stable
+    dt = float(args.get("dt", 0.02 * L * L / D / steps))
     ic = args.get("ic", "hot_center")
     mesh = Grid1D(nx=n, dx=dx) if dims == 1 else Grid2D(nx=n, ny=n, dx=dx, dy=dx)
     phi = CellVariable(mesh=mesh, name="T", value=0.0)
@@ -633,7 +638,7 @@ def t_pde(args, ctx, out: Out):
             ax.plot(xc, fr, lw=1.8, label=f"frame {k}")
         ax.set_xlabel("x"); ax.set_ylabel("T"); ax.set_title("Heat diffusion (1D)")
     else:
-        im = ax.imshow(v.reshape(n, n), origin="lower", extent=[0, L, 0, L], cmap="inferno", vmin=0, vmax=max(1e-9, frames[0].max()))
+        im = ax.imshow(v.reshape(n, n), origin="lower", extent=[0, L, 0, L], cmap="inferno", vmin=0, vmax=max(1e-9, float(v.max())))
         fig.colorbar(im, ax=ax, label="T"); ax.set_title(f"Heat diffusion (2D) after {steps} steps"); ax.grid(False)
     png = fig_png(fig)
     out.add_bytes("field.png", "image/png", png)
@@ -706,8 +711,9 @@ def t_latex(args, ctx, out: Out):
         raise ToolError("disallowed TeX primitive", {"tool": "client:katex", "reason": "render the formula with KaTeX"})
     if "\\documentclass" not in tex:
         pk = "".join(f"\\usepackage{{{p}}}\n" for p in (args.get("packages") or []) if re.fullmatch(r"[\w-]+", p))
-        tex = ("\\documentclass[border=4pt,varwidth=16cm]{standalone}\n\\usepackage{amsmath,amssymb,tikz,pgfplots}\n"
-               "\\usetikzlibrary{arrows.meta,calc,positioning,decorations.pathmorphing,shapes}\n\\pgfplotsset{compat=1.17}\n" + pk +
+        plots = "\\usepackage{pgfplots}\n\\pgfplotsset{compat=1.17}\n" if "axis" in tex else ""
+        tex = ("\\documentclass[border=4pt,varwidth=16cm]{standalone}\n\\usepackage{amsmath,amssymb,tikz}\n" + plots +
+               "\\usetikzlibrary{arrows.meta,calc,positioning,decorations.pathmorphing,shapes}\n" + pk +
                "\\begin{document}\n" + tex + "\n\\end{document}\n")
     with open("f.tex", "w") as f:
         f.write(tex)
@@ -720,10 +726,15 @@ def t_latex(args, ctx, out: Out):
         raise ToolError("dvisvgm failed: " + se2[-500:])
     out.add_file("f.svg", "image/svg+xml", "figure.svg")
     if args.get("png", True):
+        # TikZ uses PostScript specials that dvipng drops, so rasterise the SVG (rsvg-convert); dvipng only as a fallback.
         try:
-            run_cmd(["dvipng", "-D", "160", "-T", "tight", "-bg", "White", "-o", "f.png", "f.dvi"], timeout=20)
+            run_cmd(["rsvg-convert", "-z", "2", "-b", "white", "-o", "f.png", "f.svg"], timeout=20)
         except ToolError as e:
-            out.log(f"png skipped: {e}")
+            out.log(f"rsvg-convert unavailable ({e}); trying dvipng")
+            try:
+                run_cmd(["dvipng", "-D", "160", "-T", "tight", "-bg", "White", "-o", "f.png", "f.dvi"], timeout=20)
+            except ToolError as e2:
+                out.log(f"png skipped: {e2}")
         if os.path.exists("f.png"):
             data = open("f.png", "rb").read()
             ok, std = png_nonblank(data)
