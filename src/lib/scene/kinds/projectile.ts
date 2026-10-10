@@ -126,7 +126,7 @@ export const projectile: KindRuntime<S> = {
     const bx = v.X(p.x), by = v.Y(Math.max(0, p.y))
     const be = fx.emph('ball')
     if (be > 0) halo(c, bx, by, 30, NL.goldRgb, be)
-    const k = Math.min(3.2, (v.W * 0.2) / u)
+    const k = (v.W * 0.26) / u
     const vr = fx.reveal('velocity'), ce = fx.emph('components')
     if (s.land < 1 && (t > 0 || P.__owned)) {
       if (P.show_components !== false) {
@@ -135,7 +135,7 @@ export const projectile: KindRuntime<S> = {
         if (ce > 0.05 || vr > 0.95) {
           c.save(); c.globalAlpha = vr; font(c, 11, 700); c.textBaseline = 'middle'
           c.fillStyle = NL.field; c.textAlign = 'left'; c.fillText('vx', bx + p.vx * k + 6, by + 10)
-          if (Math.abs(p.vy) > 1.2) { c.fillStyle = NL.gold; c.fillText('vy', bx + 8, by - p.vy * k * 0.6) }
+          if (Math.abs(p.vy) * k > 20) { c.fillStyle = NL.gold; c.fillText('vy', bx + 8, by - p.vy * k * 0.6) }
           c.restore()
         }
       }

@@ -18,6 +18,8 @@ export type Block =
   /** numeric: a typed answer (number + unit) instead of options. */
   | { kind: 'practice'; id: string; actionId: string; title: string; items: { q: string; options: string[]; figure?: import('../assessment/spec').PublicFigure; numeric?: { unit?: string } }[] }
   /** A verified worked example (src/lib/examples): the client re-solves it live; practice answers stay on the server. */
+  /** A live scene (lib/scene): a validated scene spec the engine renders and animates. */
+  | { kind: 'scene'; id: string; spec: import('../scene/types').SceneSpec; alt: string }
   | { kind: 'worked_example'; id: string; spec: import('../examples/spec').ExampleSpec; practice?: { actionId: string; items: { q: string; svg?: string; unit?: string }[] } }
   | { kind: 'confirm'; id: string; actionId: string; title: string; detail: string; status: 'proposed' | 'done' | 'declined' | 'undone' }
   | { kind: 'sources'; id: string; items: { title: string; url: string; source: string }[] }

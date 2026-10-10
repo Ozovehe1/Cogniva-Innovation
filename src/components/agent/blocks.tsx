@@ -16,6 +16,7 @@ import { genie } from '@/components/genie/presence'
 import { speakerForAudio } from '@/components/genie/lipsync'
 import { ConfirmBlock } from './confirm'
 import { ZoomableImage } from '@/components/zoomable'
+import { LazySceneCard } from '@/components/scene'
 import { PaperSketch, Pending, StageList, WhileYouWait, useElapsed } from '@/components/system/wait'
 
 // JSXGraph (~1 MB) loads only when an interactive figure is on screen.
@@ -49,6 +50,7 @@ export function AgentBlock({ block }: { block: Block }) {
     case 'code': return <CodeBlock block={block} />
     case 'practice': return <PracticeBlock block={block} />
     case 'worked_example': return <WorkedExample spec={block.spec} practice={block.practice} />
+    case 'scene': return <LazySceneCard spec={block.spec} />
     case 'confirm': return <ConfirmBlock block={block} />
     case 'sources': return <SourcesBlock items={block.items} />
     case 'lesson': return (

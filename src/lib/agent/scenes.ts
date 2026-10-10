@@ -1,4 +1,8 @@
 /**
+ * LIVE rendering of these scenes moved to the scene engine (lib/scene, components/scene): InteractiveFigure maps each
+ * kind onto an engine spec (lib/scene/templates.ts legacySceneSpec), so older lessons get the new look. What stays here
+ * is the static SVG still of each scene (board pins, exports, the figure's server-side picture).
+ *
  * Hand-built animated scenes for ideas a plotted figure cannot show well: a bar magnet's field and induction in a coil,
  * the field round a current-carrying wire, charges drifting along a wire. Each scene is a pure function of its slider
  * values plus a little live state (time, the magnet's speed), returning an SVG string; the client re-draws it every
@@ -7,8 +11,8 @@
  * ≥ 9 px, labels ≥ 13 px after scaling.
  */
 
-export type SceneKind = 'magnet_coil' | 'bar_magnet' | 'wire_field' | 'charge_drift'
-export const SCENE_KINDS: SceneKind[] = ['magnet_coil', 'bar_magnet', 'wire_field', 'charge_drift']
+export type SceneKind = 'magnet_coil' | 'bar_magnet' | 'wire_field' | 'charge_drift' | 'motor' | 'projectile'
+export const SCENE_KINDS: SceneKind[] = ['magnet_coil', 'bar_magnet', 'wire_field', 'charge_drift', 'motor', 'projectile']
 
 /** Live state the client keeps between frames. */
 export interface SceneLive {
@@ -286,5 +290,6 @@ export function sceneForTitle(title: string): SceneKind | null {
   if (title === 'The field around a bar magnet') return 'bar_magnet'
   if (title === 'Magnetic field around a wire') return 'wire_field'
   if (title === 'Charges drifting along a wire') return 'charge_drift'
+  if (title === 'How an electric motor turns') return 'motor'
   return null
 }

@@ -46,6 +46,7 @@ import { dueReviews } from './learner-model'
 import { asData } from './guard'
 import { findAction, idemKey, logAction, remediationTarget, todayWAT } from './actions'
 import { workedExampleTool } from '../examples/tool'
+import { sceneTool } from '../scene/tool'
 
 /**
  * The learner-facing line under a clip: the brief's first sentence (its learning objective), never the internal shot list,
@@ -855,7 +856,7 @@ const VISUAL: ToolSpec[] = [
   },
 ]
 
-export const ALL_TOOLS: ToolSpec[] = [...READ, ...WRITE, ...DIRECTOR, ...VISUAL, workedExampleTool]
+export const ALL_TOOLS: ToolSpec[] = [...READ, ...WRITE, ...DIRECTOR, ...VISUAL, workedExampleTool, sceneTool]
 
 export function toolsFor(ctx: Pick<AgentCtx, 'mode' | 'restricted'>): ToolSpec[] {
   return ALL_TOOLS.filter(t => t.modes.includes(ctx.mode) && !(ctx.restricted && (t.tier === 'write' || t.tier === 'confirm' || t.def.name === 'web_search' || t.def.name === 'fetch_page')))

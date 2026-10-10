@@ -12,7 +12,8 @@ import { Hand, Pause, Play, RotateCcw, Target } from 'lucide-react'
 import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
 import { IX_HEX, compileSpec, figureGeom, initialEnv, odeCurve, type IxEnv, type IxSpec } from '@/lib/agent/interactive'
-import { chargeDriftSvg, magnetCoilSvg, stepChargeDrift, stepMagnetCoil, stepWireField, wireFieldSvg, type SceneKind, type SceneLive } from '@/lib/agent/scenes'
+import { LazySceneStage } from '@/components/scene'
+import { legacySceneSpec } from '@/lib/scene/templates'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Board = any
@@ -36,7 +37,22 @@ const buzz = () => { try { navigator.vibrate?.(8) } catch { /* not supported */ 
 /** A tidy snapping step for a range: about 1/40 of it, rounded to 1, 2 or 5 × 10^k. */
 const niceStep = (span: number) => { const raw = span / 40, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p }
 
-export default function InteractiveFigure({ spec, alt, play, demo = false, onHandOver, onReadouts, task, goalReadout = -1 }: {
+type FigureProps = Parameters<typeof JsxFigure>[0]
+
+/** Scene templates (magnet and coil, wire field, charge drift, bar magnet, motor, projectile) render on the live scene
+ * engine (lib/scene): one art direction, real physics, its own directed timeline; everything else is JSXGraph. */
+export default function InteractiveFigure(props: FigureProps) {
+  const legacy = props.spec.scene ? legacySceneSpec(props.spec.scene, props.spec.title) : null
+  if (!legacy) return <JsxFigure {...props} />
+  return (
+    <div className="mt-3">
+      <LazySceneStage spec={legacy.spec} onHandOver={props.onHandOver} />
+      {props.task && <p className="mt-2 flex items-start gap-1.5 text-[13.5px] font-medium leading-snug text-ink"><Target className="mt-px h-4 w-4 flex-shrink-0 text-clay" strokeWidth={2} aria-hidden />{props.task}</p>}
+    </div>
+  )
+}
+
+function JsxFigure({ spec, alt, play, demo = false, onHandOver, onReadouts, task, goalReadout = -1 }: {
   spec: IxSpec; alt: string
   /** What the learner is asked to do with the figure (an explore check's goal). Replaces the generic footer hint so the
    * task stays in view next to the controls (spatial contiguity, goal salience). */
@@ -204,7 +220,7 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
       ) : (
         <div className="relative">
           {!ready && <div className="pointer-events-none absolute inset-0 z-[1] -mt-3"><FigureSkeleton aspect={String(geom.aspect)} /></div>}
-          {spec.scene ? <SceneView key={nonce} kind={spec.scene} spec={spec} vals={vals} alt={alt} onTouch={() => setTouched(true)} /> : <div id={`${ids}-${nonce}`} ref={boxRef} onPointerDown={() => setTouched(true)} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: String(geom.aspect), maxWidth: Math.round(440 * geom.aspect), marginInline: "auto" }} role="img" aria-label={alt} />}
+          {<div id={`${ids}-${nonce}`} ref={boxRef} onPointerDown={() => setTouched(true)} className="jxgbox mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', aspectRatio: String(geom.aspect), maxWidth: Math.round(440 * geom.aspect), marginInline: "auto" }} role="img" aria-label={alt} />}
           {/* Drag affordance: a hint chip that fades after the first touch. */}
           {ready && !touched && !spec.surface && dragNames.length > 0 && (
             <div className={cx('pointer-events-none absolute bottom-2 left-2 z-[2] inline-flex items-center gap-1.5 rounded-full bg-ink/85 px-2.5 py-1 text-[12px] font-medium text-white shadow-[var(--shadow-raised)]', !reducedMotion() && 'animate-[pulse_2.4s_ease-in-out_3]')}>
@@ -253,39 +269,4 @@ export default function InteractiveFigure({ spec, alt, play, demo = false, onHan
       </div>
     </div>
   )
-}
-
-/** A hand-built animated scene (lib/agent/scenes.ts): redrawn every frame from the slider value and its own live state
- * (time, the magnet's speed), so the field flows, the meter swings and the charges drift as the learner watches. */
-function SceneView({ kind, spec, vals, alt, onTouch }: { kind: SceneKind; spec: IxSpec; vals: IxEnv; alt: string; onTouch: () => void }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const valsRef = useRef(vals)
-  useEffect(() => { valsRef.current = vals }, [vals])
-  useEffect(() => {
-    const sl = spec.sliders[0]
-    if (!sl || !ref.current) return
-    const name = sl.name.toLowerCase()
-    const range = { min: sl.min, max: sl.max }
-    let live: SceneLive = { t: 0 }
-    let prev = valsRef.current[name] ?? sl.value
-    let last = performance.now(), raf = 0
-    const still = reducedMotion()
-    const draw = () => {
-      const v = valsRef.current[name] ?? sl.value
-      const html = kind === 'magnet_coil' || kind === 'bar_magnet' ? magnetCoilSvg(v, live, range, kind === 'magnet_coil') : kind === 'wire_field' ? wireFieldSvg(v, live, range) : chargeDriftSvg(v, live, range)
-      if (ref.current) ref.current.innerHTML = html
-    }
-    const tick = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000); last = now
-      const v = valsRef.current[name] ?? sl.value
-      live = kind === 'magnet_coil' || kind === 'bar_magnet' ? stepMagnetCoil(live, v, prev, dt) : kind === 'wire_field' ? stepWireField(live, v, Math.max(Math.abs(sl.min), Math.abs(sl.max)), dt) : stepChargeDrift(live, v, still ? 0 : dt)
-      prev = v
-      draw()
-      raf = requestAnimationFrame(tick)
-    }
-    if (still) { live = kind === 'wire_field' ? stepWireField(live, prev, Math.max(Math.abs(sl.min), Math.abs(sl.max)), 1) : live; draw() }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [kind, spec])
-  return <div ref={ref} onPointerDown={onTouch} className="mt-3 w-full overflow-hidden rounded-[10px] bg-[#FBFAF7]" style={{ border: '1px solid #E5E1D8', maxWidth: 560, marginInline: 'auto', minHeight: 120 }} role="img" aria-label={alt} />
 }

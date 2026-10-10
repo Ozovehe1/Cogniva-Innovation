@@ -100,7 +100,7 @@ export const circuit: KindRuntime<S> = {
       s.f.forEach((f0, i) => {
         const p = along(pts, f0 + s.drift)
         const jx = fx.reduced ? 0 : Math.sin(s.t * 9 + s.jig[i]) * 2.2, jy = fx.reduced ? 0 : Math.cos(s.t * 7.3 + s.jig[i] * 1.7) * 2.2
-        const nearComp = Math.hypot(p.x - v.X(0), p.y - bot) < amR + 2 || Math.hypot(p.x - right, p.y - v.Y(0)) < 0.5 * v.u + 4
+        const nearComp = Math.hypot(p.x - v.X(0), p.y - bot) < amR + 2 || Math.hypot(p.x - right, p.y - v.Y(0)) < 0.5 * v.u + 4 || (Math.abs(p.x - v.X(X0)) < 16 && Math.abs(p.y - v.Y(0)) < Math.max(46, 1.25 * v.u) / 2 + 8)
         if (nearComp) return
         if (ce > 0) halo(c, p.x, p.y, 12, '143,193,255', ce)
         charge(c, p.x + jx, p.y + jy, 4.6, -1, cr)
