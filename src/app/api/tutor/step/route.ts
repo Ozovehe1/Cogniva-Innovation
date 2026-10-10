@@ -11,6 +11,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { learnerFacts, tutorState } from '@/lib/agent/tutor-state'
 import { ensureIds } from '@/lib/agent/board-scene'
 import { levelLine } from '@/lib/intake'
+import { narrateSteps } from '@/lib/agent/narrate'
 
 export const maxDuration = 60
 
@@ -99,6 +100,8 @@ export async function POST(request: Request) {
       history,
       tutorState: stateText,
     })))
+    // Never a silent visual: a re-teach that shows something says at least a sentence or two about it.
+    if (narrateSteps(steps, reason)) console.info('tutor step: narration filled from the visual')
     return NextResponse.json({ steps, meta })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

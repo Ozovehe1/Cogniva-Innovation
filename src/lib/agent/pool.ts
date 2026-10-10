@@ -476,6 +476,8 @@ export interface RunOptions {
   stopOn?: (err: unknown) => boolean
   /** Max slots to try. */
   maxAttempts?: number
+  /** Slots to skip (e.g. the one that just answered with nothing). */
+  avoid?: readonly string[]
 }
 
 export function classify(err: unknown): { kind: ReportKind; cooldownMs?: number; keyWide?: boolean; modelWide?: boolean } {
@@ -505,8 +507,8 @@ export async function runOnPool<T>(o: RunOptions, attempt: Attempt<T>): Promise<
   const priority = o.priority ?? ctx.priority ?? 'ask'
   const learner = o.learnerId !== undefined ? o.learnerId : ctx.learnerId ?? null
   const errors: string[] = []
-  const tried = new Set<string>()
-  let skippedTakes = 0
+  const tried = new Set<string>(o.avoid ?? [])
+  let skippedTakes = tried.size
   const maxAttempts = o.maxAttempts ?? 8
   // Rungs of the ladder. Background never trims or goes lighter: it waits for capacity instead.
   const rungs: { trimmed: boolean; lighter: boolean }[] = priority === 'background'

@@ -14,6 +14,7 @@ import { selectTools, toolsFor, type AgentCtx, type ToolSpec } from './tools'
 import { chatFigureFor } from '@/lib/lesson-stages'
 import { POINT_AT_TOOL, TEACHING_MOVE_TOOL, compileDo, inferMove, moveLine, normMove, parseMoveLine, pointAtOps, sayDoStream, stripDoLines, type MoveDecision } from './moves'
 import { sceneOf } from './board-scene'
+import { isVisual, narrateVisual, needsNarration } from './narrate'
 
 export const MAX_STEPS = 6
 export const MAX_WRITES = 3
@@ -51,6 +52,7 @@ DO: {"write":"÷2 keeps the minus","near":"m2"}   or   DO: {"math":"x = -5","at"
 DO: {"rewrite":"m3","tex":"x = -5"}   DO: {"erase":["k1"]}
 Only ids that BOARD IN VIEW lists; at most a few per answer. Use point_at or board_edit as tools for anything bigger.
 Tools you act with: find_illustration (a real, credited textbook picture of an object or organism; then point at its parts in words), interactive (a live figure: sliders, points that follow them, a function with a gliding point, a vector field {dx, dy}), simulate (an object moving under forces, with sliders), animate_concept (a narrated clip of a process or motion, 1-3 minutes away: pair it with something on screen now, and only when they asked for an animation or the motion IS the idea), plot (a static graph), math_diagram (exact sets, geometry, trees, vectors), draw_on_board (a new board scene: working, derivations, quick sketches; it replaces what is on the board), board_edit / point_at / board_clear_region (change the board in place by id), run_python (heavy numerics, data).
+show_scene (a live, narrated scene that plays at once): use it for an electric motor, electromagnetic induction (magnet and coil), the magnetic field of a wire or solenoid, current flowing round a circuit, a projectile's flight, blood flow through the heart, a cell's parts, or a tangent sliding along a curve — when the idea is that motion or flow, prefer it to a still picture or a 1-3 minute clip. The worked_example tool: a numeric problem (circuit, projectile, incline, stoichiometry, genetics, calculus) solved step by step with every number checked.
 When they ask for an animation, a clip or a video, call animate_concept; only if it errors (e.g. the daily limit) show it another way and say the clip is not available right now. When they name a visual (the board, a diagram, a graph, something to drag), make that.
 Narration and text follow the visual (refer to what it shows, in its order), and your words still make sense if it does not load.
 Maths: never state a computed number unless compute or run_python checked it in this run. Write maths in $...$ (KaTeX). Use plain Unicode only outside $.
@@ -130,6 +132,11 @@ export async function runAgent(input: {
   let move: MoveDecision | null = null
   const setMove = (m: MoveDecision) => { if (!move) { move = m; ctx.trace.push(moveLine(m)) } }
   const chatMode = ctx.mode === 'chat'
+  // Visuals this turn made (the narration check looks at these only).
+  const initialIds = new Set((ctx.blocks ?? []).map(b => b.id))
+  const newVisuals = () => (ctx.blocks ?? []).filter(b => isVisual(b) && !initialIds.has(b.id))
+  let lastSlot: string | undefined
+  let allBusy = false
   // Phase 2 start: DO lines in the tutor's words act on the board as they arrive (compiled to board_edit ops),
   // one after another, while the text keeps streaming.
   let doChain: Promise<unknown> = Promise.resolve()
@@ -203,6 +210,12 @@ export async function runAgent(input: {
       const say = await fallbackVisual()
       if (say) { const d = `${text && !/\s$/.test(text) ? '\n\n' : ''}${say}`; text += d; input.onText?.(d) }
     }
+    // Never a silent visual: a turn that shows something says at least a couple of sentences about it (busy models or
+    // a model that stopped right after its tool call): retry on another free model, else words from the visual itself.
+    if (chatMode && newVisuals().length && needsNarration(text)) {
+      const n = await narrateVisual({ blocks: newVisuals(), move, question: lastUser, already: text, avoidSlots: lastSlot ? [lastSlot] : undefined, deadline: input.deadline, trace: ctx.trace, skipModel: allBusy, forceModelFail: ctx.testFault === 'empty_nomodel' })
+      if (n) { const d = `${text.trim() ? (/\s$/.test(text) ? '' : '\n\n') : ''}${n.text}`; text += d; input.onText?.(d) }
+    }
     if (chatMode && !move) setMove({ move: inferMove(used.map(n => (n === 'do' ? 'point_at' : n)).filter(n => !LOCAL_TOOLS.has(n) || n === 'point_at'), text), reason: 'not declared; read from what it did', via: 'inferred' })
     return { text, model, steps, toolCalls: used, move }
   }
@@ -211,6 +224,11 @@ export async function runAgent(input: {
     filter?.step()
     let res: Awaited<ReturnType<typeof chat>>
     try {
+      if (ctx.testFault && step > 0 && newVisuals().length) {
+        ctx.trace.push(`test fault: ${ctx.testFault}`)
+        if (ctx.testFault === 'busy') throw new AllModelsBusyError('test: forced busy after a visual', 30_000)
+        return finish(step)
+      }
       res = await chat({
         purpose: chatMode ? 'chat' : 'director',
         messages, tools: last ? undefined : move ? defs.filter(d => d.name !== 'teaching_move') : defs, toolChoice: 'auto',
@@ -228,9 +246,17 @@ export async function runAgent(input: {
           return { text: d, model, steps: step + 1, toolCalls: used, move }
         }
       }
+      // Busy after a visual was already shown: keep it and narrate it instead of failing the turn.
+      if (err instanceof AllModelsBusyError && chatMode && newVisuals().length) {
+        allBusy = true
+        ctx.trace.push('all models busy after a visual: narrating it')
+        const r = await finish(step + 1)
+        return { ...r, busy: true }
+      }
       throw err
     }
     model = res.model
+    lastSlot = res.slot
     const stripped = chatMode ? stripMoveLine(res.text) : { text: res.text, move: null }
     if (stripped.move) setMove(stripped.move)
     text += chatMode ? stripDoLines(stripped.text) : stripped.text

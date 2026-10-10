@@ -96,6 +96,12 @@ export interface AgentCtx {
   limits: { animations: number; miniLessons: number; practiceSets: number; webSearches: number; pythonRuns: number }
   /** Correctness guard: why the last visual was held back (fed to the model with the tool result, then cleared). */
   guardIssues?: string[]
+  /**
+   * Test-only fault injection (set by the chat route only when the request carries the server's render token):
+   * after the turn's first visual, 'busy' makes the next model step throw AllModelsBusyError, 'empty' makes it end
+   * with no text, 'empty_nomodel' also fails the narration retry. Proves the turn still narrates its visual.
+   */
+  testFault?: 'busy' | 'empty' | 'empty_nomodel'
 }
 
 export interface ToolSpec {

@@ -7,6 +7,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { detectDistress } from '@/lib/safety'
 import { screenInjection } from '@/lib/agent/guard'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES } from '@/lib/agent/run'
+import { isVisual, narrationFromVisual, needsNarration } from '@/lib/agent/narrate'
 import { AllModelsBusyError, chat, type Msg } from '@/lib/agent/llm'
 import { compactHistory, withLlmContext } from '@/lib/agent/pool-prompt'
 import { poolStore } from '@/lib/agent/pool'
@@ -202,6 +203,7 @@ export async function POST(request: Request) {
       visualTopic: lessonRow ? `${(lessonRow as { title: string }).title}. ${digest?.text.slice(0, 400) ?? ''}` : prevAsk,
       origin: new URL(request.url).origin, writes: 0, maxWrites: MAX_WRITES, restricted: inj.flagged, practiceMode: false,
       emit: b => emitChecked(b), blocks, trace: [], searchUrls: new Set(), computeCalls: 0, sources: [], limits: LIMITS(), guardIssues,
+      testFault: testFaultOf(request),
     }
     if (inj.flagged) await admin.from('agent_actions').insert({ student_id: studentId, run_id: ctx.runId, source: 'agent', tool: 'injection_screen', args: { reasons: inj.reasons.slice(0, 4), score: inj.score }, summary: 'Message flagged; run restricted to read and visual tools' })
 
@@ -243,6 +245,8 @@ export async function POST(request: Request) {
       if (err instanceof TurnTimeout) {
         // Out of time: keep what was shown and said, and close the turn properly (no endless spinner).
         ctx.trace.push('turn: hard stop')
+        // A visual already on screen with (almost) no words: say what it shows before closing the turn.
+        if (blocks.some(isVisual) && needsNarration(text)) { const n = narrationFromVisual(blocks); if (n) { const d = `${text && !/\s$/.test(text) ? '\n\n' : ''}${n}`; text += d; send({ t: 'text', d }) } }
         const d = `${text && !/\s$/.test(text) ? '\n\n' : ''}${blocks.length ? 'That took longer than it should, so I stopped here: what is above is ready to look at. Ask me to carry on if you want more.' : 'That took too long, so I stopped. Please ask again.'}`
         text += d; send({ t: 'text', d })
       }
@@ -303,3 +307,11 @@ function parseLive(v: unknown, lessonId: string | null): { cursor: number; lastC
 }
 
 class TurnTimeout extends Error { constructor() { super('turn hard stop') } }
+
+/** Test-only fault injection (see AgentCtx.testFault): honoured only with the server's own render token. */
+function testFaultOf(request: Request): AgentCtx['testFault'] {
+  const f = request.headers.get('x-gm-test-fault')
+  const tok = process.env.RENDER_TOKEN
+  if (!f || !tok || request.headers.get('x-render-token') !== tok) return undefined
+  return f === 'busy' || f === 'empty' || f === 'empty_nomodel' ? f : undefined
+}

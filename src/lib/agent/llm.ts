@@ -47,6 +47,8 @@ export interface ChatRequest {
   priority?: Priority
   /** The learner this call serves (fair-share budget). Defaults to the surrounding withLlmContext(). */
   learnerId?: string | null
+  /** Pool slots not to use (a retry on another model after one went quiet). */
+  avoidSlots?: string[]
 }
 export interface ChatResult {
   text: string
@@ -130,6 +132,7 @@ export async function chat(input: ChatRequest): Promise<ChatResult> {
       timeoutMs: req.builtin ? 45_000 : undefined,
       // Text already streamed to the learner cannot be taken back: surface the error instead of re-answering.
       stopOn: () => emitted,
+      avoid: req.avoidSlots,
     }, async (slot, o) => {
       const use = o.trimmed ? trimmed : req
       const res = slot.provider === 'groq' ? await groqChat(slot, use, onText, o.timeoutMs) : await geminiChat(slot, use, onText, o.timeoutMs)
