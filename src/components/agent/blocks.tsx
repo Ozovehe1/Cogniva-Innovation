@@ -16,7 +16,7 @@ import { genie } from '@/components/genie/presence'
 import { speakerForAudio } from '@/components/genie/lipsync'
 import { ConfirmBlock } from './confirm'
 import { ZoomableImage } from '@/components/zoomable'
-import { PaperSketch, Pending, StageList, WaitNote, WhileYouWait, useElapsed } from '@/components/system/wait'
+import { PaperSketch, Pending, StageList, WhileYouWait, useElapsed } from '@/components/system/wait'
 
 // JSXGraph (~1 MB) loads only when an interactive figure is on screen.
 const InteractiveFigure = dynamic(() => import('./interactive'), { ssr: false, loading: () => <FigureSkeletonLite /> })
@@ -316,14 +316,13 @@ export function ClipWait({ phase, attempts }: { phase?: string; attempts: number
     <div data-wait="clip">
       <PaperSketch bare kind="clip" aspect="16 / 9" progress="none" live={false} />
       <div className="border-t border-line px-4 pb-3.5 pt-3" role="status" aria-live="polite">
-        {/* Stages are shown only when the status route reports the render phase; otherwise one honest line. */}
-        {phase
-          ? <StageList stages={[
-              { label: attempts > 1 ? 'Re-planning the scene after a check failed' : 'Planning the scene and checking every number', state: rendering ? 'done' : 'now' },
-              { label: 'Drawing the frames', state: rendering ? 'now' : 'next' },
-              { label: 'Ready to play here', state: 'next' },
-            ]} />
-          : <WaitNote live={false}>Planning the scene, checking every number, then drawing it</WaitNote>}
+        {/* The real stages from the status route; before its first answer the job was just queued, so the first stage
+            is the true one and the list never changes height when the poll lands. */}
+        <StageList stages={[
+          { label: attempts > 1 ? 'Re-planning the scene after a check failed' : 'Planning the scene and checking every number', state: rendering ? 'done' : 'now' },
+          { label: 'Drawing the frames', state: rendering ? 'now' : 'next' },
+          { label: 'Ready to play here', state: 'next' },
+        ]} />
         <p className="mt-2.5 text-[12.5px] leading-snug text-muted">{elapsed > 200 ? 'Taking longer than usual, still working. You can keep going; it appears here by itself.' : 'Usually 1 to 3 minutes. Keep reading; it appears here by itself.'}</p>
         <WhileYouWait className="mt-3">Before it plays: what do you expect to change first, and why?</WhileYouWait>
       </div>

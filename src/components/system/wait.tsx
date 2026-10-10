@@ -192,12 +192,15 @@ const SKETCH: Record<SketchKind, { vb: string; strokes: { d: string; w?: number;
     { d: 'M76 136 L 128 88 L 162 118 L 196 82 L 244 136', w: 2.6 },
     { d: 'M206 58 m -11 0 a 11 11 0 1 0 22 0 a 11 11 0 1 0 -22 0', w: 2.2, accent: true },
   ] },
-  // A scene: axes, a circle and the wave it traces (what a Manim clip usually looks like).
+  // A scene in motion, whatever the topic: a start point, the path something takes through a middle step, and where it
+  // ends up (a heart's blood flow, a projectile, a proof's moving piece all read as this; a subject-specific drawing
+  // like a circle tracing a wave would promise the wrong picture).
   clip: { vb: '0 0 320 180', strokes: [
-    { d: 'M24 92 L 300 92', w: 1.4, o: 0.5 },
-    { d: 'M86 92 m -40 0 a 40 40 0 1 0 80 0 a 40 40 0 1 0 -80 0', w: 2.2, o: 0.8 },
-    { d: 'M86 92 L 114 64', w: 1.6, o: 0.6 },
-    { d: 'M150 92 C 166 52, 182 52, 198 92 S 230 132, 246 92 S 278 52, 294 92', w: 3, accent: true },
+    { d: 'M40 128 m -8 0 a 8 8 0 1 0 16 0 a 8 8 0 1 0 -16 0', w: 2.2, o: 0.8 },
+    { d: 'M40 128 C 100 40, 200 160, 276 66', w: 3, accent: true },
+    { d: 'M152 99 m -7 0 a 7 7 0 1 0 14 0 a 7 7 0 1 0 -14 0', w: 2.2, o: 0.7 },
+    { d: 'M260 64 L 276 66 L 272 82', w: 2.6, accent: true },
+    { d: 'M24 156 L 296 156', w: 1.2, o: 0.4 },
   ] },
   // Something you can drag: a track, a handle, a readout.
   sim: { vb: '0 0 320 180', strokes: [
@@ -219,7 +222,7 @@ const SKETCH: Record<SketchKind, { vb: string; strokes: { d: string; w?: number;
 
 /**
  * A paper frame at the size of what is coming, with a pen drawing its rough shape. aspect 'board' = the lesson
- * player's frame (4:3 on a phone, 16:9 from md). `caption` sits in a strip under
+ * player's frame (the 800 x 500 board, 16:10 at every width). `caption` sits in a strip under
  * the paper (never on the drawing), with an optional quiet line.
  */
 export function PaperSketch({ kind, caption, sub, aspect = '16 / 9', className, progress, footer, live = true, bare = false }: {
@@ -232,7 +235,7 @@ export function PaperSketch({ kind, caption, sub, aspect = '16 / 9', className, 
   const cycle = n * per * 0.7 + 2.6
   return (
     <div className={cx(!bare && 'overflow-hidden rounded-[14px] border border-line bg-surface shadow-[var(--shadow-card)]', className)} data-wait={`sketch-${kind}`} aria-busy="true">
-      <div className={cx('relative w-full bg-[#FBFAF6]', aspect === 'board' && 'aspect-[4/3] md:aspect-[16/9]')} style={aspect === 'board' ? undefined : { aspectRatio: aspect }} aria-hidden>
+      <div className={cx('relative w-full bg-[#FBFAF6]', aspect === 'board' && 'aspect-[8/5]')} style={aspect === 'board' ? undefined : { aspectRatio: aspect }} aria-hidden>
         {/* faint ruled paper */}
         <div className="absolute inset-0 opacity-[0.55]" style={{ backgroundImage: 'linear-gradient(to bottom, rgba(20,20,26,0.045) 1px, transparent 1px)', backgroundSize: '100% 22px', backgroundPosition: '0 11px' }} />
         <svg viewBox={s.vb} preserveAspectRatio="xMidYMid meet" className="absolute inset-0 h-full w-full p-[6%]">

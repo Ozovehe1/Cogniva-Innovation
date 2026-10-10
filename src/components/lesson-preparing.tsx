@@ -40,7 +40,7 @@ export function LessonPreparing({ lessonId, own, compact = false, readySteps = 0
   const ready = state?.sectionsReady ?? 0
   const status = state?.status ?? 'outlining'
   const planned = status !== 'outlining' && status !== 'queued' && status !== 'pending'
-  // The lesson's board frame at its final place and size (4:3 on a phone, 16:9 wider, as the player), a pen sketching a
+  // The lesson's board frame at its final place and size (16:10, as the player's 800 x 500 board), a pen sketching a
   // lesson page on it (shaped like what is coming), and the real drafting stages from the server (honest progress,
   // uncertainty reduction). Nothing to do but wait or leave (autonomy): the lesson opens here by itself.
   if (state?.error) return (
