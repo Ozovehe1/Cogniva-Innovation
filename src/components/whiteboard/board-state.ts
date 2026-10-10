@@ -221,9 +221,12 @@ export function applyAction(state: BoardState, step: Action, index: number, k = 
       return { ...state, els: [...rest, el] }
     }
     case 'draw': {
-      const axesDef = step.on ? axes[step.on] : undefined
-      if (step.on && !axesDef) return state
-      const plain: DrawStep = { type: 'draw', id: step.id, shape: step.shape, color: step.color, width: step.width, dashed: step.dashed, fill: step.fill, on: step.on, rough: step.rough }
+      // A point / line written in an axes' data units but missing "on" (drafted lessons do this: Lagos at [2, 2] on a
+      // 0..10 grid) would land in the board's top-left corner: bind it to the latest axes it plainly belongs to.
+      const on = step.on ?? orphanAxes(step.shape, els, axes)
+      const axesDef = on ? axes[on] : undefined
+      if (on && !axesDef) return state
+      const plain: DrawStep = { type: 'draw', id: step.id, shape: step.shape, color: step.color, width: step.width, dashed: step.dashed, fill: step.fill, on, rough: step.rough }
       const el: ShapeEl = { kind: 'shape', key: keyOf(step.id), id: step.id, born: index, act, step: plain, axes: axesDef, dyn: shapeIsDyn(plain) || undefined }
       const rest = step.id ? els.filter(e => e.id !== step.id) : els
       let nextAxes = axes
@@ -726,4 +729,34 @@ export function compactPartition(board: BoardState): CompactLayout {
   const x1 = Math.min(BOARD_W, Math.max(...all.map(b => b.x + b.w)) + pad)
   const y1 = Math.min(BOARD_H, Math.max(...all.map(b => b.y + b.h)) + pad)
   return { region: { x: x0, y: y0, w: Math.max(80, x1 - x0), h: Math.max(60, y1 - y0) }, labels, notes }
+}
+
+/** Coordinates a shape is given in (points only; sizes are not positions). */
+function shapePoints(shape: DrawStep['shape']): number[][] | null {
+  const pt = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every(n => typeof n === 'number' && Number.isFinite(n)) ? (v as number[]) : null)
+  const sh = shape as unknown as Record<string, unknown>
+  switch (shape.kind) {
+    case 'point': return pt(sh.at) ? [pt(sh.at)!] : null
+    case 'line': case 'arrow': return pt(sh.from) && pt(sh.to) ? [pt(sh.from)!, pt(sh.to)!] : null
+    case 'polyline': case 'polygon': { const ps = (Array.isArray(sh.points) ? sh.points : []).map(pt); return ps.length && ps.every(Boolean) ? (ps as number[][]) : null }
+    default: return null
+  }
+}
+
+/**
+ * The axes an un-anchored shape belongs to, or undefined: every point lies inside the latest axes' data ranges while,
+ * read as board pixels, it would sit outside that axes' frame (so it cannot be a deliberate pixel position).
+ */
+export function orphanAxes(shape: DrawStep['shape'], els: BoardEl[], axes: Record<string, AxesDef>): string | undefined {
+  const pts = shapePoints(shape)
+  if (!pts) return undefined
+  let last: string | undefined
+  for (const e of els) if (e.kind === 'shape' && e.step.shape.kind === 'axes' && e.id && axes[e.id]) last = e.id
+  if (!last) return undefined
+  const a = axes[last]
+  const [x0, x1] = a.xRange, [y0, y1] = a.yRange
+  const inData = pts.every(([x, y]) => x >= Math.min(x0, x1) && x <= Math.max(x0, x1) && y >= Math.min(y0, y1) && y <= Math.max(y0, y1))
+  const f = a.frame
+  const pixelInside = pts.some(([x, y]) => x >= f.x && x <= f.x + f.w && y >= f.y && y <= f.y + f.h)
+  return inData && !pixelInside ? last : undefined
 }
