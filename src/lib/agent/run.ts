@@ -180,7 +180,7 @@ export async function runAgent(input: {
     try {
       res = await chat({
         purpose: chatMode ? 'chat' : 'director',
-        messages, tools: last ? undefined : defs, toolChoice: 'auto',
+        messages, tools: last ? undefined : move ? defs.filter(d => d.name !== 'teaching_move') : defs, toolChoice: 'auto',
         maxTokens: chatMode ? 1000 : 1200, temperature: 0.5,
         onText: emitText, trace: ctx.trace, deadline: input.deadline,
       })
