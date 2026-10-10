@@ -172,6 +172,9 @@ export function textIssues(spec: ExampleSpec): string[] {
   }
   for (const g of spec.givens) if (!spec.statement.includes(`{{${g.name}}}`) && !spec.diagram?.type?.match(/circuit/)) out.push(`statement: given ${g.name} never appears as {{${g.name}}}`)
   const gnames = new Set(spec.givens.map(g => g.name))
+  const computed = new Set([...spec.steps.map(s => s.calc?.name).filter(Boolean) as string[], ...spec.unknowns.map(u => u.name), spec.answer.name ?? ''])
+  // {{Pp}} around a word that is not a quantity: just the word (no repair round); a computed value there leaks the answer
+  spec.statement = spec.statement.replace(/\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g, (m, k: string) => (gnames.has(k) || computed.has(k) ? m : k))
   for (const m of spec.statement.matchAll(/\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g)) if (!gnames.has(m[1])) out.push(`statement: {{${m[1]}}} is not a given — the statement may only show givens (never the answer)`)
   spec.steps.forEach((s, i) => {
     const consts = new Set(s.calc ? (clean(s.calc.expr).match(/\d+(?:\.\d+)?/g) ?? []) : [])

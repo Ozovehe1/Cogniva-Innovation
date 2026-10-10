@@ -21,7 +21,7 @@ const SHAPE = `{
 }`
 
 const RULES = `Rules:
-- Numbers come from code: claims use symbols, reasons use {{name}}; every number in the statement is a {{given}}.
+- Numbers come from code: claims use symbols, reasons use {{name}}; every number in the statement is a {{given}}. {{ }} is ONLY for numeric givens: write words, genotypes (Pp), formulas and names plainly.
 - Every numeric step has a calc whose expr really computes it (mathjs: * for multiply, ^ power, sqrt, sind/cosd/tand for degrees, pi). Every symbolic step (differentiating, rearranging) has a check.
 - The answer must follow from the givens through the calcs. Pick values that give tidy numbers at the learner's level.
 - Names: plain identifiers (u, theta, x1, nH2O), never reuse a name, never a function name.
