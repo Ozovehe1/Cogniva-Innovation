@@ -259,7 +259,7 @@ export const motor: KindRuntime<S> = {
     ]
   },
   readouts: (s, P) => [
-    { label: 'Speed', value: `${(Math.abs(s.w) / (2 * Math.PI)).toFixed(2)} turns/s`, color: NL.text },
+    { label: 'Turns per s', value: (Math.abs(s.w) / (2 * Math.PI)).toFixed(2), color: NL.text },
     { label: 'Torque', value: Math.abs(s.tau).toFixed(2), color: NL.gold },
     { label: 'Current', value: `${num(P, 'current').toFixed(1)} A`, color: NL.gold },
   ],

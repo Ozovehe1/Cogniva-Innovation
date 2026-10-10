@@ -357,7 +357,7 @@ export class Scene<S = unknown> {
   }
   pointerUp() { this.dragging = false }
   caption(): string {
-    if (this.owned) return this.kind.yourTurn ?? (this.spec.drag ? 'Your turn: drag it and watch' : 'Your turn: move the slider')
+    if (this.owned) return this.spec.drag || this.spec.controls.length ? (this.kind.yourTurn && this.spec.drag ? this.kind.yourTurn : this.spec.drag ? 'Your turn: drag it and watch' : 'Your turn: move the slider') : this.spec.title.slice(0, 44)
     const i = this.tl.beatAt(this.t)
     return i >= 0 ? this.spec.beats[i].caption : this.spec.title
   }
