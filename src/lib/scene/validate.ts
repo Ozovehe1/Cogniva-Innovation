@@ -2,7 +2,7 @@
  * The gate every scene spec passes before it renders: zod for shape, then semantic checks against the kind (params,
  * targets, ranges, beat grammar, caption length for 390 px, timeline length), then a layout check that runs the real
  * engine headless at phone widths and places the labels exactly as the renderer will. Errors are short, specific and
- * written for a model to repair (show_scene returns them; ≤ 2 repair rounds).
+ * written for a model to repair (show_scene returns them; 1 repair round, then the kind template).
  */
 import { z } from 'zod'
 import { KINDS, KIND_IDS } from './kinds'

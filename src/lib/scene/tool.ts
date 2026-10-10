@@ -1,7 +1,7 @@
 /**
  * The agent tool `show_scene`: the model picks a scene kind, its parameters and a short beat timeline (what and when);
  * the validator checks it (zod + kind semantics + a headless layout check at 390 px) and the engine owns how it looks.
- * Invalid specs come back as a list of fixes (≤ 2 repair rounds); after that the kind's ready template is shown.
+ * Invalid specs come back as a list of fixes (1 repair round; caption length and dur are tidied here); a second invalid spec shows the kind's ready template.
  */
 import { randomUUID } from 'node:crypto'
 import type { AgentCtx, ToolSpec } from '../agent/tools'
@@ -58,6 +58,16 @@ export const sceneTool: ToolSpec = {
       Object.assign(raw, { beats: t.beats, labels: a.labels ?? t.labels, controls: a.controls ?? t.controls, drag: a.drag ?? t.drag, alt: a.alt ?? t.alt, params: { ...t.params, ...((a.params as object) ?? {}) }, title: a.title ?? t.title })
     }
     if (known && !raw.title) raw.title = KINDS[kind].info.example.title
+    // Mechanical slips are fixed here, not sent back for a repair round (a production turn spent both rounds on a
+    // 46-char caption and a missing dur, then ended with "Let's watch this" and no scene).
+    if (Array.isArray(raw.beats)) raw.beats = (raw.beats as Record<string, unknown>[]).map(b => {
+      if (!b || typeof b !== 'object') return b
+      const o = { ...b }
+      if (typeof o.caption === 'string' && o.caption.length > 44) { const c = o.caption.slice(0, 45); const k = c.lastIndexOf(' '); o.caption = (k > 20 ? c.slice(0, k) : c.slice(0, 44)).replace(/[\s,;:–-]+$/, '') }
+      const d = Number(o.dur)
+      o.dur = Number.isFinite(d) ? Math.min(8, Math.max(0.3, d)) : 2.5
+      return o
+    })
     const v = validateScene(raw)
     let spec: SceneSpec | undefined = v.spec
     let fallback = false
@@ -65,7 +75,9 @@ export const sceneTool: ToolSpec = {
       const n = (fails.get(ctx) ?? 0) + 1
       fails.set(ctx, n)
       ctx.trace.push(`show_scene invalid (${n}): ${v.errors.slice(0, 3).join(' | ').slice(0, 300)}`)
-      if (n <= 2 || !known) return { error: `The scene spec needs fixes (round ${n} of 2): ${v.errors.slice(0, 8).join('; ')}. Fix exactly these and call show_scene again${n === 2 ? ' (last try: after this the ready-made scene for the kind is shown)' : ''}.` }
+      // One repair round; a second invalid spec shows the kind's ready scene at once (models often stop calling after
+      // a second error, leaving words about a scene that never appeared).
+      if (n < 2 || !known) return { error: `The scene spec needs fixes: ${v.errors.slice(0, 8).join('; ')}. Fix exactly these and call show_scene again (if it is still invalid, the ready-made scene for the kind is shown).` }
       // Out of repair rounds: the kind's ready template, titled as the model asked.
       const t = templateSpec(kind, typeof a.title === 'string' && a.title.trim() ? { title: a.title.trim().slice(0, 90) } : {})
       const tv = validateScene(t)
