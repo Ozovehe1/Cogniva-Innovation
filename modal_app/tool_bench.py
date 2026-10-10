@@ -192,21 +192,21 @@ def _isolated(tool: str, args: dict, context: dict, timeout: float, mem_mb: int 
 
 
 @app.function(image=compute_image, cpu=1.0, memory=2048, timeout=60, max_containers=2, min_containers=0,
-              scaledown_window=90, block_network=True)
+              scaledown_window=45, block_network=True)
 @modal.concurrent(max_inputs=4)
 def compute(tool: str, args: dict, context: dict, timeout: float, mem_mb: int | None) -> dict:
     return _isolated(tool, args, context, timeout, mem_mb)
 
 
 @app.function(image=sci_image, cpu=1.0, memory=2048, timeout=90, max_containers=2, min_containers=0,
-              scaledown_window=90, block_network=True)
+              scaledown_window=45, block_network=True)
 @modal.concurrent(max_inputs=3)
 def sci(tool: str, args: dict, context: dict, timeout: float, mem_mb: int | None) -> dict:
     return _isolated(tool, args, context, timeout, mem_mb)
 
 
 @app.function(image=render_image, cpu=2.0, memory=4096, timeout=120, max_containers=2, min_containers=0,
-              scaledown_window=60, block_network=True)
+              scaledown_window=30, block_network=True)
 @modal.concurrent(max_inputs=2)
 def render(tool: str, args: dict, context: dict, timeout: float, mem_mb: int | None) -> dict:
     return _isolated(tool, args, context, timeout, mem_mb)
@@ -218,7 +218,7 @@ BACKENDS = {"compute": compute, "sci": sci, "render": render}
 # ----------------------------------------------------------------------------------------------- web
 
 @app.function(image=web_image, secrets=[modal.Secret.from_name(SECRET_NAME)], timeout=150, max_containers=2,
-              min_containers=0, scaledown_window=120)
+              min_containers=0, scaledown_window=60)
 @modal.concurrent(max_inputs=32)
 @modal.asgi_app(label="geniusmap-toolbench")
 def web():
