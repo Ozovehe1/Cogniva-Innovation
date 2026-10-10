@@ -236,6 +236,9 @@ export async function POST(request: Request) {
       if (!r.text.trim() && !blocks.length) { const d = 'I’m not sure how to help with that one. Could you say it another way?'; text += d; send({ t: 'text', d }) }
     } catch (err) {
       gate.end()
+      // The move was declared before the turn failed: keep it for the log.
+      const mvLine = ctx.trace.find(t => t.startsWith('move: '))
+      if (mvLine) move = { move: (mvLine.slice(6).split(/[\s(@]/)[0] || 'explain') as import('@/lib/agent/moves').Move, reason: mvLine.split(' — ').slice(1).join(' — ').slice(0, 200), via: 'tool' }
       if (err instanceof TurnTimeout) {
         // Out of time: keep what was shown and said, and close the turn properly (no endless spinner).
         ctx.trace.push('turn: hard stop')
