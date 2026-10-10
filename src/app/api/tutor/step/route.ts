@@ -7,6 +7,10 @@ import { loadLearner, learnerLite } from '@/lib/learner'
 import { detectDistress } from '@/lib/safety'
 import { withLlmContext } from '@/lib/agent/pool'
 import { withPlaybook } from '@/lib/playbook/context'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { learnerFacts, tutorState } from '@/lib/agent/tutor-state'
+import { ensureIds } from '@/lib/agent/board-scene'
+import { levelLine } from '@/lib/intake'
 
 export const maxDuration = 60
 
@@ -66,6 +70,21 @@ export async function POST(request: Request) {
   }
 
   const l = lesson as { title: string; subject: string; objectives: string[] | null }
+  // The tutor state: the board in view (with ids), this event, mastery and known misconceptions (own rows only).
+  let stateText: string | null = null
+  try {
+    const facts = await learnerFacts(createAdminClient(), profile.id, { lessonId, level: learner ? levelLine(learner) || null : null })
+    const from = (() => { for (let k = played.length - 1; k >= 0; k--) { const st = played[k]; if (st.type === 'clear' && !(st as { targets?: unknown }).targets) return k + 1 } return 0 })()
+    const onBoard = played.slice(from).filter(st => !['check', 'stage', 'manim_clip', 'pause'].includes(st.type))
+    const prior = history.filter(h => h.reason !== 'continue').length
+    stateText = tutorState({
+      surface: 'reteach',
+      event: reason === 'wrong_answer' ? { kind: 'answer', text: `check "${(check?.prompt ?? '').slice(0, 110)}", they answered "${answer ?? ''}"${prior > 1 ? ` (${prior} re-teaches already this lesson)` : ''}`, correct: false, expected: check?.kind === 'choice' && check.options && typeof check.answer === 'number' ? check.options[check.answer] : check?.accept?.[0] ?? null } : { kind: 'reteach', text: `${reason.replace('_', ' ')}${check?.prompt ? ` at check "${check.prompt.slice(0, 110)}"` : ''}` },
+      lesson: { title: l.title, cursor: Math.max(0, checkIndex), total: played.length },
+      board: onBoard.length ? { doc: { steps: ensureIds(onBoard), groups: {}, rev: 0 }, where: 'the lesson board' } : null,
+      learner: facts,
+    })
+  } catch { stateText = null }
   const meta: GenMeta = { ms: 0, repaired: false, model: null, dropped: 0 }
   try {
     // The learner is inside the lesson waiting for the tutor: live priority in the LLM pool.
@@ -78,6 +97,7 @@ export async function POST(request: Request) {
       answer,
       profile: studentProfile,
       history,
+      tutorState: stateText,
     })))
     return NextResponse.json({ steps, meta })
   } catch (err) {

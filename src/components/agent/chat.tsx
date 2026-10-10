@@ -1,4 +1,5 @@
 'use client'
+import { getLessonLive } from '@/lib/lesson-live'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Plus } from 'lucide-react'
 import { SafetyPause } from '@/components/safety-pause'
@@ -94,7 +95,7 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
       const ctl = new AbortController()
       const kick = () => { clearTimeout(idle); idle = setTimeout(() => { stalled = true; ctl.abort() }, 40_000) }
       kick()
-      const res = await fetch('/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, sessionId, lessonId }), signal: ctl.signal })
+      const res = await fetch('/api/agent/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, sessionId, lessonId, live: getLessonLive(lessonId) }), signal: ctl.signal })
       if (!res.ok || !res.body) { const j = await res.json().catch(() => ({})); patch(a => ({ ...a, error: j.error ?? 'Could not reach GeniusMap.' })); return }
       const reader = res.body.getReader()
       const dec = new TextDecoder()

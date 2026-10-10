@@ -489,6 +489,8 @@ export async function nextTutorSteps(input: {
   profile?: StudentProfileLite | null
   history?: { reason: string; answer?: string }[]
   meta?: GenMeta
+  /** The tutor state (agent/tutor-state.ts): board in view with ids, the event, mastery and known misconceptions. */
+  tutorState?: string | null
 }): Promise<Step[]> {
   const { ids, axes, vars } = boardIdsAfter(input.played)
   // Keep the prompt small: the last ~25 steps carry the visible board.
@@ -524,7 +526,7 @@ Axes on the board (ids usable in "on"): ${axes.join(', ') || 'none'}
 Variables already set (usable in expressions and animate): ${vars.join(', ') || 'none'}
 
 Situation: ${situation}
-
+${input.tutorState ? `\n${input.tutorState}\nYou are in charge of this re-teach: read the state above. When the thing to look at is already on the board, point at it (highlight / annotate / transform that id) before adding anything; aim at a known misconception when it fits the answer they gave; draw something new only for a representation the board does not already show.\n` : ''}
 ${SCRIPT_SCHEMA_PROMPT}
 
 ${LAYOUT_RULES}

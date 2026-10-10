@@ -5,13 +5,14 @@ import { poolCases } from '@/lib/agent/pool-eval'
 import { withLlmContext } from '@/lib/agent/pool'
 import { assessmentCases } from '@/lib/assessment/eval'
 import { playbookCases } from '@/lib/playbook/eval'
-import { turnCase, routingCases, lessonCases, giveawayCases, injectionCases, staticAsyncCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
+import { moveCases } from '@/lib/agent/move-eval'
+import { turnCase, routingCases, legacyRoutingCases, lessonCases, giveawayCases, injectionCases, staticAsyncCases, staticCases, summarise, toolCases, visualCases, type CaseResult } from '@/lib/agent/eval'
 
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
 /**
- * POST /api/agent/eval?group=static|tools|routing|lesson|giveaway|injection|visual|regression|assessment|playbook&student=<profile id>   (Bearer AGENT_SECRET)
+ * POST /api/agent/eval?group=static|tools|routing|moves|judge|routing-legacy|lesson|giveaway|injection|visual|regression|assessment|playbook&student=<profile id>   (Bearer AGENT_SECRET)
  * Runs the agent eval set on production (real models, budgets and services). Writes only to the given test student.
  */
 export async function POST(request: Request) {
@@ -33,6 +34,9 @@ async function run(request: Request) {
   else if (group === 'tools') results = await toolCases(admin, student, only)
   else if (group === 'turn') results = await turnCase(admin, student, url.searchParams.get('msg') ?? '')
   else if (group === 'routing') results = await routingCases(admin, student, only)
+  else if (group === 'moves') results = await moveCases(admin, student, only)
+  else if (group === 'judge') results = await moveCases(admin, student, only, true)
+  else if (group === 'routing-legacy') results = await legacyRoutingCases(admin, student, only)
   else if (group === 'lesson') results = await lessonCases(admin, student, only)
   else if (group === 'giveaway') results = await giveawayCases(admin, student)
   else if (group === 'injection') results = await injectionCases(admin, student)

@@ -1,4 +1,5 @@
 'use client'
+import { setLessonLive } from '@/lib/lesson-live'
 import { ReportButton, type ReportCategory, type ReportPayload, type ReportResult } from '@/components/report/report-mistake'
 import { hiddenStep, isHideable, reportTarget } from '@/lib/correctness/hide'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
@@ -171,6 +172,10 @@ export function LessonSession({
 
   const onEvent = useCallback((e: PlayerEvent) => {
     tutorReact(e)
+    // The tutor sheet reads where the learner is and what they just answered (lesson-live.ts).
+    if (e.type === 'position') setLessonLive({ lessonId, cursor: e.cursor, section: e.section, total: e.total })
+    else if (e.type === 'check' && (e.response === 'answer' || e.response === 'differently' || e.response === 'explain_wrong')) setLessonLive({ lessonId, lastCheck: { step: e.origIndex, correct: e.correct, answer: e.answer?.slice(0, 200), response: e.response, at: Date.now() } })
+    else if (e.type === 'reteach') setLessonLive({ lessonId, lastReteach: { step: e.index, reason: e.reason, at: Date.now() } })
     if (e.type === 'position') {
       pending.current = { stepIndex: e.cursor, sectionIndex: e.section, furthest: e.furthest, scriptSteps: e.total }
       schedule()
@@ -201,7 +206,7 @@ export function LessonSession({
       post({ completed: true, event: { type: 'complete' } })
       setFinished(true)
     }
-  }, [post, flush, schedule, partial, checkHref, mode, tutorReact])
+  }, [post, flush, schedule, partial, checkHref, mode, tutorReact, lessonId])
 
   const onNeedSteps = useCallback(async (req: NeedStepsRequest): Promise<Step[]> => {
     history.current.push({ reason: req.reason, answer: req.answer })

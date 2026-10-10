@@ -24,11 +24,12 @@ import { validateScript, type Step } from '../lesson-schema'
 import { expandBoardDiagrams, nextTutorSteps } from '../lesson-ai'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
-import { runAgent, CHAT_SYSTEM, MAX_WRITES, EXPLICIT_TOOL, firstStepPolicy } from './run'
-import { CONCEPT_ASK, GENERIC_REASK, beatVisualLine, readVisual, visualPlanHint, visualText } from '../visual-policy'
+import { runAgent, CHAT_SYSTEM, MAX_WRITES, chatOffer } from './run'
+import { CONCEPT_ASK, beatVisualLine, readVisual, visualPlanHint } from '../visual-policy'
+import { moveCases, staticMoveCases } from './move-eval'
 import { clipTargets } from '../lesson-clip'
 import { trimRequest } from './llm'
-import { selectTools, toolsFor, type AgentCtx } from './tools'
+import { selectTools, type AgentCtx } from './tools'
 import type { Block } from './types'
 import { illustrationStaticCases, illustrationVisualCases } from '../illustrations/eval'
 import { onboardingStaticCases } from '../onboarding-eval'
@@ -208,6 +209,8 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   out.push({ id: 'em-repro-policy', group: 'static', pass: !!emBeat?.includes('field') && emClips.length === 2 && emAsk.includes('animate_concept') && emAsk.includes('find_illustration') && !emAsk.includes('plot'), detail: `beat ${emBeat ? 'field line' : 'none'}; clips at ${emClips.join(',')}; ask offers ${emAsk.join(',')}` })
   out.push(...(await illustrationStaticCases()))
   out.push(...onboardingStaticCases())
+  // Move-first tutoring: the state block, the MOVE line, the point-at verb and an offer that forces nothing.
+  out.push(...staticMoveCases())
   return out
 }
 
@@ -318,7 +321,14 @@ export async function lessonCases(admin: SupabaseClient, studentId: string, only
   return out
 }
 
+/**
+ * Routing used to be keyword → tool (ROUTING_CASES, kept for the record as group=routing-legacy). It is now
+ * "knows when": frozen state snapshots + counterfactual pairs (move-eval.ts).
+ */
 export async function routingCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
+  return moveCases(admin, studentId, only)
+}
+export async function legacyRoutingCases(admin: SupabaseClient, studentId: string, only?: string[]): Promise<CaseResult[]> {
   return toolCases(admin, studentId, only, ROUTING_CASES, 'routing')
 }
 
@@ -328,14 +338,17 @@ export async function toolCases(admin: SupabaseClient, studentId: string, only?:
   for (const c of cases.filter(x => !only || only.includes(x.id))) {
     const t0 = Date.now()
     const tctx = { ...ctx, lessonId: inLesson ? '00000000-0000-4000-8000-000000000000' : null, hasBoard: !!c.board && c.board.includes('On the board now'), visualTopic: c.topic ?? null }
-    const specs = selectTools(tctx, c.msg, c.msg)
     try {
-      // The same step-0 policy as runAgent (firstStepPolicy): teaching turns get the visual plan note, only the visual
-      // tools (board only for working) and a forced first tool call.
-      const pol = firstStepPolicy(tctx, c.msg, specs, new Map(toolsFor(tctx).map(t => [t.def.name, t])))
-      const tools = (pol.teaching && pol.firstSpecs.length ? pol.firstSpecs : specs).map(t => t.def)
-      const r = await chat({ purpose: 'chat', tools, maxTokens: 1000, toolChoice: pol.forceFirst ? 'required' : 'auto', messages: [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, ...(pol.note ? [{ role: 'system' as const, content: pol.note }] : []), { role: 'user', content: c.msg }] })
-      const names = r.toolCalls.map(x => x.name)
+      // Exactly what a chat turn is offered (chatOffer), nothing forced. A step that only declares its move gets the
+      // move's acknowledgement and one more step, as in runAgent.
+      const { defs: tools } = chatOffer(tctx, c.msg)
+      const msgs: import('./llm').Msg[] = [{ role: 'system', content: c.board ? `${CHAT_SYSTEM}\n\n${c.board}` : CHAT_SYSTEM }, { role: 'user', content: c.msg }]
+      let r = await chat({ purpose: 'chat', tools, maxTokens: 1000, toolChoice: 'auto', messages: msgs })
+      if (r.toolCalls.length && r.toolCalls.every(x => x.name === 'teaching_move')) {
+        msgs.push({ role: 'assistant', content: r.text, toolCalls: r.toolCalls }, ...r.toolCalls.map(x => ({ role: 'tool' as const, toolCallId: x.id, name: x.name, content: '{"noted":true,"next":"Now carry the move out."}' })))
+        r = await chat({ purpose: 'chat', tools, maxTokens: 1000, toolChoice: 'auto', messages: msgs })
+      }
+      const names = r.toolCalls.map(x => x.name).filter(n => n !== 'teaching_move')
       out.push({ id: `${group === 'tools' ? 'tool' : group === 'lesson' ? 'lesson' : 'route'}-${c.id}`, group, pass: names.some(n => c.expect.includes(n)), detail: `called: ${names.join(', ') || '(none) ' + r.text.slice(0, 80)}; expected one of ${c.expect.join('/')}`, model: r.model, ms: Date.now() - t0 })
       // Tool-arg validity: every call parsed as JSON with required fields present.
       const bad = r.toolCalls.filter(x => '__invalid' in x.args)
