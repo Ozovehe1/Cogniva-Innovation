@@ -39,7 +39,7 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
     if (!plugin || !spec.diagram) return ''
     try { return plugin.render(spec.diagram, ev.scope, { step: done && focus === null ? n : cur, action: cur >= 0 ? spec.steps[cur]?.diagram : undefined, reveal: done && focus === null, answers: true }, spec) } catch { return '' }
   }, [plugin, spec, ev.scope, cur, done, focus, n])
-  const unit = spec.answer.unit ? ` ${spec.answer.unit}` : ''
+  const unit = spec.answer.unit ? ` ${spec.answer.unit.replace(/\^2\b/g, '²').replace(/\^3\b/g, '³')}` : ''
   const answerText = ev.answer !== null ? `${fmtNum(ev.answer)}${unit}` : spec.answer.text ?? ''
   const predicted = pick !== null
   const predictRight = spec.predict ? pick === spec.predict.answer : options && pick !== null ? options[pick]?.correct : false
