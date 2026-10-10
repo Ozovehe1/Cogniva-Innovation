@@ -103,7 +103,7 @@ export const reactionPlugin: Plugin = {
     if (claimEq && same(claimEq.L, L) && same(claimEq.R, R)) { L = claimEq.L; R = claimEq.R; partial = balanceIssues(L, R).length > 0 }
     const W = 400
     const ans = view.answers !== false
-    const balanced = !partial && (view.reveal || (ans && view.step >= 0 && (view.step >= (spec.steps.length - 1) || Boolean(view.action?.show))))
+    const balanced = !partial && (!spec.answer.text || view.reveal || (ans && view.step >= 0 && (view.step >= (spec.steps.length - 1) || Boolean(view.action?.show))))
     const coefsKnown = balanced || partial
     const terms: { t: string; coef: number; f: string }[] = []
     L.forEach((s, i) => terms.push({ t: i ? '+' : '', coef: s.coef, f: s.formula }))

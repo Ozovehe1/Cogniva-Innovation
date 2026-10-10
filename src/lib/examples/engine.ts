@@ -261,6 +261,13 @@ export function verifySpec(spec: ExampleSpec, o: { skipPrepare?: boolean } = {})
   if (!spec.steps.some(s => s.calc || s.check) && !spec.answer.text) issues.push('no step is checkable: give each numeric step a "calc" and each symbolic step a "check"')
   for (const [i, s] of spec.steps.entries()) if (!s.calc && !s.check && /=/.test(s.claim) && bareNumbers(s.claim).some(n => !SMALL.has(n))) issues.push(`step ${i + 1} states an equation with numbers but has no calc or check`)
   issues.push(...textIssues(spec))
+  // givens are numbers the working uses; words (a trait, a genotype, a compound) belong in the statement itself
+  const used = new Set<string>()
+  const addSyms = (e?: string) => { if (e) try { symbolsOf(e).forEach(n => used.add(n)) } catch { /* reported elsewhere */ } }
+  for (const st of spec.steps) { addSyms(st.calc?.expr); if (st.check) for (const v of Object.values(st.check)) if (typeof v === 'string') addSyms(v) }
+  for (const v of Object.values(spec.diagram ?? {})) if (typeof v === 'string') { used.add(v); addSyms(v) }
+  const ids = new Set(((spec.diagram?.components as { id?: string }[] | undefined) ?? []).map(c => String(c.id)))
+  for (const g of spec.givens) if (!used.has(g.name) && !ids.has(g.name)) issues.push(`given ${g.name} is not used by any calc, check or diagram field: givens are numbers the working uses — write words (traits, genotypes, names) straight into the statement and remove ${g.name}`)
   const ev = evaluateSpec(spec, {}, { strict: true })
   issues.push(...ev.issues)
   // hard-coded values inside expressions break "change the numbers" and practice variants

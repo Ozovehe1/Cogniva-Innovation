@@ -67,11 +67,11 @@ export const projectilePlugin: Plugin = {
     const L0 = 62, r = p.th * Math.PI / 180
     const x0 = X(0), y0 = Y(p.h0)
     b.push(arrow(x0, y0, x0 + L0 * Math.cos(r), y0 - L0 * Math.sin(r), CLAY, 3, 11))
-    b.push(text(x0 + L0 * Math.cos(r) + 6, y0 - L0 * Math.sin(r) - 6, `u = ${fmtNum(p.u)} m/s`, 'lbl', 'style="text-anchor:start;fill:#A4502A"'))
+    b.push(text(x0 + L0 * Math.cos(r) + 8, y0 - L0 * Math.sin(r) - (shows(view, 'components') ? 18 : 6), `u = ${fmtNum(p.u)} m/s`, 'lbl', 'style="text-anchor:start;fill:#A4502A"'))
     if (p.th !== 0) { b.push(`<path d="M${f1(x0 + 30)},${f1(y0)} A30,30 0 0 0 ${f1(x0 + 30 * Math.cos(r))},${f1(y0 - 30 * Math.sin(r))}" fill="none" stroke="${INK}" stroke-width="1.6"/>`, text(x0 + 40, y0 - 6, `${fmtNum(p.th)}°`, 'lbl-s', 'style="text-anchor:start"')) }
     if (shows(view, 'components')) {
       b.push(arrow(x0, y0, x0 + L0 * Math.cos(r), y0, ACC, 2.4, 9), text(x0 + L0 * Math.cos(r) / 2 + 4, y0 + 20, ans ? `uₓ = ${fmtNum(p.ux)}` : 'uₓ', 'acc'))
-      if (p.th !== 0) b.push(arrow(x0, y0, x0, y0 - L0 * Math.sin(r), ACC, 2.4, 9), text(x0 + 8, y0 - L0 * Math.sin(r) - 4, ans ? `u_y = ${fmtNum(p.uy)}` : 'u_y', 'acc', 'style="text-anchor:start"'))
+      if (p.th !== 0) b.push(arrow(x0, y0, x0, y0 - L0 * Math.sin(r), ACC, 2.4, 9), text(x0 - 8, y0 - L0 * Math.sin(r) * 0.6, ans ? `u_y = ${fmtNum(p.uy)}` : 'u_y', 'acc', 'style="text-anchor:end"'))
     }
     if (shows(view, 'apex') && p.uy > 0) {
       const ax = X(p.ux * p.tH), ay = Y(p.H)
