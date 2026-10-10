@@ -22,6 +22,8 @@ const STRUCTURE_TERMS: [RegExp, string][] = [
   [/\b(electric )?motors?\b|\bmotor effect/i, 'electric motor'],
   [/\bgenerators?\b|\bdynamo|\balternator/i, 'electric generator'],
   [/\btransformers?\b/i, 'transformer'],
+  // A coil that spins / turns is a motor's armature, not a solenoid (busy fallback showed a solenoid for "why does the coil keep spinning", 2026-10-10).
+  [/\bcoils?\b[^.?!]*\b(spin|rotat|turn|keep going)\w*|\b(spin|rotat|turn)\w*[^.?!]*\bcoils?\b|\bcommutator|\barmature/i, 'electric motor'],
   [/\bcoil\b|\binduction coil/i, 'solenoid'],
   [/\belectric(al)? current|\bvoltage|\bpotential difference|\bohm'?s law/i, 'electric circuit'],
   [/\bcurrent[- ]carrying (wire|conductor)|\bmagnetic field (around|of) a (wire|conductor)/i, 'magnetic field around a wire'],
