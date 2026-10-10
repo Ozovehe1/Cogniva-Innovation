@@ -29,7 +29,14 @@ export const needsNarration = (text: string) => proseWords(text) < 12
 
 const clean = (s: unknown, n = 220) => String(s ?? '').replace(/\s+/g, ' ').replace(/[{}<>]/g, '').trim().slice(0, n)
 const sentence = (s: string) => { const t = clean(s, 260).replace(/[\s,;:–-]+$/, ''); return t ? `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?]$/.test(t) ? '' : '.'}` : '' }
-const lower1 = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s)
+/** Lower-case the first letter; a Title Case Heading becomes plain words ("How an Electric Motor Turns" → "how an electric motor turns"), acronyms and symbols kept. */
+const lower1 = (s: string) => {
+  if (!s) return s
+  const ws = s.split(' ')
+  const long = ws.filter(w => /^[A-Za-z]{4,}$/.test(w))
+  if (long.length >= 2 && long.filter(w => /^[A-Z][a-z]/.test(w)).length / long.length >= 0.6) return ws.map(w => (/^[A-Z][a-z]+$/.test(w) ? w.toLowerCase() : w)).join(' ')
+  return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s
+}
 const list = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
 
 /** What a visual shows, from its own content: a title and up to 4 short beats in order. */
@@ -44,7 +51,7 @@ export function describeVisual(b: Block): { what: string; beats: string[]; hint?
         problem = statementText(s, ev.scope)
         for (const st of s.steps.slice(0, 4)) beats.push(clean(st.title || fill(st.reason, ev.scope), 90))
       } catch { problem = '' }
-      return { what: `a worked example on ${clean(s.topic, 80) || 'this'}${problem ? `: ${clean(problem, 220)}` : ''}`, beats: beats.filter(Boolean), hint: 'Make your prediction first, then open the steps one at a time.' }
+      return { what: `a worked example on ${lower1(clean(s.topic, 80)) || 'this'}${problem ? `: ${clean(problem, 220)}` : ''}`, beats: beats.filter(Boolean), hint: 'Make your prediction first, then open the steps one at a time.' }
     }
     case 'scene': {
       const beats = (b.spec.beats ?? []).map(x => clean(x.say || x.caption, 110)).filter(Boolean).slice(0, 4)
