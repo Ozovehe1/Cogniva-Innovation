@@ -30,6 +30,7 @@ import os
 import modal
 
 APP_NAME = "geniusmap-toolbench"
+BUILD = "2026-10-10.3"
 SECRET_NAME = "geniusmap-toolbench"
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS_SRC = os.path.join(HERE, "toolbench_tools.py")
@@ -228,7 +229,7 @@ def web():
     from typing import Any
 
     import httpx
-    from fastapi import FastAPI, Header, HTTPException
+    from fastapi import FastAPI, Header, HTTPException, Request
     from pydantic import BaseModel, Field
 
     api = FastAPI(title="Ideanimo tool bench", docs_url=None, redoc_url=None, openapi_url=None)
@@ -248,9 +249,18 @@ def web():
         if not expected or not given or not hmac.compare_digest(given, expected):
             raise HTTPException(status_code=401, detail="unauthorized")
 
+    async def body_json(request):
+        try:
+            d = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        if not isinstance(d, dict):
+            raise HTTPException(status_code=400, detail="JSON body must be an object")
+        return d
+
     @api.get("/health")
     def health():
-        return {"ok": True, "app": APP_NAME}
+        return {"ok": True, "app": APP_NAME, "build": BUILD}
 
     @api.get("/tools")
     def tools():
@@ -272,8 +282,9 @@ def web():
             return None
 
     @api.post("/warm")
-    async def warm(req: WarmRequest, authorization: str | None = Header(default=None), x_toolbench_token: str | None = Header(default=None)):
+    async def warm(request: Request, authorization: str | None = Header(default=None), x_toolbench_token: str | None = Header(default=None)):
         check(authorization, x_toolbench_token)
+        req = WarmRequest.model_validate(await body_json(request))
         started = []
         for g in req.groups:
             if g in BACKENDS:
@@ -282,8 +293,13 @@ def web():
         return {"ok": True, "warming": started}
 
     @api.post("/run")
-    async def run(req: RunRequest, authorization: str | None = Header(default=None), x_toolbench_token: str | None = Header(default=None)):
+    async def run(request: Request, authorization: str | None = Header(default=None), x_toolbench_token: str | None = Header(default=None)):
         check(authorization, x_toolbench_token)
+        body = await body_json(request)
+        try:
+            req = RunRequest.model_validate(body)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"body must be {{tool, args, context}}: {str(e)[:300]}")
         t0 = time.time()
         spec = TOOLS.get(req.tool)
         if not spec:
