@@ -24,7 +24,6 @@ Secret: Modal secret "geniusmap-toolbench" = TOOLBENCH_TOKEN (created by scripts
 Deployed from the Vercel production build (scripts/deploy-modal.mjs).
 """
 
-from __future__ import annotations
 
 import os
 
