@@ -67,9 +67,9 @@ Use your tools, then reply with ONE short sentence on what you did and why.
 At most 3 writes. Do not repeat what is already in place. Only report actions whose tool result confirmed them (a result with "error" or "already" did not change anything).`
 
 /** The visual tools every chat teaching turn can reach (the model judges which, if any, fits). */
-const VISUAL_TOOLS = ['find_illustration', 'interactive', 'simulate', 'animate_concept', 'plot', 'math_diagram', 'illustrate', 'draw_on_board']
+const VISUAL_TOOLS = ['worked_example', 'find_illustration', 'interactive', 'simulate', 'animate_concept', 'plot', 'math_diagram', 'illustrate', 'draw_on_board']
 /** On screen NOW: a clip still rendering is a promise of a visual (1-3 min away), not one the learner can look at. */
-const RICH_NOW = new Set(['interactive', 'sim', 'svg', 'image'])
+const RICH_NOW = new Set<string>(['interactive', 'sim', 'svg', 'image', 'worked_example', 'scene'])
 /** Tools handled here (not in the registry): the move declaration and the point-at intent verb. */
 const LOCAL_TOOLS = new Set(['teaching_move', 'point_at'])
 

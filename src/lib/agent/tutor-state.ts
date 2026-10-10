@@ -185,6 +185,11 @@ export function shownLines(blocks: Block[], max = 6): string[] {
     else if (b.kind === 'board') out.push(`${b.plot ? 'graph' : 'board scene'} "${oneLine(b.title, 50)}"`)
     else if (b.kind === 'image') out.push(`python figure${b.caption ? `: ${oneLine(b.caption, 50)}` : ''}`)
     else if (b.kind === 'practice') out.push(`practice set "${oneLine(b.title, 50)}"`)
+    else if (!['checked', 'sources', 'confirm', 'plan', 'audio', 'lesson', 'code'].includes(b.kind)) {
+      // Visual kinds added alongside (worked examples, scenes): name, id and title when they carry one.
+      const x = b as unknown as { kind: string; id?: string; title?: string; alt?: string; spec?: { title?: string } }
+      out.push(`${x.kind.replace(/_/g, ' ')} ${x.id ?? ''} "${oneLine(x.title ?? x.spec?.title ?? x.alt ?? '', 60)}"`)
+    }
   }
   // The same scene edited in several turns is one entry.
   return [...new Set(out)].slice(-max)
