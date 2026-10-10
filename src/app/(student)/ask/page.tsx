@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { TutorPresence } from '@/components/genie/tutor-presence'
 import { redirect } from 'next/navigation'
 import { getSessionProfile } from '@/lib/auth'
@@ -38,7 +37,6 @@ export default async function AskPage({ searchParams }: { searchParams: Promise<
           <h1 className="mt-1 font-display text-[28px] leading-tight text-ink md:text-[34px]">Your tutor, any time</h1>
         </div>
         <div className="flex flex-shrink-0 items-center gap-3">
-          {(sessionId || prompt) && <Link href="/ask" className="text-[13px] font-medium text-accent">New chat</Link>}
           <ChatHistory initial={sessions} />
         </div>
       </div>

@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { BookOpen, History, MoreHorizontal, Plus, Trash2, X } from 'lucide-react'
 import { Pending, SheetGrabber, buttonClass, cx } from '@/components/ui'
@@ -110,12 +111,14 @@ function ChatRow({ chat, now, active, menuOpen, onMenu, onOpen, onDelete }: {
   // Swipe left to reveal Delete; a long press (500 ms without moving) asks to delete straight away.
   const [dx, setDx] = useState(0)
   const [dragging, setDragging] = useState(false)
+  const [at, setAt] = useState<DOMRect | null>(null)
   const start = useRef<{ x: number; y: number; t: ReturnType<typeof setTimeout> | null; swiping: boolean; long: boolean } | null>(null)
   const revealed = dx <= -72
   const end = () => { const s = start.current; if (s?.t) clearTimeout(s.t); start.current = null }
   const title = toPlainText(chat.title) || 'New chat'
   return (
-    <li className="relative my-0.5 overflow-hidden rounded-[12px]">
+    <li className="relative my-0.5">
+      <div className="relative overflow-hidden rounded-[12px]">
       <button type="button" onClick={onDelete} tabIndex={revealed ? 0 : -1} aria-hidden={!revealed}
         className="absolute inset-y-0 right-0 flex w-[84px] items-center justify-center gap-1 bg-danger text-[13px] font-medium text-white">
         <Trash2 className="h-4 w-4" strokeWidth={2} />Delete
@@ -136,7 +139,7 @@ function ChatRow({ chat, now, active, menuOpen, onMenu, onOpen, onDelete }: {
         }}
         onTouchEnd={e => { const s = start.current; setDragging(false); if (s?.long) e.preventDefault(); if (s?.swiping) setDx(dx < -40 ? -84 : 0); end() }}
         onTouchCancel={() => { end(); setDx(0); setDragging(false) }}
-        onContextMenu={e => { e.preventDefault(); if (!start.current?.long) onMenu(true) }}>
+        onContextMenu={e => { e.preventDefault(); if (!start.current?.long) { setAt((e.currentTarget.lastElementChild as HTMLElement).getBoundingClientRect()); onMenu(true) } }}>
         <Link href={`/ask?session=${chat.id}`} onClick={e => { if (dx < 0) { e.preventDefault(); setDx(0); return } onOpen() }} aria-current={active ? 'page' : undefined}
           className="min-w-0 flex-1 select-none px-3 py-2.5 [-webkit-touch-callout:none]">
           <span className={cx('line-clamp-2 text-[15px] leading-snug', active ? 'font-medium text-accent' : 'text-ink')}>{title}</span>
@@ -145,21 +148,23 @@ function ChatRow({ chat, now, active, menuOpen, onMenu, onOpen, onDelete }: {
             <time dateTime={chat.updated_at} className="flex-shrink-0">{chatWhen(chat.updated_at, now)}</time>
           </span>
         </Link>
-        <div className="relative flex-shrink-0">
-          <button type="button" onClick={() => onMenu(!menuOpen)} aria-label={`More for ${title}`} aria-haspopup="menu" aria-expanded={menuOpen}
-            className="flex h-10 w-10 items-center justify-center rounded-full text-muted hover:bg-sunken hover:text-ink"><MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.75} /></button>
-          {menuOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => onMenu(false)} />
-              <div role="menu" className="absolute right-1 top-10 z-20 min-w-[160px] rounded-[12px] border border-line bg-surface p-1 shadow-[var(--shadow-raised)]">
-                <button type="button" role="menuitem" autoFocus onClick={onDelete} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2.5 text-left text-[14px] font-medium text-danger hover:bg-danger-soft">
-                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />Delete chat
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+        <button type="button" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setAt(menuOpen ? null : r); onMenu(!menuOpen) }} aria-label={`More for ${title}`} aria-haspopup="menu" aria-expanded={menuOpen}
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-muted hover:bg-sunken hover:text-ink"><MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.75} /></button>
       </div>
+      </div>
+      {menuOpen && at && createPortal(
+        // Portalled and fixed to the viewport (the list scrolls, each row clips its swipe layer and the drawer is
+        // transformed), below the button or above it near the bottom.
+        <>
+          <div className="fixed inset-0 z-[75]" onClick={() => onMenu(false)} onTouchStart={e => e.stopPropagation()} />
+          <div role="menu" className="fixed z-[76] min-w-[168px] rounded-[12px] border border-line bg-surface p-1 shadow-[var(--shadow-raised)]"
+            style={{ right: Math.max(8, window.innerWidth - at.right), ...(at.bottom + 64 > window.innerHeight ? { bottom: window.innerHeight - at.top + 4 } : { top: at.bottom + 4 }) }}>
+            <button type="button" role="menuitem" autoFocus onClick={onDelete} className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2.5 text-left text-[14px] font-medium text-danger hover:bg-danger-soft">
+              <Trash2 className="h-4 w-4" strokeWidth={1.75} />Delete chat
+            </button>
+          </div>
+        </>, document.body,
+      )}
     </li>
   )
 }
