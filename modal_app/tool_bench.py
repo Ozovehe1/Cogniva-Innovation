@@ -43,7 +43,7 @@ APT = "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-
 
 compute_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .run_commands(APT + "procps fonts-dejavu-core fonts-freefont-otf octave gnuplot-nox && rm -rf /var/lib/apt/lists/*")
+    .run_commands(APT + "procps fonts-dejavu-core fonts-freefont-otf ghostscript octave gnuplot-nox && rm -rf /var/lib/apt/lists/*")
     .pip_install("numpy==2.3.3", "scipy==1.16.2", "sympy==1.14.0", "matplotlib==3.10.6", "pandas==2.3.3", "pint==0.24.4",
                  "z3-solver", "networkx==3.5", "pillow")
     .run_commands(USERS, "python -c 'import matplotlib; matplotlib.use(\"Agg\"); import matplotlib.pyplot'")
