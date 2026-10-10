@@ -1,4 +1,5 @@
 import { after } from 'next/server'
+import { chatTitle } from '@/lib/agent/chat-title'
 import { lessonDigest } from '@/lib/lesson-digest'
 import { randomUUID } from 'node:crypto'
 import { getSessionProfile } from '@/lib/auth'
@@ -106,7 +107,7 @@ export async function POST(request: Request) {
     }
 
     if (!sessionId) {
-      const { data: s } = await admin.from('chat_sessions').insert({ student_id: studentId, lesson_id: lessonId, title: message.slice(0, 80) }).select('id').single()
+      const { data: s } = await admin.from('chat_sessions').insert({ student_id: studentId, lesson_id: lessonId, title: chatTitle(message) }).select('id').single()
       sessionId = (s as { id: string }).id
     }
     send({ t: 'session', id: sessionId })

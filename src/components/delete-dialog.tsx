@@ -130,3 +130,12 @@ export function AccountDelete({ email }: { email: string }) {
       body={<>This permanently deletes your GeniusMap account: every goal and path, all your lessons, progress, checks, check-ins and animations, and your sign-in. It can’t be undone, and you’ll be signed out.</>} />
   )
 }
+
+/** Delete every Ask chat the learner has (Settings). Chats are otherwise kept until deleted one by one. */
+export function ChatsDeleteAll({ count }: { count: number }) {
+  return (
+    <DeleteButton what="all chats" title={`All ${count} ${count === 1 ? 'chat' : 'chats'} with GeniusMap`} endpoint="/api/agent/chats" payload={{ all: true }}
+      keepLabel="Keep my chats" confirmLabel="Delete all chats" buttonLabel="Delete all chats"
+      body={<>This deletes every Ask chat, every message in them and their visuals, on all your devices. Your goals, lessons and progress stay. It can’t be undone.</>} />
+  )
+}

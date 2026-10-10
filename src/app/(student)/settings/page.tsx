@@ -5,7 +5,7 @@ import { getSessionProfile } from '@/lib/auth'
 import { learnerForPath, listPaths, loadLearner, type TopicRow } from '@/lib/learner'
 import { HOURS_CHOICES, PURPOSE_LABEL, deadlineDistance, formatDue, pathDeadline } from '@/lib/path-view'
 import { RichText, toPlainText } from '@/components/rich-text'
-import { GoalDelete, AccountDelete } from '@/components/delete-dialog'
+import { GoalDelete, AccountDelete, ChatsDeleteAll } from '@/components/delete-dialog'
 import { GoalEdit } from '@/components/goal-edit'
 import { Card, EmptyState, PageHeader, ProgressBar, SectionTitle, buttonClass } from '@/components/ui'
 
@@ -20,6 +20,7 @@ export default async function SettingsPage() {
     loadLearner(supabase, profile.id),
     listPaths(supabase, profile.id),
   ])
+  const { count: chatCount } = await supabase.from('chat_sessions').select('id', { count: 'exact', head: true }).eq('student_id', profile.id)
   const email = (me as { email: string | null } | null)?.email ?? ''
   const { data: topicRows } = paths.length ? await supabase.from('path_topics').select('path_id, status, lesson_id').in('path_id', paths.map(p => p.id)) : { data: [] }
   const topics = (topicRows ?? []) as Pick<TopicRow, 'path_id' | 'status' | 'lesson_id'>[]
@@ -89,6 +90,14 @@ export default async function SettingsPage() {
               <button type="submit" className={buttonClass('secondary', 'md')}><LogOut className="h-4 w-4" strokeWidth={1.75} />Sign out</button>
             </form>
           </div>
+        </Card>
+      </section>
+
+      <section className="mb-10">
+        <SectionTitle action={chatCount ? <span className="tnum text-[13px] text-muted">{chatCount} {chatCount === 1 ? 'chat' : 'chats'}</span> : undefined}>Your chats</SectionTitle>
+        <Card>
+          <p className="text-[15px] leading-relaxed text-ink-2">Your chats with GeniusMap are saved until you delete them, and only you can see them. Delete one from <Link href="/ask" className="font-medium text-accent hover:underline underline-offset-4">Chats in Ask</Link>, or all of them here.</p>
+          {chatCount ? <div className="mt-4"><ChatsDeleteAll count={chatCount} /></div> : <p className="mt-3 text-[14px] text-muted">No saved chats.</p>}
         </Card>
       </section>
 

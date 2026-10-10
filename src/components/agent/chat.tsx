@@ -156,6 +156,15 @@ export function AgentChat({ initialSessionId = null, initialMessages = [], lesso
     setSessionId(null); setMessages([]); inputRef.current?.focus()
     if (!onSession && !lessonId && window.location.pathname === '/ask' && window.location.search) window.history.replaceState(null, '', '/ask')
   }
+  // "New chat" from the chat history drawer (Ask page only).
+  const resetRef = useRef(reset)
+  resetRef.current = reset
+  useEffect(() => {
+    if (onSession || lessonId) return
+    const on = () => resetRef.current()
+    window.addEventListener('gm:new-chat', on)
+    return () => window.removeEventListener('gm:new-chat', on)
+  }, [onSession, lessonId])
 
   return (
     <div className={cx('flex flex-col', compact ? 'h-full' : 'min-h-[calc(100dvh-180px)]')}>
