@@ -867,6 +867,7 @@ const VISUAL: ToolSpec[] = [
 ]
 
 import { embedTools } from '@/lib/live/tools/embeds'
+import { atomTool } from '@/lib/live/tools/atom-tool'
 import { remoteTools } from '@/lib/live/remote'
 // Side effect: registers the Modal tool bench tools (lib/live/tools/bench.ts) as remote tools.
 import '@/lib/live/tools/bench'
@@ -876,7 +877,7 @@ export const ALL_TOOLS: ToolSpec[] = [...READ, ...WRITE, ...DIRECTOR, ...VISUAL,
 /** Every tool in the one registry: the built-in tools, the external stage tools (lib/live/tools/embeds.ts) and remote bench tools. */
 export function allTools(): ToolSpec[] {
   const seen = new Set<string>()
-  return [...ALL_TOOLS, ...embedTools(), ...remoteTools()].filter(t => (seen.has(t.def.name) ? false : (seen.add(t.def.name), true)))
+  return [...ALL_TOOLS, atomTool, ...embedTools(), ...remoteTools()].filter(t => (seen.has(t.def.name) ? false : (seen.add(t.def.name), true)))
 }
 
 export function toolsFor(ctx: Pick<AgentCtx, 'mode' | 'restricted'>): ToolSpec[] {

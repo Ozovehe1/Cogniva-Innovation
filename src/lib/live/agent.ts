@@ -69,6 +69,26 @@ export interface LiveInput {
   onTool?: (name: string, label: string, state: 'start' | 'done' | 'error') => void
 }
 
+/**
+ * Free models sometimes write their tool calls as text ("**teaching_move** {\"move\": …}", "<|channel|>") after a
+ * failed tool-call parse. The live route holds the narration until the run ends and keeps only what is meant for the
+ * learner: the part after a "Speak" heading if there is one, else the text with tool headers and JSON objects removed.
+ */
+export function cleanNarration(t: string): { text: string; leaked: boolean } {
+  const leak = /\*\*\s*(teaching_move|board_edit|point_at|[a-z]+_[a-z_]+)\s*\*\*|"(move|plan|reason)"\s*:\s*["\[]|<\|[a-z_]+\|>/i
+  if (!leak.test(t)) return { text: t, leaked: false }
+  const speak = /\*\*\s*(speak|say|to the learner)\s*\*\*\s*:?\s*([\s\S]+)$/i.exec(t)
+  let out = speak ? speak[2] : t
+  out = out.replace(/```[\s\S]*?```/g, '')
+    .replace(/\{[\s\S]*?\}/g, m => (/"\w+"\s*:/.test(m) ? '' : m))
+    .replace(/<\|[a-z_]+\|>\w*/gi, '')
+    .replace(/^\s*\*\*[a-z_ ]+\*\*.*$/gim, '')
+    .replace(/^\s*[-*]\s*(edit|add|erase|move|highlight)\b.*$/gim, '')
+    .replace(/\n{3,}/g, '\n\n').trim()
+    .replace(/^[“"]+|[”"]+$/g, '').trim()
+  return { text: out, leaked: true }
+}
+
 export function liveLoadout(inp: Pick<LiveInput, 'ctx' | 'signal' | 'lesson' | 'stage'>) {
   const all = toolsFor(inp.ctx)
   const text = `${inp.signal.detail ?? ''} ${inp.signal.answer ?? ''} ${inp.signal.expected ?? ''} ${inp.signal.where ?? ''} ${inp.stage.join(' ')}`

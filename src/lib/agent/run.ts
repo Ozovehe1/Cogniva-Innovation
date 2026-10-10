@@ -19,6 +19,7 @@ import { compactDef, liveAgentOn, offerFallback, selectLoadout } from '@/lib/liv
 import { selfCheck } from '@/lib/live/selfcheck'
 import { busyAnswer } from '@/lib/live/busy'
 import type { SignalKind } from '@/lib/live/signals'
+import type { Block } from './types'
 
 export const MAX_STEPS = 6
 export const MAX_WRITES = 3
@@ -150,6 +151,8 @@ export async function runAgent(input: {
   let plan: string[] | undefined
   let remember: string | null = null
   const checks: NonNullable<RunResult['checks']> = []
+  // Checked visuals by object: a tool that replaces its own picture (same id, new block) gets the new one checked.
+  const checkedBlocks = new WeakSet<object>()
   let revised = false
   let failedCheck = false
   const models: string[] = []
@@ -343,10 +346,11 @@ export async function runAgent(input: {
       // Observe: the tutor sees its own new visual (geometry checks, plus one vision pass in live lessons) before it
       // moves on; a failed check goes back with the tool result and the agent revises (once per turn).
       if (!err && input.selfCheck && spec?.tier === 'visual' && result && typeof result === 'object') {
-        const fresh = (ctx.blocks ?? []).filter(b => isVisual(b) && !initialIds.has(b.id) && !checks.some(c => c.block === b.id))
+        const fresh = (ctx.blocks ?? []).filter(b => isVisual(b) && !initialIds.has(b.id) && !checkedBlocks.has(b))
         for (const b of fresh.slice(-1)) {
-          const v = await selfCheck(b, `${input.selfCheck.intent}${(call.args as { brief?: string; title?: string }).brief ? `; brief: ${String((call.args as { brief?: string }).brief).slice(0, 200)}` : ''}`, { vision: input.selfCheck.vision && !revised, deadline: input.deadline, trace: ctx.trace })
+          const v = await selfCheck(b, `${visualCaption(b) ? `${visualCaption(b)} (made for: ${input.selfCheck.intent})` : input.selfCheck.intent}${(call.args as { brief?: string; title?: string }).brief ? `; brief: ${String((call.args as { brief?: string }).brief).slice(0, 200)}` : ''}`, { vision: input.selfCheck.vision && !revised, deadline: input.deadline, trace: ctx.trace })
           checks.push({ block: b.id, ok: v.ok, issues: v.issues, vision: v.vision })
+          checkedBlocks.add(b)
           ctx.trace.push(`selfcheck ${b.kind} ${b.id}: ${v.ok ? 'ok' : `ISSUES ${v.issues.join('; ').slice(0, 160)}`} (vision ${v.vision})`)
           if (failedCheck && v.ok) revised = true
           if (!v.ok) {
@@ -376,6 +380,12 @@ export async function runAgent(input: {
     if (text && !/\s$/.test(text)) { text += '\n\n'; input.onText?.('\n\n') }
   }
   return finish(MAX_STEPS)
+}
+
+/** What a visual says it shows (its caption / alt / title): the self-check judges it against this first. */
+function visualCaption(b: Block): string {
+  const x = b as { caption?: string; alt?: string; title?: string }
+  return String(b.kind === 'image' || b.kind === 'clip' ? x.caption ?? '' : b.kind === 'svg' ? x.alt ?? '' : '').slice(0, 160)
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {

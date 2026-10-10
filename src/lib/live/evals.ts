@@ -15,10 +15,11 @@ import { readVisual } from '@/lib/visual-policy'
 import { parseCircuit, solveCircuit, circuitNetlist, checkReadings } from './tools/circuit-net'
 import { geometryCheck } from './selfcheck'
 import type { Block } from '@/lib/agent/types'
-import { DECIDE_TOOL, LIVE_SYSTEM } from './agent'
+import { DECIDE_TOOL, LIVE_SYSTEM, cleanNarration } from './agent'
 import { remoteContracts, remoteTools } from './remote'
 import { BENCH_DEFS, BENCH_NAMES, BENCH_MAX_PER_RUN, benchGroupsFor, benchInitiated, checkIssues, compactResult, emitArtifacts, fallbackName, takeBenchSlot, withViewBox } from './tools/bench'
 import type { ToolbenchResult } from '@/lib/toolbench/client'
+import { atomSpec, atomSvg, drawnElectrons, elementInText, shellConfig } from '@/lib/atom'
 
 export interface LiveCase { id: string; group: string; pass: boolean; detail: string }
 
@@ -265,6 +266,21 @@ export function benchCases(): LiveCase[] {
   add('fallback-handover', defs1.length === defs0.length && defs1.some(d => d.name === 'circuit_sim') && !defs1.some(d => d.name === 'circuit_spice'), defs1.map(d => d.name).join(','))
   add('initiated', benchInitiated({ kind: 'answer' }) === 'agent' && benchInitiated({ kind: 'lost' }) === 'agent' && benchInitiated({ kind: 'message', detail: 'why is it negative?' }) === 'agent' && benchInitiated({ kind: 'message', detail: 'can you simulate the capacitor?' }) === 'prompted')
   add('prompt-agency', /unasked/.test(LIVE_SYSTEM) && /fallback/.test(LIVE_SYSTEM) && /Chain/.test(LIVE_SYSTEM), 'exact tools unprompted, chain, retry/fallback')
+  // Production smoke 2026-10-10 (live_3741548f): fixes for what it showed.
+  const leak = '**teaching_move**  \n{\n  "move": "board_edit",\n  "reason": "x",\n  "plan": [\n    "a"\n  ]\n}\n\n**board_edit**  \n- Edit cell **EF1**: "RC"\n\n**Speak**  \n“Here is the time constant: 1 ms. What is 0.2 × 0.05?”'
+  const cl = cleanNarration(leak)
+  add('narration-leak-cleaned', cl.leaked && cl.text === 'Here is the time constant: 1 ms. What is 0.2 × 0.05?' && !cleanNarration('The curve rises fast, then slows. What is τ here?').leaked, JSON.stringify(cl.text))
+  const sp = prep('circuit_spice', { netlist: 'V1 in 0 5\nR1 in out 1k\nC1 out 0 1u', analysis: 'tran 10u 5m' }).args as { analysis: string }
+  add('spice-uic', sp.analysis === 'tran 10u 5m uic' && (prep('circuit_spice', { netlist: 'V1 in 0 5\nR1 in 0 1k', analysis: 'tran 1u 1m' }).args as { analysis: string }).analysis === 'tran 1u 1m', sp.analysis)
+  add('spice-flat-flagged', checkIssues(env({ tool: 'spice', result: { x: [0, 1], summary: { 'v(out)': { min: 5, max: 5 } } } })).some(i => /flat/.test(i)) && checkIssues(env({ tool: 'spice', result: { x: [0, 1], summary: { 'v(out)': { min: 0, max: 4.97 } } } })).length === 0)
+  got.length = 0
+  const pngEnv = env({ artifacts: [{ name: 'waveform.png', mime: 'image/png', b64: 'iVBOR', bytes: 5 }] })
+  const e1 = emitArtifacts(sink, 'spice', pngEnv, 'v1')
+  const e2 = emitArtifacts(sink, 'spice', pngEnv, 'v2', { id: e1.id!, kind: e1.kind! })
+  const e3 = emitArtifacts(sink, 'pde', env({ artifacts: [{ name: 'f.mp4', mime: 'video/mp4', b64: 'AA', bytes: 2 }] }), 'c', { id: e1.id!, kind: e1.kind! })
+  add('recall-replaces-picture', e2.id === e1.id && got[1].id === e1.id && e3.id !== e1.id, `${e1.id} ${e2.id} ${e3.id}`)
+  const cs = compactDef(all.find(t => t.def.name === 'circuit_sim')!).description
+  add('circuit-sim-says-resistors-only', /resistors only|RESISTORS only/i.test(cs) && /circuit_spice/.test(cs), cs)
   add('python-ffmpeg-not-offered', !BENCH_DEFS.some(d => d.tool === 'python' || d.tool === 'ffmpeg'), 'run_python covers python; ffmpeg takes base64 media')
   return out
 }
@@ -278,6 +294,29 @@ export async function benchAsyncCases(): Promise<LiveCase[]> {
   return out
 }
 
+/** Atomic structure (owner report 2026-10-10: "can't teach atomic structure"): exact atoms, isotopes, ions, routing. */
+export function atomCases(): LiveCase[] {
+  const out: LiveCase[] = []
+  const add = (id: string, pass: boolean, detail = '') => out.push({ id: `atom-${id}`, group: 'static', pass, detail })
+  const cfg = (e: string) => atomSpec({ element: e }).spec!.shells.join(',')
+  add('shells', cfg('beryllium') === '2,2' && cfg('Na') === '2,8,1' && cfg('17') === '2,8,7' && cfg('oxygen') === '2,6' && cfg('calcium') === '2,8,8,2' && cfg('iron') === '2,8,14,2', ['beryllium', 'Na', '17', 'oxygen', 'calcium', 'iron'].map(cfg).join(' | '))
+  const c14 = atomSpec({ element: 'carbon', mass: 14 }).spec!
+  add('isotope', c14.protons === 6 && c14.neutrons === 8 && c14.electrons === 6 && !!atomSpec({ element: 'carbon', mass: 3 }).error, JSON.stringify({ p: c14.protons, n: c14.neutrons }))
+  const cl = atomSpec({ element: 'Cl', charge: -1 }).spec!, na = atomSpec({ element: 'sodium', charge: 1 }).spec!
+  add('ions', cl.electrons === 18 && cl.shells.join() === '2,8,8' && na.shells.join() === '2,8', `${cl.shells} / ${na.shells}`)
+  const all = Array.from({ length: 36 }, (_, i) => atomSpec({ element: i + 1 }).spec!)
+  add('drawn-matches-computed', all.every(s => drawnElectrons(atomSvg(s)) === s.electrons && s.shells.reduce((a, b) => a + b, 0) === s.electrons && /viewBox=/.test(atomSvg(s))), 'Z 1-36')
+  add('school-rule', shellConfig(19).join() === '2,8,8,1' && shellConfig(20).join() === '2,8,8,2')
+  add('element-in-text', elementInText('Let us place three electrons for lithium')?.element === 'lithium' && elementInText('carbon-14 is an isotope')?.mass === 14 && elementInText('chlorine, which has an atomic number of 17')?.element === '17' && elementInText('the heart pumps blood') === null)
+  const pick = (text: string, x: Partial<Parameters<typeof selectLoadout>[1]> = {}) => withBench(() => selectLoadout(toolsFor({ mode: 'chat', restricted: false }), { text, live: true, ...x }).map(t => t.def.name))
+  const a1 = pick('how many electrons go in the outer shell of sodium?', { signal: 'message' })
+  const a2 = pick('', { signal: 'answer', topic: '"Atomic Structure and Valence Electrons"' })
+  const a3 = pick('isotopes of carbon, protons and neutrons')
+  add('loadout', a1.includes('atom_diagram') && a2.includes('atom_diagram') && a3.includes('atom_diagram') && [a1, a2, a3].every(l => l.length <= LOADOUT_MAX), `${a1} | ${a2} | ${a3}`)
+  add('phet-build-an-atom-offered', pick('build an atom with protons neutrons and electrons').some(n => n === 'phet' || n === 'atom_diagram'), pick('build an atom with protons neutrons and electrons').join(','))
+  return out
+}
+
 export function liveStaticCases(): LiveCase[] {
-  return [...policyCases(), ...routerCases(), ...loadoutCases(), ...busyCases(), ...circuitCases(), ...selfCheckCases(), ...benchCases()]
+  return [...policyCases(), ...routerCases(), ...loadoutCases(), ...busyCases(), ...circuitCases(), ...selfCheckCases(), ...benchCases(), ...atomCases()]
 }

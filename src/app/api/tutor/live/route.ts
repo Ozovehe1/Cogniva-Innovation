@@ -16,7 +16,7 @@ import type { AgentCtx } from '@/lib/agent/tools'
 import type { Block } from '@/lib/agent/types'
 import type { CheckStep, Step } from '@/lib/lesson-schema'
 import { liveAgentOn } from '@/lib/live/registry'
-import { runLive } from '@/lib/live/agent'
+import { cleanNarration, runLive } from '@/lib/live/agent'
 import { parseSignal, signalLine, type LearnerSignal } from '@/lib/live/signals'
 import { newWakeState, noteSlider, shouldWake } from '@/lib/live/policy'
 import { busySignalLine } from '@/lib/live/busy'
@@ -121,6 +121,9 @@ export async function POST(request: Request) {
     }
     let text = ''
     const gateT = textGate(d => { text += d; send({ t: 'text', d }) })
+    // Narration is held until the run ends, then cleaned of tool calls a model wrote as text (cleanNarration).
+    let raw = ''
+    const flush = () => { const c = cleanNarration(raw); raw = ''; if (c.leaked) ctx.trace.push('narration: tool-call text removed'); if (c.text) gateT.push(c.text) }
     let result: Awaited<ReturnType<typeof runLive>> | null = null
     let outcome = 'acted'
     try {
@@ -128,15 +131,17 @@ export async function POST(request: Request) {
         ctx, signal, recent, stage, memory, lastActs, state,
         lesson: `"${l.title}"${pos?.section ? `, section "${pos.section.title}"` : ''}${pos ? `, step ${pos.cursor + 1}/${pos.total}` : ''}${digest ? `. It teaches: ${digest.text.slice(0, 350)}` : ''}`,
         deadline: t0 + BUDGET_MS,
-        onText: d => gateT.push(d),
+        onText: d => { raw += d },
         onTool: (name, label, state) => send({ t: 'tool', name, label, state }),
       }))
+      flush()
       gateT.end()
       const mv = result.move
       send({ t: 'decision', move: mv?.move ?? null, reason: mv?.reason ?? '', plan: result.plan ?? [] })
       if (mv?.move === 'wait' && !blocks.length) outcome = 'chose to wait'
       else if (!text.trim() && !blocks.length) outcome = 'no output'
     } catch (err) {
+      flush()
       gateT.end()
       const busy = err instanceof AllModelsBusyError
       outcome = busy ? 'busy fallback' : `error: ${err instanceof Error ? err.message.slice(0, 120) : err}`

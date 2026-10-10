@@ -83,14 +83,23 @@ export function checkIssues(r: ToolbenchResult): string[] {
   if (res && res.consistent === false) issues.push('units do not match: the two sides have different dimensions')
   if (res && res.proved === false) issues.push('the claim is false (see counterexample)')
   if (/maximum.principle|non-physical/i.test(r.logs ?? '')) issues.push(r.logs.slice(0, 160))
+  // A transient whose every trace is flat shows nothing happening (wrong start state or source).
+  const summary = res?.summary as Record<string, { min?: number; max?: number }> | undefined
+  if (r.tool === 'spice' && summary && res?.x && Object.values(summary).every(v => typeof v?.min === 'number' && typeof v?.max === 'number' && Math.abs(v.max! - v.min!) <= 1e-6 * Math.max(1, Math.abs(v.max!))))
+    issues.push('the waveform is flat: nothing changes over time (use a PULSE source or start the capacitor from 0 V)')
   return issues
 }
 
 /* ───────────── artifacts → stage blocks ───────────── */
 
 /** Puts the bench artifacts on the stage as ordinary blocks; returns what was shown. */
-export function emitArtifacts(ctx: Pick<AgentCtx, 'emit'>, tool: ToolbenchTool, r: ToolbenchResult, caption: string): { shown: string[]; dropped: string[] } {
+export function emitArtifacts(ctx: Pick<AgentCtx, 'emit'>, tool: ToolbenchTool, r: ToolbenchResult, caption: string, reuse?: { id: string; kind: string }): { shown: string[]; dropped: string[]; id?: string; kind?: string } {
   const shown: string[] = []
+  let firstId: string | undefined
+  let firstKind: string | undefined
+  // A re-call of the same tool in one run (a fix after a failed check) replaces its picture instead of stacking a new one.
+  const emitOrig = ctx.emit
+  ctx = { emit: (b: Block) => { const nb = (!firstId && reuse && reuse.kind === b.kind ? { ...b, id: reuse.id } : b) as Block; if (!firstId) { firstId = nb.id; firstKind = nb.kind } emitOrig(nb) } }
   const dropped: string[] = []
   const pngs = r.artifacts.filter(a => a.mime === 'image/png' && a.b64)
   const svgs = r.artifacts.filter(a => a.mime === 'image/svg+xml' && a.text)
@@ -115,7 +124,7 @@ export function emitArtifacts(ctx: Pick<AgentCtx, 'emit'>, tool: ToolbenchTool, 
     ctx.emit({ kind: 'image', id: `i${bid()}`, png: p.b64!, caption })
     shown.push('image')
   }
-  return { shown, dropped }
+  return { shown, dropped, id: firstId, kind: firstKind }
 }
 
 /** Graphviz / dvisvgm SVGs carry width/height in pt; make sure a viewBox exists so phones can scale them. */
@@ -134,6 +143,7 @@ export function benchInitiated(signal: { kind: string; detail?: string | null })
 /* ───────────── the generic contract ───────────── */
 
 const used = new WeakMap<object, number>()
+const shownIds = new WeakMap<object, Map<string, { id: string; kind: string }>>()
 /** One bench call for this agent run, or false when the run already used BENCH_MAX_PER_RUN. */
 export function takeBenchSlot(ctx: object): boolean {
   const n = used.get(ctx) ?? 0
@@ -165,7 +175,7 @@ export function benchContract(d: BenchDef): RemoteToolContract {
     topics: d.topics, fallback: d.fallback, notLive: d.notLive, signals: d.signals, verifies: d.verifies, enabled: benchEnabled,
     prepare: a => d.shape(a),
     run: async (args, ctx) => {
-      if (!takeBenchSlot(ctx)) return { error: `Tool bench limit for this turn (${BENCH_MAX_PER_RUN}) reached.${d.fallback ? ` Use ${d.fallback}` : ' Explain in words'} instead.` }
+      if (!takeBenchSlot(ctx)) return { error: `Tool bench limit for this turn (${BENCH_MAX_PER_RUN}) reached. Talk from the results you already have and what is on the stage; do not draw a substitute that cannot show this.` }
       const r = await runTool(d.tool, args as never, { lessonId: ctx.lessonId ?? null, surface: ctx.lessonId ? 'lesson' : 'ask' }, { timeoutMs: Math.min(38_000, TOOLBENCH_LATENCY[d.tool].cold + 25_000) })
       ctx.trace.push(`bench ${d.tool}: ${r.ok ? 'ok' : `fail ${String(r.error).slice(0, 80)}`} ${r.ms} ms${r.warm === false ? ' (cold)' : ''}`)
       const rec = { tool: name, ok: r.ok, ms: r.ms, cold: r.warm === false, shown: [] as string[], issues: 0, ...(r.ok ? {} : { error: String(r.error ?? '').slice(0, 120) }) }
@@ -174,7 +184,9 @@ export function benchContract(d: BenchDef): RemoteToolContract {
         const fb = fallbackName(r.fallback) ?? d.fallback ?? null
         return { error: `${name}: ${String(r.error ?? 'failed').slice(0, 220)}${fb ? `. Try ${fb} instead${r.fallback?.reason ? ` (${r.fallback.reason.slice(0, 100)})` : ''}.` : ''}`, fallback: fb }
       }
-      const { shown, dropped } = emitArtifacts(ctx, d.tool, r, d.caption(args).slice(0, 120))
+      const ids = shownIds.get(ctx) ?? new Map<string, { id: string; kind: string }>(); shownIds.set(ctx, ids)
+      const { shown, dropped, id, kind } = emitArtifacts(ctx, d.tool, r, d.caption(args).slice(0, 120), ids.get(name))
+      if (id && kind) ids.set(name, { id, kind })
       rec.shown = shown
       rec.issues = checkIssues(r).length
       return {
@@ -293,7 +305,10 @@ export const BENCH_DEFS: BenchDef[] = [
       if (!netlist) return { error: 'netlist is required' }
       if (!/^\s*[VI]\w*\s/im.test(netlist)) return { error: 'netlist needs a source (a line starting V… or I…)' }
       if (!/\s0(\s|$)/m.test(netlist)) return { error: 'netlist needs a ground: connect something to node 0' }
-      const analysis = str(a.analysis, 60) || 'op'
+      let analysis = str(a.analysis, 60) || 'op'
+      // A transient with a capacitor/inductor starts from the DC steady state unless told otherwise: the curve then
+      // comes out flat (already charged). Start from zero (uic) unless the netlist sets its own initial conditions.
+      if (/^tran\b/i.test(analysis) && /^\s*[CL]\w*\s/im.test(netlist) && !/\buic\b/i.test(analysis) && !/\bic\s*=/i.test(netlist)) analysis = `${analysis} uic`
       const probes = (Array.isArray(a.probes) ? a.probes : []).map(x => str(x, 24)).filter(Boolean).slice(0, 4)
       return { args: { netlist, analysis, ...(probes.length ? { probes } : {}) } }
     },

@@ -59,7 +59,8 @@ const META: Record<string, ToolMeta> = {
   get_lesson_digest: { short: 'What a lesson actually taught (beats, worked steps, checks).', renderer: 'data', cost: 'free-api', latency: 'fast', topics: /lesson|covered|earlier|before/i },
   narrate: { short: 'Read a short explanation aloud.', renderer: 'text', cost: 'modal-gpu', latency: 'fast', topics: /listen|voice|read (it )?(out|aloud)|audio/i },
   make_practice_set: { short: 'Make 3-5 checked practice questions shown as an interactive set.', renderer: 'action', cost: 'llm', latency: 'fast', topics: /practi[cs]e|quiz|test me|questions|drill|exercise/i },
-  circuit_sim: { renderer: 'embed', cost: 'free-browser', latency: 'instant', topics: /circuit|resist|ohm|current|voltage|kirchhoff|kvl|kcl|series|parallel|battery|potential difference|electric/i, signals: ['answer', 'lost'] },
+  atom_diagram: { short: 'Exact labelled Bohr diagram of an atom/isotope/ion: protons, neutrons, electrons on the right shells, from the element (Z 1-36).', renderer: 'svg', cost: 'free-browser', latency: 'instant', topics: /\batoms?\b|atomic|protons?|neutrons?|electron (shell|config|arrangement)|\bshells?\b|isotopes?|valence|\bions?\b|nucleus|bohr|periodic table|mass number|noble gas/i, signals: ['answer', 'lost'] },
+  circuit_sim: { short: 'Live DC circuit simulator (Falstad): a battery and RESISTORS only, series/parallel, exact V and I. No capacitors or inductors (circuit_spice does those).', renderer: 'embed', cost: 'free-browser', latency: 'instant', topics: /circuit|resist|ohm|current|voltage|kirchhoff|kvl|kcl|series|parallel|battery|potential difference|electric/i, signals: ['answer', 'lost'] },
   molecule_3d: { renderer: 'embed', cost: 'free-api', latency: 'fast', topics: /molecul|bond|compound|methane|water|glucose|caffeine|ethanol|benzene|protein|polar|isomer|vsepr|shape of|carbon dioxide|ammonia|atp/i },
   diagram: { renderer: 'embed', cost: 'free-browser', latency: 'instant', topics: /cycle|process|steps|stages|flow|krebs|pathway|sequence|timeline|concept map|classif|life cycle|algorithm|respiration|photosynth|food chain|food web/i, signals: ['lost'] },
   physics_sim: { renderer: 'embed', cost: 'free-browser', latency: 'instant', topics: /force|friction|collision|momentum|fall|drop|incline|ramp|gravity|newton|acceleration|projectile|mass|weight/i, signals: ['slider', 'lost'] },
@@ -121,6 +122,8 @@ export function selectLoadout(all: ToolSpec[], inp: LoadoutInput): ToolSpec[] {
     if (inp.signal && m.signals?.includes(inp.signal)) s += 1
     if (verifyBoost && m.verifies && (m.topics?.test(words) || m.topics?.test(topic))) s += verifyBoost
     const fit = s
+    // A bench tool comes only on a subject match (a signal alone never pulls in an off-topic solver).
+    if (remoteContract(t.def.name) && !(m.topics?.test(words) || (topic && m.topics?.test(topic)))) return { t, s: 0, fit: 0 }
     if (inp.shownTools?.includes(t.def.name)) s += 1.2
     if (inp.hasBoard && (t.def.name === 'board_edit')) s += 2.5
     if (inp.hasBoard && t.def.name === 'board_inspect') s += 0.8

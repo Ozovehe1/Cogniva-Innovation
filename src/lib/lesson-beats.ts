@@ -10,6 +10,7 @@
  * optional beats are written only when the lesson is behind schedule, and extra
  * practice beats are added before the closing beat until the target is reached.
  */
+import { atomSpec, atomSvg, elementInText } from './atom'
 import { exampleBeatSteps, exampleDomain } from './examples/lesson'
 import { generateStructuredJson } from './gemini'
 import { LAYOUT_RULES, SHOW_DONT_TELL, TUTOR_VOICE, WORDS_PER_MINUTE, generateSteps, type GenMeta, type LessonLite } from './lesson-ai'
@@ -348,6 +349,23 @@ export async function withRichVisual(ctx: BeatContext, steps: Step[]): Promise<S
       if (st) { const swapped = [...steps]; swapped[i] = st; return swapped }
     }
   }
+  // Atomic structure: a beat about a named element / isotope gets that atom drawn exactly (lib/atom.ts: protons,
+  // neutrons, electrons per shell from Z), not the generic library Bohr picture (one hydrogen-like image showed for
+  // beryllium, sodium, chlorine and oxygen alike, and the drafted rings/dots carried wrong electron counts).
+  const atomic = /\batoms?\b|atomic|electron (shell|config|arrangement)|\bshells?\b|isotope|valence|proton|neutron|\bions?\b|periodic/i
+  if (atomic.test(`${own} ${lessonText}`)) {
+    const named = elementInText(own)
+    const hasAtomFig = steps.some(st => /^atom_/.test(String((st as { id?: string }).id ?? '')))
+    if (named && !hasAtomFig) {
+      const r = atomSpec({ element: named.element, mass: named.mass, highlightValence: /valence|outer|bond|ion|react/i.test(own) })
+      if (r.spec) {
+        const s = r.spec
+        const svg = atomSvg(s)
+        const fig = { type: 'draw', id: `atom_${s.symbol.toLowerCase()}_${ctx.index}`, say: `Here is ${s.name}${named.mass ? `-${s.mass}` : ''} drawn exactly: ${s.protons} protons and ${s.neutrons} neutrons in the nucleus, and ${s.electrons} electrons arranged ${s.shells.join(', ')} on its shells.`, shape: { kind: 'figure', x: 40, y: 95, w: 410, h: 297, svg, alt: `Bohr diagram of ${s.name}: ${s.protons} protons, ${s.neutrons} neutrons, electrons ${s.shells.join(', ')}` } } as unknown as Step
+        return insertAfterOpening(out, fig)
+      }
+    }
+  }
   const hasLive = steps.some(st => st.type === 'stage' || st.type === 'manim_clip')
   if (hasLive || (hasRichVisual(steps) && !(tpl && stageTemplateFor(own)))) return steps
   if (tpl && shown(tpl) < 2 && (tpl !== prevTpl || stageTemplateFor(own))) {
@@ -366,7 +384,9 @@ export async function withRichVisual(ctx: BeatContext, steps: Step[]): Promise<S
     if (st) return insertAfterOpening(out, st)
   }
   // 3. A real structure: a credited library picture.
-  const query = readVisual(own).structure ?? readVisual(lessonText).structure
+  // The lesson-wide subject only for the opening beat: later beats get a picture when THEY name a structure (the same
+  // library picture was placed at the start of nearly every beat of a lesson whose title named it).
+  const query = readVisual(own).structure ?? (ctx.index === 0 ? readVisual(lessonText).structure : undefined)
   if (!query) return out
   try {
     const { findIllustration } = await import('./illustrations/find')
