@@ -27,7 +27,7 @@ const RULES = `Rules:
 - Names: plain identifiers (u, theta, x1, nH2O), never reuse a name, never a function name.
 - Inside calc/check expressions use names, never the numbers they stand for (so the learner can change the givens).
 - "identity" checks are for two forms of the SAME expression (expanding, rearranging). A defining equation (A = L*W) is not a check: put it in the claim.
-- Calculus (gradients, stationary points, optimisation): diagram "graph" whose f is written in x and givens; a "derivative" check over x; the critical x is a calc from the givens, with a "zero" check of f'(x) there; points mark it ("max"/"min").
+- Calculus (gradients, stationary points, optimisation): diagram "graph" whose f is written in x and givens; a "derivative" check over x; calc expressions never contain x itself (x lives only in checks and in f); the critical x is a calc from the givens (e.g. "x1": "P/4"), with a "zero" check of f'(x) there; points mark it ("max"/"min").
 - Use the diagram type that shows the idea; "board" only when no picture helps.`
 
 export function generatorPrompt(request: string, level: string) {

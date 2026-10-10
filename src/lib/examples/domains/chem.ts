@@ -95,10 +95,16 @@ export const reactionPlugin: Plugin = {
     return issues
   },
   render(d, _scope, view: DiagramView, spec: ExampleSpec) {
-    const { L, R } = sides(d)
+    let { L, R } = sides(d)
+    // a balancing step writes its own equation in the claim: draw the coefficients it has reached so far
+    const claimEq = view.step >= 0 && view.step < spec.steps.length ? parseEquation(spec.steps[view.step].claim.replace(/\\(rightarrow|to|longrightarrow)/g, '->').replace(/\\[a-z]+\{?|[{}_$ ]/g, (m) => (m === ' ' ? ' ' : '')).replace(/\s*\+\s*/g, ' + ')) : null
+    const same = (a: Species[], b: Species[]) => a.length === b.length && a.every(x => b.some(y => y.formula === x.formula))
+    let partial = false
+    if (claimEq && same(claimEq.L, L) && same(claimEq.R, R)) { L = claimEq.L; R = claimEq.R; partial = balanceIssues(L, R).length > 0 }
     const W = 400
     const ans = view.answers !== false
-    const balanced = view.reveal || (ans && view.step >= 0 && (view.step >= (spec.steps.length - 1) || Boolean(view.action?.show)))
+    const balanced = !partial && (view.reveal || (ans && view.step >= 0 && (view.step >= (spec.steps.length - 1) || Boolean(view.action?.show))))
+    const coefsKnown = balanced || partial
     const terms: { t: string; coef: number; f: string }[] = []
     L.forEach((s, i) => terms.push({ t: i ? '+' : '', coef: s.coef, f: s.formula }))
     terms.push({ t: '→', coef: 0, f: '' })
@@ -115,8 +121,8 @@ export const reactionPlugin: Plugin = {
       if (tm.t) { b.push(text(x + 13 * scale, y, tm.t, 'lbl', `style="font-size:${f1(22 * scale)}px"`)); x += 26 * scale }
       if (!tm.f) continue
       const cw = 22 * scale
-      const coefShown = balanced ? (tm.coef > 1 ? String(tm.coef) : '') : '□'
-      b.push(`<text x="${f1(x + cw / 2)}" y="${y}" class="lbl" style="font-size:${f1(22 * scale)}px;fill:${balanced ? ACC : MUTED};font-weight:700">${coefShown}</text>`)
+      const coefShown = coefsKnown ? (tm.coef > 1 ? String(tm.coef) : '') : '□'
+      b.push(`<text x="${f1(x + cw / 2)}" y="${y}" class="lbl" style="font-size:${f1(22 * scale)}px;fill:${coefsKnown ? ACC : MUTED};font-weight:700">${coefShown}</text>`)
       const fw = subDigits(tm.f).length * 13 * scale
       const hit = hiEl && (() => { try { return hiEl in atoms(tm.f) } catch { return false } })()
       if (hit) b.push(`<rect x="${f1(x + cw - 2)}" y="${y - 22}" width="${f1(fw + 8)}" height="30" rx="6" fill="${HL}" fill-opacity="0.6"/>`)
@@ -127,7 +133,7 @@ export const reactionPlugin: Plugin = {
     const showCounts = view.step >= 0 || view.reveal
     let h = 80
     if (showCounts) {
-      const withCoefs = (l: Species[]) => balanced ? l : l.map(s => ({ ...s, coef: 1 }))
+      const withCoefs = (l: Species[]) => coefsKnown ? l : l.map(s => ({ ...s, coef: 1 }))
       let tl: Record<string, number> = {}, tr: Record<string, number> = {}
       try { tl = tally(withCoefs(L)); tr = tally(withCoefs(R)) } catch { /* drawn without counts */ }
       const els = [...new Set([...Object.keys(tl), ...Object.keys(tr)])]

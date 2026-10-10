@@ -280,6 +280,8 @@ export function verifySpec(spec: ExampleSpec, o: { skipPrepare?: boolean } = {})
  */
 export function finalizeSpec(spec: ExampleSpec): { ok: boolean; issues: string[]; ev: Evaluated; spec: ExampleSpec } {
   const plugin = pluginFor(spec.diagram?.type)
+  // a physical constant the model forgot to mention is stated for it (not worth a repair round)
+  for (const g of spec.givens) if (/^(g|k|c|h|R_gas|N_A)$/.test(g.name) && !spec.statement.includes(`{{${g.name}}}`)) spec.statement = `${spec.statement.replace(/\s*$/, '')} Take ${g.name} = {{${g.name}}}${g.unit ? ` ${g.unit}` : ''}.`
   const pre: string[] = []
   if (plugin?.prepare && spec.diagram) pre.push(...plugin.prepare(spec.diagram, spec))
   if (!pre.length && plugin?.derive && spec.diagram) {
