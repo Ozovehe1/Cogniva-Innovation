@@ -174,12 +174,14 @@ export async function narrateVisual(o: {
       if (o.forceModelFail) throw new Error('test: narration model forced to fail')
       const desc = vis.map(describeVisual).filter(Boolean).map(d => `- ${d!.what}${d!.hint ? ` [learner can: ${d!.hint}]` : ''}${d!.beats.length ? ` (in order: ${d!.beats.join(' / ')})` : ''}`).join('\n')
       const messages: Msg[] = [
-        { role: 'system', content: 'You are GeniusMap, a warm tutor sitting beside a teenager in Nigeria. The visual below is already on their screen. Talk them through it the way you would out loud: 2-4 short, flowing sentences in its order, saying what to notice, then end with one natural invitation to try something on it or one quick check question. Write titles in plain lower case inside the sentence. Never say why you chose it, never say "you requested", "here is a visual" or "it goes in order". Describe only what is listed. No greeting, no JSON, no lists, at most 70 words, maths in $...$.' },
+        { role: 'system', content: 'You are GeniusMap, a warm tutor sitting beside a teenager in Nigeria. The visual below is already on their screen. Talk them through it the way you would out loud: 2-4 short, flowing sentences in its order, saying what to notice, then end with one natural invitation to try something on it or one quick check question. Use normal sentence capitals; when you mention the visual or one of its steps, say it in plain lower-case words inside the sentence, never as a quoted or capitalised title. Never work out or state an answer or a number that is not listed (the learner reveals it). Never say why you chose it, never say "you requested", "here is a visual" or "it goes in order". Describe only what is listed. No greeting, no JSON, no lists, at most 70 words, maths in $...$.' },
         { role: 'user', content: `Learner asked: <data>${clean(o.question, 400)}</data>\nOn screen now:\n${desc}${o.already.trim() ? `\nAlready said: ${clean(o.already, 300)}` : ''}` },
       ]
       const r = await chat({ purpose: 'light', messages, maxTokens: 220, temperature: 0.4, trace: o.trace, deadline: Math.min(o.deadline ?? Infinity, Date.now() + 12_000), avoidSlots: o.avoidSlots })
       const t = r.text.split('\n').filter(l => !/^\s*(MOVE|DO)\s*:/i.test(l)).join(' ').replace(/```[\s\S]*?```/g, '').trim()
-      if (proseWords(t) >= 10 && !/[{}]/.test(t) && !stiffNarration(t)) { o.trace.push(`narration: model ${r.model}`); return { text: t.slice(0, 900), via: 'model' } }
+        // Some models answer the lower-case rule by lower-casing everything: sentence starts get their capital back.
+        .replace(/(^|[.!?]\s+)([a-z])/g, (_m, a: string, ch: string) => a + ch.toUpperCase())
+      if (proseWords(t) >= 10 && proseWords(t) <= 95 && !/[{}]/.test(t) && !stiffNarration(t)) { o.trace.push(`narration: model ${r.model}`); return { text: t.slice(0, 900), via: 'model' } }
       o.trace.push('narration: model reply too thin or stiff, using the visual')
     } catch (err) {
       o.trace.push(`narration: model failed (${err instanceof Error ? err.message.slice(0, 80) : String(err)}), using the visual`)
