@@ -152,7 +152,7 @@ export function evaluateSpec(spec: ExampleSpec, overrides: Record<string, number
     if (answer !== null && opts.strict && spec.answer.value !== undefined && !close(answer, spec.answer.value, 0.02)) issues.push(`the answer you stated (${spec.answer.value}) is not what the steps give (${fmtNum(answer)})`)
   }
   if (plugin && spec.diagram) {
-    try { issues.push(...(plugin.crossCheck?.(spec.diagram, spec, scope, answer) ?? [])) } catch (e) { issues.push(`cross-check: ${e instanceof Error ? e.message : e}`) }
+    try { issues.push(...(plugin.crossCheck?.(spec.diagram, spec, scope, answer, !!opts.strict) ?? [])) } catch (e) { issues.push(`cross-check: ${e instanceof Error ? e.message : e}`) }
   }
   return { scope, values, answer, issues }
 }
@@ -237,7 +237,7 @@ export function makeVariants(spec: ExampleSpec, n = 3, seed = 11, nice?: boolean
 }
 
 /** Statement with numbers (and units) filled in. */
-const UNIT_WORDS: Record<string, RegExp> = { '°': /^\s*(°|deg|degree)/i, 'Ω': /^\s*(Ω|ohm|kΩ)/i, 'V': /^\s*(V\b|volt)/i, 'A': /^\s*(A\b|amp|mA)/i }
+const UNIT_WORDS: Record<string, RegExp> = { '°': /^[\s‑-]*(°|deg|degree)/i, 'Ω': /^[\s‑-]*(Ω|ohm|kΩ)/i, 'V': /^[\s‑-]*(V\b|volt)/i, 'A': /^[\s‑-]*(A\b|amp|mA)/i }
 /** Statement with the givens (only) filled in, each followed by its unit when the text does not already say it. */
 export function statementText(spec: ExampleSpec, scope: Record<string, number>) {
   const units = new Map(spec.givens.map(g => [g.name, g.unit ?? '']))

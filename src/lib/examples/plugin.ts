@@ -27,7 +27,7 @@ export interface Plugin {
   /** the plugin writes the solution itself (circuits: series-parallel reduction) */
   derive?(d: DiagramSpec, spec: ExampleSpec): { steps: SolStep[]; mistakes?: { expr: string; why: string }[] } | null
   /** independent cross-check of the numbers (a second solver / physical law) */
-  crossCheck?(d: DiagramSpec, spec: ExampleSpec, scope: Record<string, number>, answer: number | null): string[]
+  crossCheck?(d: DiagramSpec, spec: ExampleSpec, scope: Record<string, number>, answer: number | null, strict?: boolean): string[]
   /** check a text answer (a balanced equation, a ratio) */
   checkText?(d: DiagramSpec, spec: ExampleSpec): string[]
   /** SVG for this view, drawn from the scope (never from model-written numbers) */

@@ -415,7 +415,7 @@ export const circuitPlugin: Plugin = {
     for (const p of net.parts) { out[`mna_I_${p.id}`] = sol.I[p.id].abs().num(); out[`mna_V_${p.id}`] = sol.Vd[p.id].abs().num() }
     return out
   },
-  crossCheck(d, _spec, scope) {
+  crossCheck(d, _spec, scope, _answer, strict) {
     const net = netOf(d)
     const issues: string[] = []
     const src = net.parts.find(p => p.type === 'V')!
@@ -425,6 +425,9 @@ export const circuitPlugin: Plugin = {
       if (`I_${p.id}` in scope && !close(scope[`I_${p.id}`], scope[`mna_I_${p.id}`])) issues.push(`I_${p.id} disagrees with nodal analysis`)
       if (`V_${p.id}` in scope && !close(scope[`V_${p.id}`], scope[`mna_V_${p.id}`])) issues.push(`V_${p.id} disagrees with nodal analysis`)
     }
+    // school circuits: tidy answers (at most 2 decimals) for every current and voltage the steps show
+    const untidy = Object.entries(scope).filter(([k, v]) => /^(I|R_eq|I_R\d+|V_R\d+)$/.test(k) && Math.abs(v * 1000 - Math.round(v * 1000)) > 1e-6)
+    if (strict && untidy.length && net.parts.every(p => Number.isInteger(scope[p.id] ?? 0.5))) issues.push(`pick part values that give tidy answers: ${untidy.slice(0, 3).map(([k, v]) => `${k} = ${Math.round(v * 1000) / 1000}…`).join(', ')}`)
     // power balance
     let pr = 0; for (const p of net.parts.filter(p => p.type === 'R')) pr += scope[`mna_I_${p.id}`] ** 2 * scope[p.id]
     if (!close(pr, scope[src.id] * scope[`mna_I_${src.id}`])) issues.push('power balance fails')

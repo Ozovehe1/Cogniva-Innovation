@@ -73,7 +73,7 @@ export function stepsFromExample(built: Built, input: { beatTitle: string; kind:
       const v = ev.values[i]
       const forms = (() => { try { return texForms(s.calc!.expr, ev.scope) } catch { return null } })()
       const subst = forms && forms.substituted.length < 40 ? ` = ${forms.substituted}` : ''
-      if (v !== null) tex = `${s.claim}${subst} = ${fmtNum(v)}${s.calc.unit ? `\\,\\text{${s.calc.unit.replace(/Ω/g, '\\Omega').replace(/²/g, '^2')}}` : ''}`
+      if (v !== null) tex = `${s.claim}${subst} = ${fmtNum(v)}${s.calc.unit ? `\\,\\mathrm{${s.calc.unit.replace(/\s+/g, '\\,').replace(/Ω/g, '\\Omega').replace(/²/g, '^2').replace(/°/g, '^\\circ')}}` : ''}`
     }
     steps.push({ type: 'math', id: `we${tag}_m${k}`, tex, x, y: 90 + k * 72, size: 'md', color: s.check ? 'accent' : 'ink', say: tidy(`${s.title ? `${s.title}. ` : ''}${fill(s.reason, ev.scope)}`, 300) })
   })

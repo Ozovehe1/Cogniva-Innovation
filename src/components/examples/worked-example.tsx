@@ -69,7 +69,7 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
       {(spec.predict || (options && options.length >= 2)) && (
         <div className={cx('mt-4 rounded-[12px] border px-3 py-3', predicted ? 'border-line bg-[#FBFAF7]' : 'border-accent-line bg-accent-soft')}>
           <p className="text-[13px] font-medium text-ink">{predicted ? 'Your prediction' : 'Before we work it out — predict:'}</p>
-          <p className="mt-1 text-[14.5px] leading-relaxed text-ink"><RichText text={spec.predict ? fill(spec.predict.question, ev.scope) : `What is the ${spec.answer.label ?? 'answer'}?`} /></p>
+          <p className="mt-1 text-[14.5px] leading-relaxed text-ink"><RichText text={spec.predict ? namedFill(spec, spec.predict.question, ev.scope) : `What is the ${spec.answer.label ?? 'answer'}?`} /></p>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
             {(spec.predict ? spec.predict.options.map(o => ({ text: o })) : options!.map(o => ({ text: o.text }))).map((o, k) => {
               const mine = pick === k
@@ -105,7 +105,7 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
                       {st.title && <p className="text-[14px] font-medium text-ink">{st.title}</p>}
                       {st.claim && <div className="mt-1 overflow-x-auto text-[15px] text-ink"><RichText text={`$${st.claim}$`} display /></div>}
                       {forms && v !== null && (
-                        <div className="overflow-x-auto text-[15px] text-ink"><RichText text={`$= ${forms.substituted} = \\mathbf{${fmtNum(v)}}${st.calc?.unit ? `\\,\\text{${texUnit(st.calc.unit)}}` : ''}$`} display /></div>
+                        <div className="overflow-x-auto text-[15px] text-ink"><RichText text={`$= ${forms.substituted} = \\mathbf{${fmtNum(v)}}${st.calc?.unit ? `\\,\\mathrm{${texUnit(st.calc.unit)}}` : ''}$`} display /></div>
                       )}
                       <p className="mt-1 text-[13.5px] leading-relaxed text-ink-2"><RichText text={fill(st.reason, ev.scope)} /></p>
                       {(st.check || st.calc) && <p className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-medium text-accent"><Check className="h-3.5 w-3.5" strokeWidth={2.5} />{st.check ? 'Checked by the maths engine' : 'Worked out from the givens'}</p>}
@@ -168,9 +168,13 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
   )
 }
 
+/** In a prediction question a {{given}} reads as its name and value ("R2 (3 Ω)"), never a bare number. */
+function namedFill(spec: ExampleSpec, text: string, scope: Record<string, number>) {
+  return text.replace(/\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g, (m, k: string) => { const g = spec.givens.find(x => x.name === k); return g ? `${g.label && !/^(resistor|battery)/i.test(g.label) ? g.label : k} (${fmtNum(scope[k] ?? g.value)}${g.unit ? ` ${g.unit}` : ''})` : fill(m, scope) })
+}
 function safeForms(expr: string, scope: Record<string, number>) { try { return texForms(expr, scope) } catch { return null } }
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-const texUnit = (u: string) => u.replace(/Ω/g, '\\Omega').replace(/°/g, '^\\circ').replace(/²/g, '^2').replace(/³/g, '^3').replace(/µ/g, '\\mu ')
+const texUnit = (u: string) => u.replace(/\s+/g, '\\,').replace(/Ω/g, '\\Omega').replace(/°/g, '^\\circ').replace(/²/g, '^2').replace(/³/g, '^3').replace(/µ/g, '\\mu ')
 
 function YourTurn({ practice }: { practice: WorkedPractice }) {
   return (
