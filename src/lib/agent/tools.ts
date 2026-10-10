@@ -102,6 +102,8 @@ export interface AgentCtx {
    * with no text, 'empty_nomodel' also fails the narration retry. Proves the turn still narrates its visual.
    */
   testFault?: 'busy' | 'empty' | 'empty_nomodel' | 'allbusy'
+  /** Tool-bench calls this run (lib/live/tools/bench.ts), for the live_decision log. */
+  benchCalls?: { tool: string; ok: boolean; ms: number; cold: boolean; shown: string[]; issues: number; error?: string }[]
   /** Visuals already shown in this conversation (the busy fallback answers follow-ups from them). */
   shownBefore?: Block[]
 }
@@ -866,6 +868,8 @@ const VISUAL: ToolSpec[] = [
 
 import { embedTools } from '@/lib/live/tools/embeds'
 import { remoteTools } from '@/lib/live/remote'
+// Side effect: registers the Modal tool bench tools (lib/live/tools/bench.ts) as remote tools.
+import '@/lib/live/tools/bench'
 
 export const ALL_TOOLS: ToolSpec[] = [...READ, ...WRITE, ...DIRECTOR, ...VISUAL, workedExampleTool, sceneTool]
 

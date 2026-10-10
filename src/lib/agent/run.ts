@@ -15,7 +15,7 @@ import { chatFigureFor } from '@/lib/lesson-stages'
 import { POINT_AT_TOOL, TEACHING_MOVE_TOOL, compileDo, inferMove, moveLine, normMove, parseMoveLine, pointAtOps, sayDoStream, stripDoLines, type MoveDecision } from './moves'
 import { sceneOf } from './board-scene'
 import { isVisual, narrateVisual, needsNarration } from './narrate'
-import { compactDef, liveAgentOn, selectLoadout } from '@/lib/live/registry'
+import { compactDef, liveAgentOn, offerFallback, selectLoadout } from '@/lib/live/registry'
 import { selfCheck } from '@/lib/live/selfcheck'
 import { busyAnswer } from '@/lib/live/busy'
 import type { SignalKind } from '@/lib/live/signals'
@@ -146,7 +146,7 @@ export async function runAgent(input: {
   const { ctx } = input
   const lastUser = [...input.messages].reverse().find(m => m.role === 'user')?.content ?? ''
   const recent = input.messages.slice(-4).map(m => m.content).join('\n')
-  const defs = input.offer ?? chatOffer(ctx, lastUser, recent).defs
+  let defs = input.offer ?? chatOffer(ctx, lastUser, recent).defs
   let plan: string[] | undefined
   let remember: string | null = null
   const checks: NonNullable<RunResult['checks']> = []
@@ -354,6 +354,13 @@ export async function runAgent(input: {
             result = { ...(result as object), self_check: { ok: false, issues: v.issues, instruction: revised ? 'Still wrong: describe only what is right in it.' : 'Your visual has these problems. Fix them now (call the tool again with a corrected spec, or board_edit), then talk about the fixed version.' } }
           } else result = { ...(result as object), self_check: { ok: true, vision: v.vision } }
         }
+      }
+      // Fallback: a failed tool that names another tool hands its slot to it (the loadout size never grows), so the
+      // agent can actually call what the error suggests on its next step.
+      const fb = err && result && typeof result === 'object' ? (result as { fallback?: unknown }).fallback : null
+      if (typeof fb === 'string' && byName.has(fb) && !defs.some(d => d.name === fb)) {
+        defs = offerFallback(defs, call.name, byName.get(fb)!)
+        ctx.trace.push(`fallback offered: ${call.name} -> ${fb}`)
       }
       if (err && spec?.tier === 'visual' && call.name !== 'animate_concept') visualFailed = true
       if (!err && spec?.tier === 'visual') visualFailed = false

@@ -85,3 +85,21 @@ sympy, molecule, spice, octave, python, plantuml, chart, ffmpeg, latex; `slow` f
 - Capacity: max 2 containers per function (web 2, compute 2×4 inputs, sci 2×3, render 2×2) → at most 8 containers;
   `min_containers=0`; web semaphore of 8 in-flight tool calls per web container.
 - No Supabase upload yet: artifacts come back inline (base64/text). Upload in the Next.js layer if they must persist.
+
+## Wiring into the live agent (src/lib/live/tools/bench.ts)
+
+14 bench tools are registered with `registerRemoteTool` as ordinary registry tools (prepare → run → validate → fallback):
+`symbolic_math` (sympy), `numeric_solve` (numeric), `data_chart` (chart), `unit_check` (units), `logic_check` (z3),
+`circuit_spice` (spice), `molecule_props` (molecule), `heat_diffusion` (pde), `graph_draw` (graphviz), `tikz_figure`
+(latex), `manim_clip` (manim), `render_3d` (blender), plus `octave_run` and `uml_diagram` (Ask only, `notLive`).
+`python` (run_python covers it) and `ffmpeg` (base64 media inputs) are not offered to the model.
+
+- Loadout: narrow topics + signal boosts; exact checkers (`verifies`) come forward after a wrong answer with numbers or
+  algebra; a bench tool that clearly fits the lesson takes the weakest generic default slot (reserve). Always ≤ 5 + decide.
+- Output: artifacts → stage blocks (mp4 → clip, svg → svg, png → image); the model sees only a compact summary,
+  the bench checks and `bench_issues` (validate → self_check). Bench images also get the vision self-check.
+- Failure: the error names a fallback (bench `fallback` mapped to registry names, e.g. `client:circuitjs` →
+  `circuit_sim`); runAgent swaps the failed tool's slot for the fallback so the next step can call it.
+- Guards: ≤ 3 bench calls per agent run; `TOOLBENCH_LIVE=0` hides them all; absent without TOOLBENCH_URL/TOKEN.
+  Backend groups for bench tools in the loadout are warmed while the planner decides.
+- Log: each live_decision row carries `bench: [{tool, ok, ms, cold, shown, issues, error?, initiated: agent|prompted}]`.

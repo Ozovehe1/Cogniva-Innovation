@@ -30,6 +30,8 @@ export interface ToolMeta {
   signals?: SignalKind[]
   /** Never offered in a live lesson call (writes that need a confirm, planning tools). */
   notLive?: boolean
+  /** An exact checker: surfaced after a wrong answer that has numbers or algebra in it. */
+  verifies?: boolean
 }
 
 /** At most this many registry tools per model call (+ the decide tool = 6). */
@@ -49,7 +51,7 @@ const META: Record<string, ToolMeta> = {
   simulate: { short: 'A slider simulation of a formula with a moving object (pendulum, spring, planet) and live readouts.', renderer: 'figure', cost: 'free-browser', latency: 'instant', topics: /pendulum|spring|oscillat|orbit|decay|growth|interest|simulat/i, signals: ['slider'] },
   math_diagram: { short: 'Exact maths diagram: Venn/sets, geometry constructions, trees, vectors.', renderer: 'svg', cost: 'llm', latency: 'fast', topics: /venn|set|subset|triangle|angle|bisect|perpendicular|tree|vector|construction|congruen/i },
   illustrate: { short: 'A clean labelled SVG diagram of a structure, setup or process.', renderer: 'svg', cost: 'llm', latency: 'fast', topics: /diagram|label|setup|forces on|apparatus/i },
-  compute: { short: 'Exact maths: evaluate, simplify, derivative, solve, check. Use before stating any number.', renderer: 'data', cost: 'free-browser', latency: 'instant', topics: /\d|calculat|solve|value|how much|equal|derivative|=\s*\?/i, signals: ['answer'] },
+  compute: { short: 'Exact maths: evaluate, simplify, derivative, solve, check. Use before stating any number.', renderer: 'data', cost: 'free-browser', latency: 'instant', topics: /\d|calculat|solve|value|how much|equal|derivative|=\s*\?/i, signals: ['answer'], verifies: true },
   run_python: { short: 'Run Python (numpy, sympy, matplotlib) in a sandbox; figures shown as images.', renderer: 'image', cost: 'modal-cpu', latency: 'fast', topics: /python|code|matrix|data|statistic|regression|numerical|simulate numerically/i },
   web_search: { short: 'Search the web (Wikipedia first); cite sources.', renderer: 'text', cost: 'free-api', latency: 'fast', topics: /search|news|latest|who (is|was)|when (did|was)|source|research/i, notLive: true },
   fetch_page: { short: 'Read a page from the search results.', renderer: 'text', cost: 'free-api', latency: 'fast', topics: /http|wikipedia|arxiv/i, notLive: true },
@@ -73,7 +75,7 @@ export function registryTools(): ToolSpec[] { return allTools() }
 
 export function metaOf(name: string): ToolMeta {
   const r = remoteContract(name)
-  if (r) return { short: r.short, renderer: r.renderer, cost: r.cost, latency: r.latency, topics: r.topics }
+  if (r) return { short: r.short, renderer: r.renderer, cost: r.cost, latency: r.latency, topics: r.topics, signals: r.signals, notLive: r.notLive, verifies: r.verifies }
   return META[name] ?? { renderer: 'action', cost: 'llm', latency: 'fast' }
 }
 
@@ -107,12 +109,18 @@ export function selectLoadout(all: ToolSpec[], inp: LoadoutInput): ToolSpec[] {
   const avail = all.filter(t => t.modes.includes('chat') && !(inp.live && metaOf(t.def.name).notLive) && t.tier !== 'write' && t.tier !== 'confirm' && !(inp.restricted && /web_search|fetch_page/.test(t.def.name)))
   const words = inp.text.toLowerCase()
   const topic = (inp.topic ?? '').toLowerCase()
+  // A wrong answer (or a learner claim) with numbers / algebra in it: the exact checkers come forward so the agent CAN
+  // verify both values before it reteaches. It still decides whether to use one.
+  const mathy = /\d|[=^+*/]|\bx\b|sqrt|frac/.test(words)
+  const verifyBoost = mathy && (inp.signal === 'answer' || inp.signal === 'message') ? 1.5 : 0
   const scored = avail.map(t => {
     const m = metaOf(t.def.name)
     let s = 0
     if (m.topics?.test(words)) s += 3
     if (topic && m.topics?.test(topic)) s += 1.5
     if (inp.signal && m.signals?.includes(inp.signal)) s += 1
+    if (verifyBoost && m.verifies && (m.topics?.test(words) || m.topics?.test(topic))) s += verifyBoost
+    const fit = s
     if (inp.shownTools?.includes(t.def.name)) s += 1.2
     if (inp.hasBoard && (t.def.name === 'board_edit')) s += 2.5
     if (inp.hasBoard && t.def.name === 'board_inspect') s += 0.8
@@ -120,7 +128,7 @@ export function selectLoadout(all: ToolSpec[], inp: LoadoutInput): ToolSpec[] {
     const base: Record<string, number> = { interactive: 0.6, show_scene: 0.55, worked_example: 0.5, find_illustration: 0.45, diagram: 0.3, compute: 0.35, draw_on_board: 0.25 }
     s += base[t.def.name] ?? 0
     if (m.latency === 'async') s -= 0.4
-    return { t, s }
+    return { t, s, fit }
   }).filter(x => x.s > 0.2)
   scored.sort((a, b) => b.s - a.s)
   // At most two board verbs, so the board never crowds out every other representation.
@@ -131,7 +139,24 @@ export function selectLoadout(all: ToolSpec[], inp: LoadoutInput): ToolSpec[] {
     if (/^board_/.test(x.t.def.name)) { if (boardVerbs >= 2) continue; boardVerbs++ }
     out.push(x.t)
   }
+  // Remote (tool-bench) reserve: when an exact bench tool clearly fits this lesson/signal (topic + signal) but the
+  // generic defaults crowded it out, it takes the weakest default slot, so the agent can see it. Still ≤ max.
+  const inOut = new Set(out.map(t => t.def.name))
+  const bench = scored.find(x => remoteContract(x.t.def.name) && !inOut.has(x.t.def.name) && x.fit >= 1.5)
+  if (bench && out.length && !out.some(t => remoteContract(t.def.name))) {
+    let k = -1
+    for (let i = out.length - 1; i >= 0; i--) { const n = out[i].def.name; if (!inp.shownTools?.includes(n) && !/^board_/.test(n) && scored.find(x => x.t === out[i])!.fit < bench.fit) { k = i; break } }
+    if (k >= 0) out[k] = bench.t
+    else if (out.length < max) out.push(bench.t)
+  }
   return out
+}
+
+/** A failed tool hands its slot in the offer to the fallback it names (the offer never grows unless the failed tool was not in it). */
+export function offerFallback(defs: ToolDef[], failed: string, fb: ToolSpec): ToolDef[] {
+  if (defs.some(d => d.name === fb.def.name)) return defs
+  const next = defs.map(d => (d.name === failed ? compactDef(fb) : d))
+  return next.some(d => d.name === fb.def.name) ? next : [...next, compactDef(fb)]
 }
 
 /** Server-side feature flag for the unified live agent (on by default; LIVE_AGENT=0 is the kill switch). */

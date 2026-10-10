@@ -3,6 +3,7 @@
  * with prepare → run → validate → fallback. Kept apart from registry.ts so tools.ts can include them without a cycle.
  */
 import type { AgentCtx, ToolSpec } from '@/lib/agent/tools'
+import type { SignalKind } from './signals'
 
 export type Renderer = 'board' | 'scene' | 'figure' | 'svg' | 'image' | 'clip' | 'embed' | 'text' | 'data' | 'action'
 export type Cost = 'free-browser' | 'free-api' | 'llm' | 'modal-cpu' | 'modal-gpu'
@@ -24,13 +25,23 @@ export interface RemoteToolContract {
   validate?: (result: unknown) => string[]
   /** The tool to suggest when this one fails or is over budget. */
   fallback?: string
+  /** Never offered in a live lesson call (still available to Ask routing). */
+  notLive?: boolean
+  /** Signals it is often useful for (a soft loadout boost, never a rule). */
+  signals?: SignalKind[]
+  /** An exact checker (solver, units, proof): surfaced after a wrong answer so the agent can verify before it reteaches. */
+  verifies?: boolean
+  /** Offered only while this returns true (e.g. the service is configured). */
+  enabled?: () => boolean
 }
 
 const remote = new Map<string, RemoteToolContract>()
-export function remoteContract(name: string) { return remote.get(name) }
+export function remoteContract(name: string) { const c = remote.get(name); return c && c.enabled?.() !== false ? c : undefined }
+/** Every registered contract, enabled or not (evals). */
+export function remoteContracts(): RemoteToolContract[] { return [...remote.values()] }
 export function registerRemoteTool(c: RemoteToolContract) { remote.set(c.name, c) }
 export function remoteTools(): ToolSpec[] {
-  return [...remote.values()].map(c => ({
+  return [...remote.values()].filter(c => c.enabled?.() !== false).map(c => ({
     def: { name: c.name, description: c.short, parameters: c.parameters },
     tier: 'visual' as const, modes: ['chat' as const], label: `Running ${c.name.replace(/_/g, ' ')}`,
     run: async (args: Record<string, unknown>, ctx: AgentCtx) => {
@@ -41,7 +52,7 @@ export function remoteTools(): ToolSpec[] {
         const issues = c.validate ? c.validate(r) : []
         return issues.length ? { ...(r && typeof r === 'object' ? r as object : { result: r }), self_check: { ok: false, issues } } : r
       } catch (err) {
-        return { error: `${c.name} failed: ${err instanceof Error ? err.message.slice(0, 200) : err}${c.fallback ? `. Try ${c.fallback} instead.` : ''}` }
+        return { error: `${c.name} failed: ${err instanceof Error ? err.message.slice(0, 200) : err}${c.fallback ? `. Try ${c.fallback} instead.` : ''}`, ...(c.fallback ? { fallback: c.fallback } : {}) }
       }
     },
   }))

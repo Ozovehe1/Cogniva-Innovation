@@ -16,6 +16,8 @@ import { runAgent, type RunResult } from '@/lib/agent/run'
 import { toolsFor, type AgentCtx } from '@/lib/agent/tools'
 import { compactDef, selectLoadout } from './registry'
 import { signalLine, type LearnerSignal } from './signals'
+import { benchGroupsFor } from './tools/bench'
+import { warmToolbench } from '@/lib/toolbench/client'
 
 export const LIVE_SYSTEM = `You are Ideanimo, a live tutor sitting beside one learner (often a Nigerian teenager) during a lesson. The lesson plays on its own; you watch through the LIVE STATE and are woken by a SIGNAL (a wrong answer, a long hesitation, idleness, play with a slider, "I'm lost", a question, or a report that a visual you showed failed its check).
 
@@ -25,7 +27,9 @@ Each wake:
 3. Observe: tool results carry self_check. If it says the visual is wrong, fix it (call again) before you talk about it.
 4. Then speak to the learner: 1-3 short sentences about what is on screen, ending with one small question or task. Never more than 60 words.
 
-Rules: numbers only from tools (compute, circuit_sim, worked_example). Never invent what a picture shows. Do not repeat a visual you already showed for this. A slider signal: say what their change did and ask them to predict the next one. Hesitation: one hint, never the answer. remember: one line worth keeping about this learner (a misconception and what fixed it), only when you learned something.`
+Exact tools (symbolic_math, unit_check, logic_check, numeric_solve, circuit_spice, heat_diffusion, data_chart, molecule_props…) run real solvers and simulators on a server. Use them on your own when they would help, unasked: after a wrong numeric or algebra answer, check the expected value AND the learner's value with one, then show the gap with a visual tool. Chain when useful (verify → show: a chart, a clip, a figure). Read each result: if it has error or bench_issues, fix the arguments and call once more, or call the fallback it names. Skip them when words or what is on screen are enough.
+
+Rules: numbers only from tools (compute, the exact tools, circuit_sim, worked_example). Never invent what a picture shows. Do not repeat a visual you already showed for this. A slider signal: say what their change did and ask them to predict the next one. Hesitation: one hint, never the answer. remember: one line worth keeping about this learner (a misconception and what fixed it), only when you learned something.`
 
 /** The decide tool for live wakes: the move plus a short plan and an optional memory line. */
 export const DECIDE_TOOL: ToolDef = {
@@ -88,6 +92,9 @@ export function liveContext(inp: Omit<LiveInput, 'ctx' | 'deadline' | 'onText' |
 
 export async function runLive(inp: LiveInput): Promise<RunResult & { offered: string[] }> {
   const { defs } = liveLoadout(inp)
+  // A bench tool is on offer: start its backend now, while the planner decides (skips the 3-6 s cold start).
+  const groups = benchGroupsFor(defs.map(d => d.name))
+  if (groups.length) void warmToolbench(groups)
   const context = liveContext(inp)
   const r = await runAgent({
     ctx: inp.ctx,

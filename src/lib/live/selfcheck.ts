@@ -3,7 +3,7 @@
  * the loop as part of the tool result (observe → revise once).
  *   1. geometry / bounds (deterministic, instant): board elements on the board, points inside their axes, labels not
  *      cut off; live-figure points inside their ranges; circuit numbers obey Ohm's law and KVL;
- *   2. a vision pass on a rendered snapshot (board / SVG) when a vision model has room: "does this show X? what is wrong?".
+ *   2. a vision pass on a rendered snapshot (board / SVG / tool-bench image) when a vision model has room: "does this show X? what is wrong?".
  * Browser-rendered embeds (circuit sim, Mermaid, 3D, GeoGebra, Desmos) report their own check as a 'stage' signal.
  * Server only.
  */
@@ -53,14 +53,14 @@ export function geometryCheck(b: Block): string[] {
   return issues
 }
 
-/** Geometry + one vision pass (board / SVG only, when time allows). */
+/** Geometry + one vision pass (board / SVG / bench image, when time allows). */
 export async function selfCheck(b: Block, intent: string, opts: { deadline?: number; trace?: string[]; vision?: boolean } = {}): Promise<SelfCheck> {
   const issues = geometryCheck(b)
   let vision: SelfCheck['vision'] = 'skipped'
   const left = (opts.deadline ?? Date.now() + 15_000) - Date.now()
-  if (opts.vision !== false && left > 9000 && (b.kind === 'board' || (b.kind === 'svg' && !b.credit))) {
+  if (opts.vision !== false && left > 9000 && (b.kind === 'board' || b.kind === 'image' || (b.kind === 'svg' && !b.credit))) {
     try {
-      const png = b.kind === 'board' ? await boardSnapshotPng(b.steps as Step[], 800) : await svgToPng(b.svg, 800)
+      const png = b.kind === 'board' ? await boardSnapshotPng(b.steps as Step[], 800) : b.kind === 'image' ? b.png : await svgToPng(b.svg, 800)
       const pngB64 = typeof png === 'string' ? png : (png as { png?: string } | null)?.png ?? null
       if (pngB64) {
         const v = await visionJson(`You check a tutor's picture before a learner sees it. It is meant to show: ${intent.slice(0, 300)}.\nLook at the image. Reply JSON {"ok": boolean, "problems": [short strings]}: wrong or missing object, labels cut off or overlapping, points outside their axes, numbers that contradict the intent. ok=true only if it clearly shows the intent.`, pngB64, { deadline: Math.min(opts.deadline ?? Infinity, Date.now() + 12_000), trace: opts.trace, priority: 'live' }) as { ok?: boolean; problems?: unknown[] } | null

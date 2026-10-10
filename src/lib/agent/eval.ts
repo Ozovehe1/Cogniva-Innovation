@@ -25,7 +25,7 @@ import { expandBoardDiagrams, nextTutorSteps } from '../lesson-ai'
 import { fetchPage, webSearch } from './web'
 import { chat, type Msg } from './llm'
 import { runAgent, CHAT_SYSTEM, MAX_WRITES, chatOffer } from './run'
-import { liveStaticCases } from '@/lib/live/evals'
+import { liveStaticCases, benchAsyncCases } from '@/lib/live/evals'
 import { CONCEPT_ASK, beatVisualLine, readVisual, visualPlanHint } from '../visual-policy'
 import { moveCases, staticMoveCases } from './move-eval'
 import { clipTargets } from '../lesson-clip'
@@ -214,6 +214,8 @@ export async function staticAsyncCases(): Promise<CaseResult[]> {
   out.push(...staticMoveCases())
   // Phase-1 Live Tutor: wake policy, free router, loadout, busy fallback, circuits, geometry self-check.
   out.push(...liveStaticCases())
+  // Tool bench wiring: the remote wrapper's prepare → error path (no network).
+  out.push(...(await benchAsyncCases()))
   return out
 }
 

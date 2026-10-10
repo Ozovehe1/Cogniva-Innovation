@@ -8,7 +8,7 @@ import { WAKE, newWakeState, noteSlider, shouldWake } from './policy'
 import type { LearnerSignal } from './signals'
 import { quality, inventory, budgetBucket, userKey, BUCKET_SHARE, type SlotDef } from '@/lib/agent/pool'
 import { stripPII } from '@/lib/agent/llm'
-import { selectLoadout, compactDef, LOADOUT_MAX } from './registry'
+import { selectLoadout, compactDef, LOADOUT_MAX, offerFallback } from './registry'
 import { toolsFor } from '@/lib/agent/tools'
 import { checkLearnerClaim, answerFromShown } from './busy'
 import { readVisual } from '@/lib/visual-policy'
@@ -16,6 +16,9 @@ import { parseCircuit, solveCircuit, circuitNetlist, checkReadings } from './too
 import { geometryCheck } from './selfcheck'
 import type { Block } from '@/lib/agent/types'
 import { DECIDE_TOOL, LIVE_SYSTEM } from './agent'
+import { remoteContracts, remoteTools } from './remote'
+import { BENCH_DEFS, BENCH_NAMES, BENCH_MAX_PER_RUN, benchGroupsFor, benchInitiated, checkIssues, compactResult, emitArtifacts, fallbackName, takeBenchSlot, withViewBox } from './tools/bench'
+import type { ToolbenchResult } from '@/lib/toolbench/client'
 
 export interface LiveCase { id: string; group: string; pass: boolean; detail: string }
 
@@ -177,6 +180,104 @@ export function selfCheckCases(): LiveCase[] {
   return out
 }
 
+/** Runs fn with the tool bench switched on (dummy URL/token when unset; no network is touched by these cases). */
+function withBench<T>(fn: () => T, live = '1'): T {
+  const keep = { u: process.env.TOOLBENCH_URL, t: process.env.TOOLBENCH_TOKEN, l: process.env.TOOLBENCH_LIVE }
+  process.env.TOOLBENCH_URL = keep.u || 'https://bench.invalid'
+  process.env.TOOLBENCH_TOKEN = keep.t || 'eval-token'
+  process.env.TOOLBENCH_LIVE = live
+  try { return fn() } finally {
+    for (const [k, v] of [['TOOLBENCH_URL', keep.u], ['TOOLBENCH_TOKEN', keep.t], ['TOOLBENCH_LIVE', keep.l]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v }
+  }
+}
+
+/** The Modal tool bench wired into the one registry (lib/live/tools/bench.ts): registration, loadout fit, shaping, outputs. */
+export function benchCases(): LiveCase[] {
+  const out: LiveCase[] = []
+  const add = (id: string, pass: boolean, detail = '') => out.push({ id: `bench-${id}`, group: 'static', pass, detail })
+  const names = Object.values(BENCH_NAMES) as string[]
+  const reg = remoteContracts().map(c => c.name)
+  add('registered', names.length === 14 && names.every(n => reg.includes(n)), `${names.filter(n => reg.includes(n)).length}/${names.length}: ${names.join(',')}`)
+  add('contract-complete', remoteContracts().filter(c => names.includes(c.name)).every(c => c.cost === 'modal-cpu' && !!c.prepare && !!c.validate && !!c.run && c.short.length <= 160), 'prepare/run/validate, modal-cpu, short ≤160')
+  add('kill-switch', withBench(() => !remoteTools().some(t => names.includes(t.def.name)), '0') && withBench(() => remoteTools().filter(t => names.includes(t.def.name)).length === 14), 'TOOLBENCH_LIVE=0 hides all 14')
+  const loadout = (text: string, x: Partial<Parameters<typeof selectLoadout>[1]> = {}) => withBench(() => selectLoadout(toolsFor({ mode: 'chat', restricted: false }), { text, live: true, ...x }).map(t => t.def.name))
+  const want: [string, string, string][] = [
+    ['rc-charging', 'how fast does the capacitor charge through the resistor', 'circuit_spice'],
+    ['integrate', 'integrate x^2 from 0 to 3', 'symbolic_math'],
+    ['decay', 'radioactive decay and half-life of a sample', 'numeric_solve'],
+    ['heat', 'heat conduction along a metal rod', 'heat_diffusion'],
+    ['units', 'convert 72 km/h to m/s', 'unit_check'],
+    ['ray-diagram', 'ray diagram for a convex lens', 'tikz_figure'],
+    ['solids', 'volume of a cylinder and a cone', 'render_3d'],
+    ['molar-mass', 'molar mass of ethanol and its functional group', 'molecule_props'],
+  ]
+  for (const [id, text, tool] of want) { const l = loadout(text); add(`loadout-${id}`, l.includes(tool) && l.length <= LOADOUT_MAX, l.join(',')) }
+  // Embeds stay first for what they already do: a resistor circuit still gets the live simulator.
+  const res = loadout('two resistors in parallel, what current flows?')
+  add('embed-first-resistors', res.includes('circuit_sim') && res.indexOf('circuit_sim') < (res.indexOf('circuit_spice') < 0 ? 99 : res.indexOf('circuit_spice')), res.join(','))
+  const mat = loadout('can you run this in matlab or octave')
+  add('notlive-hidden', !mat.includes('octave_run') && !mat.includes('uml_diagram'), mat.join(','))
+  // Every live call stays within the loadout cap, bench or not (a broad corpus incl. signals and a board).
+  const corpus = ['capacitor charging graph', 'solve x^2-5x+6=0 and plot it', 'heat flow in a plate, and the units of thermal conductivity', 'probability tree for two coins', 'molar mass of glucose, 3d shape of water', 'diode rectifier with a capacitor filter on an oscilloscope', 'convert joules to kWh for a 2 kW kettle', 'prove n^2 >= n for every integer', 'the krebs cycle', 'a ball rolling down a ramp', 'bar chart of rainfall by month', 'logistic population growth model and best fit line']
+  const sizes = corpus.flatMap(t => [loadout(t), loadout(t, { signal: 'answer', hasBoard: true }), loadout(t, { signal: 'slider' })].map(l => l.length))
+  add('cap-holds', sizes.every(n => n <= LOADOUT_MAX), `max ${Math.max(...sizes)} over ${sizes.length} calls`)
+  const heavy = withBench(() => [DECIDE_TOOL, ...selectLoadout(toolsFor({ mode: 'chat', restricted: false }), { text: 'diode rectifier with a capacitor filter, charging curve, integrate the current', live: true }).map(compactDef)])
+  const chars = LIVE_SYSTEM.length + JSON.stringify(heavy).length + 5400 + 1200
+  add('bench-call-fits-groq', chars / 3.6 + 700 < 8000, `≈${Math.round(chars / 3.6)} input tokens: ${heavy.map(d => d.name).join(',')}`)
+  // prepare: bad args come back to the model as an error before any network call.
+  const prep = (tool: string, a: Record<string, unknown>) => remoteContracts().find(c => c.name === tool)!.prepare!(a)
+  add('prepare-spice-ground', !!prep('circuit_spice', { netlist: 'V1 a b 5\nR1 a b 1k' }).error && !prep('circuit_spice', { netlist: 'V1 in 0 5\nR1 in 0 1k' }).error)
+  add('prepare-sympy', !!prep('symbolic_math', { op: 'solve' }).error && prep('symbolic_math', { op: 'bogus', expr: 'x+1' }).args?.op === 'simplify')
+  add('prepare-ode', !!prep('numeric_solve', { op: 'ode', rhs: ['-y', 'x'], y0: [1] }).error && !prep('numeric_solve', { op: 'ode', rhs: ['-0.3*y'], y0: [100] }).error)
+  add('prepare-manim-dot', !!prep('manim_clip', { code: 'print(1)' }).error && !!prep('graph_draw', { dot: 'A->B' }).error && prep('tikz_figure', { tex: '\\draw (0,0)--(1,1);' }).args?.tex?.toString().includes('tikzpicture') === true)
+  add('prepare-blender-caps', (prep('render_3d', { objects: [{ type: 'cube' }], spin: true }).args as { frames: number; width: number }).frames <= 24 && !!prep('render_3d', { objects: [{ type: 'teapot' }] }).error)
+  add('fallback-map', fallbackName({ tool: 'client:circuitjs', reason: '' }) === 'circuit_sim' && fallbackName({ tool: 'client:3dmol', reason: '' }) === 'molecule_3d' && fallbackName({ tool: 'sympy', reason: '' }) === 'symbolic_math' && fallbackName(null) === null)
+  const big = compactResult({ x: Array.from({ length: 500 }, (_, i) => i / 10), vega_lite: { huge: true }, summary: { 'v(out)': { max: 4.99 } } }) as Record<string, unknown>
+  add('compact-result', !('vega_lite' in big) && (big.x as { n: number }).n === 500 && JSON.stringify(big).length < 300, JSON.stringify(big))
+  const env = (o: Partial<ToolbenchResult>): ToolbenchResult => ({ ok: true, tool: 'x', result: {}, artifacts: [], state: {}, logs: '', ms: 1, ...o })
+  add('validate-checks', checkIssues(env({ result: { checks: { residuals_zero: false } } })).length === 1 && checkIssues(env({ result: { checks: { residuals_zero: true } } })).length === 0 && checkIssues(env({ result: { consistent: false } })).length === 1)
+  const got: Block[] = []
+  const sink = { emit: (b: Block) => { got.push(b) } }
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="50pt"><g/></svg>'
+  const a1 = emitArtifacts(sink, 'graphviz', env({ artifacts: [{ name: 'graph.svg', mime: 'image/svg+xml', text: svg, bytes: 90 }, { name: 'graph.png', mime: 'image/png', b64: 'iVBOR', bytes: 5 }] }), 'Tree')
+  add('artifacts-one-picture', a1.shown.join() === 'svg' && got.length === 1 && got[0].kind === 'svg' && /viewBox="0 0 100 50"/.test((got[0] as { svg: string }).svg), JSON.stringify(a1))
+  got.length = 0
+  const a2 = emitArtifacts(sink, 'pde', env({ artifacts: [{ name: 'field.png', mime: 'image/png', b64: 'iVBOR', bytes: 5 }, { name: 'field.mp4', mime: 'video/mp4', b64: 'AAAA', bytes: 3 }] }), 'Heat')
+  add('artifacts-clip', a2.shown.join() === 'clip' && got[0]?.kind === 'clip' && String((got[0] as { url?: string }).url).startsWith('data:video/mp4;base64,') && String((got[0] as { jobId: string }).jobId).startsWith('bench-'), JSON.stringify(a2))
+  got.length = 0
+  const a3 = emitArtifacts(sink, 'latex', env({ artifacts: [{ name: 'figure.svg', mime: 'image/svg+xml', text: '<svg onload="alert(1)"></svg>', bytes: 30 }, { name: 'figure.png', mime: 'image/png', b64: 'iVBOR', bytes: 5 }] }), 'Fig')
+  add('artifacts-unsafe-svg', a3.shown.join() === 'image' && a3.dropped.length === 1 && got[0]?.kind === 'image', JSON.stringify(a3))
+  add('viewbox-kept', withViewBox('<svg viewBox="0 0 1 1"></svg>') === '<svg viewBox="0 0 1 1"></svg>')
+  const ctxKey = {}
+  const slots = Array.from({ length: BENCH_MAX_PER_RUN + 1 }, () => takeBenchSlot(ctxKey))
+  add('per-run-cap', slots.filter(Boolean).length === BENCH_MAX_PER_RUN && !slots[BENCH_MAX_PER_RUN], `cap ${BENCH_MAX_PER_RUN}`)
+  add('warm-groups', benchGroupsFor(['circuit_spice', 'symbolic_math', 'circuit_sim']).sort().join() === 'compute,sci' && benchGroupsFor(['interactive']).length === 0)
+  // Agency: per-signal surfacing (the agent still decides), the bench reserve slot, fallback hand-over, initiation log.
+  const wrong = loadout('check "Solve 2x + 6 = 14", they answered "x = 10", expected "x = 4"', { signal: 'answer', topic: 'Solving linear equations' })
+  add('wrong-answer-verifier', wrong.includes('symbolic_math') && wrong.includes('compute') && wrong.length <= LOADOUT_MAX, wrong.join(','))
+  const idle = loadout('', { signal: 'idle', topic: '"Charging a capacitor", section "Time constant"' })
+  add('reserve-slot-idle', idle.includes('circuit_spice') && idle.length <= LOADOUT_MAX, idle.join(','))
+  const plain = loadout('', { signal: 'idle', topic: '"Parts of a flower"' })
+  add('no-bench-when-unfit', !plain.some(n => names.includes(n)), plain.join(','))
+  const all = withBench(() => toolsFor({ mode: 'chat', restricted: false }))
+  const defs0 = [DECIDE_TOOL, ...all.filter(t => ['circuit_spice', 'interactive', 'show_scene'].includes(t.def.name)).map(compactDef)]
+  const defs1 = offerFallback(defs0, 'circuit_spice', all.find(t => t.def.name === 'circuit_sim')!)
+  add('fallback-handover', defs1.length === defs0.length && defs1.some(d => d.name === 'circuit_sim') && !defs1.some(d => d.name === 'circuit_spice'), defs1.map(d => d.name).join(','))
+  add('initiated', benchInitiated({ kind: 'answer' }) === 'agent' && benchInitiated({ kind: 'lost' }) === 'agent' && benchInitiated({ kind: 'message', detail: 'why is it negative?' }) === 'agent' && benchInitiated({ kind: 'message', detail: 'can you simulate the capacitor?' }) === 'prompted')
+  add('prompt-agency', /unasked/.test(LIVE_SYSTEM) && /fallback/.test(LIVE_SYSTEM) && /Chain/.test(LIVE_SYSTEM), 'exact tools unprompted, chain, retry/fallback')
+  add('python-ffmpeg-not-offered', !BENCH_DEFS.some(d => d.tool === 'python' || d.tool === 'ffmpeg'), 'run_python covers python; ffmpeg takes base64 media')
+  return out
+}
+
+/** Async bench case: the remote wrapper turns a prepare error into a tool error without touching the network. */
+export async function benchAsyncCases(): Promise<LiveCase[]> {
+  const out: LiveCase[] = []
+  const spec = withBench(() => remoteTools().find(t => t.def.name === 'symbolic_math'))
+  const r = spec ? await spec.run({ op: 'solve' }, {} as never) as { error?: string } : null
+  out.push({ id: 'bench-wrapper-prepare-error', group: 'static', pass: !!r?.error && /expr/.test(r.error), detail: JSON.stringify(r) })
+  return out
+}
+
 export function liveStaticCases(): LiveCase[] {
-  return [...policyCases(), ...routerCases(), ...loadoutCases(), ...busyCases(), ...circuitCases(), ...selfCheckCases()]
+  return [...policyCases(), ...routerCases(), ...loadoutCases(), ...busyCases(), ...circuitCases(), ...selfCheckCases(), ...benchCases()]
 }

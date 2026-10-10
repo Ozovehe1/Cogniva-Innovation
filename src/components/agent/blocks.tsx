@@ -268,7 +268,7 @@ function ClipBlock({ block }: { block: Extract<Block, { kind: 'clip' }> }) {
   const [state, setState] = useState<{ status: string; url: string | null; verified?: boolean; phase?: string; attempts?: number }>({ status: block.status, url: block.url ?? null })
   useEffect(() => {
     // A finished clip from history is asked once whether the scene verifier checked it.
-    if (state.status === 'done' && state.verified === undefined) {
+    if (state.status === 'done' && state.verified === undefined && !block.jobId.startsWith('bench-')) {
       fetch(`/api/agent/clip/${block.jobId}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(j => { if (j) setState(s => ({ ...s, verified: !!j.verified })) }).catch(() => {})
     }
     if (state.status !== 'rendering') return

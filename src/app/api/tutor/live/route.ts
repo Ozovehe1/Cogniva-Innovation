@@ -20,6 +20,7 @@ import { runLive } from '@/lib/live/agent'
 import { parseSignal, signalLine, type LearnerSignal } from '@/lib/live/signals'
 import { newWakeState, noteSlider, shouldWake } from '@/lib/live/policy'
 import { busySignalLine } from '@/lib/live/busy'
+import { benchInitiated } from '@/lib/live/tools/bench'
 
 export const maxDuration = 120
 export const dynamic = 'force-dynamic'
@@ -153,6 +154,8 @@ export async function POST(request: Request) {
       signal: { kind: signal.kind, where: signal.where, line: signalLine(signal), step: signal.step }, urgent: gate.urgent,
       move: result?.move?.move ?? null, reason: result?.move?.reason ?? null, plan: result?.plan ?? [], remember: result?.remember ?? null,
       offered: result?.offered ?? [], tools: toolsUsed, blocks: blocks.map(b => `${b.kind}${b.kind === 'embed' ? `:${b.tool}` : ''}`),
+      // Tool-bench calls: initiated by the agent unless the learner typed a request for that kind of work.
+      bench: (ctx.benchCalls ?? []).map(b => ({ ...b, initiated: benchInitiated(signal) })),
       checks: result?.checks ?? [], revised: !!result?.revised, models: result?.models ?? [], text: text.slice(0, 600), outcome, ms,
       trace: ctx.trace.slice(-14).map(t => t.slice(0, 200)),
     }
