@@ -19,6 +19,7 @@ import { InkGuard } from './ink-guard'
 import { HandOverlay, PenProvider, usePenEngine, type PenCue, type PenEngine } from './pen'
 import { followClip, loadPenPaths } from './clip-pen'
 import { cx } from '@/components/ui'
+import { InkMark, Pending } from '@/components/system/wait'
 import { chapterAt, estimateStepMs, formatDuration, type Chapter } from '@/lib/lesson-sections'
 
 export type PlayerEvent =
@@ -1173,14 +1174,14 @@ export function WhiteboardPlayer({
               className="group absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#FDFCF9]/70 backdrop-blur-[1px] disabled:cursor-wait"
               aria-label={preparingVoice ? 'Preparing voice' : 'Start lesson'}
             >
+              {/* Pressed: the pill keeps its colour and width; the label says what is happening (Pending). */}
               <span className={cx(
-                'inline-flex h-12 items-center gap-2.5 rounded-full px-6 text-[15px] font-medium shadow-[var(--shadow-raised)] transition-all duration-300',
-                preparingVoice ? 'bg-surface text-muted' : 'bg-accent text-white group-hover:scale-[1.02]',
+                'inline-flex h-12 items-center rounded-full bg-accent px-6 text-[15px] font-medium text-white shadow-[var(--shadow-raised)] transition-transform duration-300',
+                !preparingVoice && 'group-hover:scale-[1.02]',
               )}>
-                {preparingVoice
-                  ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none" aria-hidden />
-                  : <Play className="h-4 w-4" fill="currentColor" strokeWidth={0} />}
-                {preparingVoice ? 'Preparing voice…' : 'Start lesson'}
+                <Pending busy={preparingVoice} label="Preparing the voice" className="gap-2.5">
+                  <Play className="h-4 w-4" fill="currentColor" strokeWidth={0} />Start lesson
+                </Pending>
               </span>
               {voicePrep === 'failed' && <span className="text-[12px] text-muted">Natural voice unavailable · the device voice will read this lesson</span>}
             </button>
@@ -1256,16 +1257,7 @@ export function WhiteboardPlayer({
               exit={{ opacity: 0 }}
               className="mt-4 flex items-center gap-3 rounded-[12px] border border-line bg-surface px-4 py-3.5 text-[15px] text-ink-2"
             >
-              <span className="inline-flex gap-1" aria-hidden>
-                {[0, 1, 2].map(i => (
-                  <motion.span
-                    key={i}
-                    className="h-1.5 w-1.5 rounded-full bg-accent"
-                    animate={reduced ? undefined : { opacity: [0.25, 1, 0.25] }}
-                    transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.18 }}
-                  />
-                ))}
-              </span>
+              <InkMark className="text-accent" width={20} />
               Working out another way to show this…
             </motion.div>
           ) : check ? (
@@ -1279,7 +1271,7 @@ export function WhiteboardPlayer({
             </div>
           ) : atEnd && started && steps.length > 0 && !embedded && more ? (
             <motion.div key="more" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-4 flex items-start gap-3 rounded-[14px] border border-line bg-surface p-4" role="status" aria-live="polite">
-              <span className="relative mt-1.5 flex h-2.5 w-2.5 flex-shrink-0"><span className="absolute inline-flex h-full w-full rounded-full bg-accent/50 motion-safe:animate-ping" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent" /></span>
+              <InkMark className="mt-[0.55em] text-accent" width={20} />
               <span><span className="block font-display text-[19px] leading-snug text-ink">Next part on its way</span>
               <span className="mt-0.5 block text-[14.5px] leading-relaxed text-muted">Your tutor is finishing the next part of this lesson. It carries on here by itself the moment it is ready.</span></span>
             </motion.div>

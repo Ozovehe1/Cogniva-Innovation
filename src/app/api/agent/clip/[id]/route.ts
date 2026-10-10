@@ -13,5 +13,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // A clip the scene verifier failed is never shown (correctness guard), whatever its render status.
   const state = clipState(data)
   const done = state === 'done'
-  return Response.json({ status: state, blocked: clipBlocked(data.verdict), verified: clipVerified(data.verdict), url: done && data.video_path ? publicClipUrl(data.video_path) : null, attempts: data.attempts }, { headers: { 'Cache-Control': 'no-store' } })
+  // The real render stage while it is still in progress (queued = planning/checking, rendering = drawing frames), so the wait can show true stages.
+  const phase = state === 'rendering' ? (data.status === 'rendering' ? 'rendering' : 'queued') : state
+  return Response.json({ status: state, blocked: clipBlocked(data.verdict), verified: clipVerified(data.verdict), url: done && data.video_path ? publicClipUrl(data.video_path) : null, attempts: data.attempts, phase }, { headers: { 'Cache-Control': 'no-store' } })
 }
