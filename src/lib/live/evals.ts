@@ -270,6 +270,8 @@ export function benchCases(): LiveCase[] {
   const leak = '**teaching_move**  \n{\n  "move": "board_edit",\n  "reason": "x",\n  "plan": [\n    "a"\n  ]\n}\n\n**board_edit**  \n- Edit cell **EF1**: "RC"\n\n**Speak**  \n“Here is the time constant: 1 ms. What is 0.2 × 0.05?”'
   const cl = cleanNarration(leak)
   add('narration-leak-cleaned', cl.leaked && cl.text === 'Here is the time constant: 1 ms. What is 0.2 × 0.05?' && !cleanNarration('The curve rises fast, then slows. What is τ here?').leaked, JSON.stringify(cl.text))
+  const lab = cleanNarration('**Teaching move:** ask_learner – Hint: what is 3 × 3?\n\n**Answer:** Look at 0.3 × 0.3 again.')
+  add('narration-label-cleaned', lab.leaked && !/teaching move|answer:|ask_learner/i.test(lab.text) && /Hint: what is 3/.test(lab.text) && /Look at 0.3/.test(lab.text), JSON.stringify(lab.text))
   const sp = prep('circuit_spice', { netlist: 'V1 in 0 5\nR1 in out 1k\nC1 out 0 1u', analysis: 'tran 10u 5m' }).args as { analysis: string }
   add('spice-uic', sp.analysis === 'tran 10u 5m uic' && (prep('circuit_spice', { netlist: 'V1 in 0 5\nR1 in 0 1k', analysis: 'tran 1u 1m' }).args as { analysis: string }).analysis === 'tran 1u 1m', sp.analysis)
   add('spice-flat-flagged', checkIssues(env({ tool: 'spice', result: { x: [0, 1], summary: { 'v(out)': { min: 5, max: 5 } } } })).some(i => /flat/.test(i)) && checkIssues(env({ tool: 'spice', result: { x: [0, 1], summary: { 'v(out)': { min: 0, max: 4.97 } } } })).length === 0)

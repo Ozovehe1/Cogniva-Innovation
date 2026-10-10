@@ -355,13 +355,13 @@ export async function withRichVisual(ctx: BeatContext, steps: Step[]): Promise<S
   const atomic = /\batoms?\b|atomic|electron (shell|config|arrangement)|\bshells?\b|isotope|valence|proton|neutron|\bions?\b|periodic/i
   if (atomic.test(`${own} ${lessonText}`)) {
     const named = elementInText(own)
-    const hasAtomFig = steps.some(st => /^atom_/.test(String((st as { id?: string }).id ?? '')))
+    const hasAtomFig = steps.some(st => /^atomz_/.test(String((st as { id?: string }).id ?? '')))
     if (named && !hasAtomFig) {
       const r = atomSpec({ element: named.element, mass: named.mass, highlightValence: /valence|outer|bond|ion|react/i.test(own) })
       if (r.spec) {
         const s = r.spec
         const svg = atomSvg(s)
-        const fig = { type: 'draw', id: `atom_${s.symbol.toLowerCase()}_${ctx.index}`, say: `Here is ${s.name}${named.mass ? `-${s.mass}` : ''} drawn exactly: ${s.protons} protons and ${s.neutrons} neutrons in the nucleus, and ${s.electrons} electrons arranged ${s.shells.join(', ')} on its shells.`, shape: { kind: 'figure', x: 40, y: 95, w: 410, h: 297, svg, alt: `Bohr diagram of ${s.name}: ${s.protons} protons, ${s.neutrons} neutrons, electrons ${s.shells.join(', ')}` } } as unknown as Step
+        const fig = { type: 'draw', id: `atomz_${s.symbol.toLowerCase()}_${ctx.index}`, say: `Here is ${s.name}${named.mass ? `-${s.mass}` : ''} drawn exactly: ${s.protons} protons and ${s.neutrons} neutrons in the nucleus, and ${s.electrons} electrons arranged ${s.shells.join(', ')} on its shells.`, shape: { kind: 'figure', x: 40, y: 95, w: 410, h: 297, svg, alt: `Bohr diagram of ${s.name}: ${s.protons} protons, ${s.neutrons} neutrons, electrons ${s.shells.join(', ')}` } } as unknown as Step
         return insertAfterOpening(out, fig)
       }
     }
