@@ -13,7 +13,7 @@ import { RichText } from '@/components/rich-text'
 import { buttonClass, cx } from '@/components/ui'
 import { genie } from '@/components/genie/presence'
 import type { ExampleSpec } from '@/lib/examples/spec'
-import { chemTex, fill, fmtNum } from '@/lib/examples/spec'
+import { chemTex, chemText, fill, fmtNum } from '@/lib/examples/spec'
 import { answerOptions, evaluateSpec, givenText, statementText, texForms, varyRange } from '@/lib/examples/engine'
 import { pluginFor } from '@/lib/examples/registry'
 
@@ -107,7 +107,7 @@ export default function WorkedExample({ spec, practice }: { spec: ExampleSpec; p
                       {forms && v !== null && (
                         <div className="overflow-x-auto text-[15px] text-ink"><RichText text={`$= ${forms.substituted} = \\mathbf{${fmtNum(v)}}${st.calc?.unit ? `\\,\\mathrm{${texUnit(st.calc.unit)}}` : ''}$`} display /></div>
                       )}
-                      <p className="mt-1 text-[13.5px] leading-relaxed text-ink-2"><RichText text={fill(st.reason, ev.scope)} /></p>
+                      <p className="mt-1 text-[13.5px] leading-relaxed text-ink-2"><RichText text={spec.diagram?.type === 'reaction' ? chemText(fill(st.reason, ev.scope)) : fill(st.reason, ev.scope)} /></p>
                       {(st.check || st.calc) && <p className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-medium text-accent"><Check className="h-3.5 w-3.5" strokeWidth={2.5} />{st.check ? 'Checked by the maths engine' : 'Worked out from the givens'}</p>}
                     </div>
                   </div>

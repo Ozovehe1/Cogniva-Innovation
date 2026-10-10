@@ -161,5 +161,15 @@ export function chemTex(claim: string): string {
   if (sides.length < 2) return claim
   const term = /^\d*(?:\\?[([]|\\?[)\]](?:_\{?\d+\}?|\d+)?|[A-Z][a-z]?(?:_\{?\d+\}?|\d+)?|\^\{?\d*[+-]\}?|\\cdot|\s)+(?:\((?:s|l|g|aq)\))?$/
   const ok = sides.every(side => side.split(/\s\+\s|\s*\+\s*(?=\d*[A-Z(])/).every(x => term.test(x.replace(/[{}]/g, m => m).trim())))
-  return ok ? `\\mathrm{${t}}` : claim
+  if (!ok) return claim
+  // plain-text forms: "->" becomes an arrow, a digit after an element or ")" becomes a subscript (CH4 → CH_4)
+  const tex = t.replace(/\s*(?:->|⟶|→)\s*/g, ' \\rightarrow ')
+    .replace(/(^|[\s+>])(\d*)([A-Z(][A-Za-z0-9()]*)/g, (m, pre: string, coef: string, f: string) => `${pre}${coef}${f.replace(/([A-Za-z)])(\d+)/g, '$1_{$2}')}`)
+  return `\\mathrm{${tex}}`
+}
+
+/** Chemical formulas in plain prose get subscript digits ("1 mole of CH4" → "CH₄"); for reaction examples only. */
+export function chemText(s: string): string {
+  const SUB = '₀₁₂₃₄₅₆₇₈₉'
+  return s.replace(/(?<![\w$\\])((?:[A-Z][a-z]?\d*|\([A-Za-z0-9]+\)\d*){1,8})(?![\w])/g, (m: string) => (/[A-Za-z)]\d/.test(m) && /[A-Z]/.test(m) ? m.replace(/([A-Za-z)])(\d+)/g, (_, a: string, d: string) => a + [...d].map(c => SUB[Number(c)]).join('')) : m))
 }
